@@ -1,0 +1,14 @@
+# Gradle and Android build output
+.gradle/
+.kotlin/
+build/
+captures/
+local.properties
+*.apk
+*.aab
+# IDEs
+.idea/
+*.iml
+.DS_Store
+# Python
+__pycache__/
