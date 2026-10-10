@@ -1,0 +1,480 @@
+{
+ "capability_keys": [
+  "esim",
+  "ims_conference",
+  "mms",
+  "rcs",
+  "sms_over_ims",
+  "video_calling",
+  "volte",
+  "vonr",
+  "vowifi",
+  "wifi_calling_roaming"
+ ],
+ "format": "ocd-check-bundle.v1",
+ "limits": {
+  "gates": "A carrier can still block a feature that its settings turn on. The usual gates are a list of approved phone models (common in the US, Australia and Sweden), an option you must book in your plan (LIDL Connect's Wi-Fi calling, for example), a carrier server that must approve the phone first (in the US, often with a registered emergency address for Wi-Fi calling), a service the operator has ended (MMS in Germany), roaming limits, and the Wi-Fi network you use (its DNS or firewall can keep Wi-Fi calling from reaching the carrier). None of these shows in carrier settings, so no source tells OCD about them; only a test with your SIM, plan and phone does. Some keys hint at a gate: carrier_volte_provisioning_required_bool and the REG09 Wi-Fi calling error mapping.",
+  "missing_switch": "A switch that carrier-config-list.xml leaves out is not neutral: your phone keeps what its ROM already says, which for VoLTE, Wi-Fi calling and video calling is usually off, and for MMS, SMS over IMS and conference calls usually on.",
+  "mvno_merge": "An MVNO without its own SPN, GID, or IMSI prefix in any source merges into the host network's profile. LIDL Connect runs on Vodafone Germany, and no profile names it, so its SIM resolves the 26202 profiles.",
+  "not_verified": "No profile has been verified on a phone. Every value comes from a maintained source, not from a test call.",
+  "readme_section": "Limits to read before you ship",
+  "tables_not_tests": "A capability value says what carrier tables configure, not what works. It does not say the operator still offers the service: tables often keep a service for months or years after an operator ends it.",
+  "value_meanings": {
+   "conditional": "the sources disagree, often between phone models. The feature often works.",
+   "supported": "at least one phone maker's or OS settings for this SIM turn the feature on, and no source whose off counts turns it off. It does not tell you that the carrier still offers it, that your plan includes it, or that your phone model is allowed.",
+   "unknown": "no reliable source. It does not mean \"no\".",
+   "unsupported": "the carrier's own settings, or two independent sources, turn it off."
+  }
+ },
+ "profiles": [
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "supported",
+    "rcs": "unknown",
+    "sms_over_ims": "unknown",
+    "video_calling": "unknown",
+    "volte": "unknown",
+    "vonr": "unknown",
+    "vowifi": "unknown",
+    "wifi_calling_roaming": "unknown"
+   },
+   "display_name": "Truphone Zz",
+   "match": {
+    "imsi_prefix_patterns": [
+     "204043914"
+    ],
+    "mccmnc": [
+     "20404"
+    ]
+   },
+   "newest_entry": "2023-06",
+   "profile_id": "open.20404.43f6d1a8aab1"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "conditional",
+    "rcs": "unknown",
+    "sms_over_ims": "conditional",
+    "video_calling": "conditional",
+    "volte": "conditional",
+    "vonr": "unknown",
+    "vowifi": "conditional",
+    "wifi_calling_roaming": "supported"
+   },
+   "display_name": "Vodafone",
+   "match": {
+    "mccmnc": [
+     "20404"
+    ]
+   },
+   "newest_entry": "2026-09",
+   "profile_id": "open.20404.e431cf6d3200"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "supported",
+    "rcs": "supported",
+    "sms_over_ims": "supported",
+    "video_calling": "conditional",
+    "volte": "supported",
+    "vonr": "supported",
+    "vowifi": "supported",
+    "wifi_calling_roaming": "supported"
+   },
+   "display_name": "Telekom",
+   "match": {
+    "mccmnc": [
+     "26201"
+    ]
+   },
+   "newest_entry": "2026-09",
+   "profile_id": "open.26201.13528695fee7"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "supported",
+    "rcs": "unknown",
+    "sms_over_ims": "unknown",
+    "video_calling": "unknown",
+    "volte": "supported",
+    "vonr": "unknown",
+    "vowifi": "unknown",
+    "wifi_calling_roaming": "unknown"
+   },
+   "display_name": "Telekom.de",
+   "match": {
+    "mccmnc": [
+     "26201"
+    ],
+    "spn": [
+     "Telekom.de"
+    ]
+   },
+   "profile_id": "open.26201.1f7e1db680d5"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "unknown",
+    "rcs": "unknown",
+    "sms_over_ims": "unknown",
+    "video_calling": "unknown",
+    "volte": "unknown",
+    "vonr": "unknown",
+    "vowifi": "unknown",
+    "wifi_calling_roaming": "unknown"
+   },
+   "display_name": "Carrier 26201",
+   "match": {
+    "gid1_prefixes": [
+     "44"
+    ],
+    "mccmnc": [
+     "26201"
+    ],
+    "spn": [
+     "congstar"
+    ]
+   },
+   "newest_entry": "2024-05",
+   "profile_id": "open.26201.3e9dccb1fd2a"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "unknown",
+    "rcs": "unknown",
+    "sms_over_ims": "unknown",
+    "video_calling": "unknown",
+    "volte": "unknown",
+    "vonr": "unknown",
+    "vowifi": "unknown",
+    "wifi_calling_roaming": "supported"
+   },
+   "display_name": "Telekom",
+   "match": {
+    "android_carrier_ids": [
+     3
+    ],
+    "mccmnc": [
+     "26201",
+     "26206"
+    ],
+    "spn": [
+     "Business",
+     "Privat",
+     "T-Campus",
+     "T-Mobile D",
+     "Telekom.de"
+    ]
+   },
+   "newest_entry": "2023-04",
+   "profile_id": "open.26201.420d035152c1"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "unknown",
+    "rcs": "unknown",
+    "sms_over_ims": "unknown",
+    "video_calling": "unknown",
+    "volte": "unknown",
+    "vonr": "unknown",
+    "vowifi": "unknown",
+    "wifi_calling_roaming": "supported"
+   },
+   "display_name": "Telekom",
+   "match": {
+    "android_carrier_ids": [
+     3
+    ],
+    "gid1_prefixes": [
+     "01",
+     "02",
+     "03",
+     "04",
+     "4B",
+     "99"
+    ],
+    "mccmnc": [
+     "26201",
+     "26206"
+    ]
+   },
+   "newest_entry": "2023-04",
+   "profile_id": "open.26201.7c7067e3bb8f"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "unknown",
+    "rcs": "unknown",
+    "sms_over_ims": "unknown",
+    "video_calling": "unknown",
+    "volte": "unknown",
+    "vonr": "unknown",
+    "vowifi": "unknown",
+    "wifi_calling_roaming": "unknown"
+   },
+   "display_name": "Carrier 26201",
+   "match": {
+    "mccmnc": [
+     "26201"
+    ],
+    "spn": [
+     "congstar"
+    ]
+   },
+   "newest_entry": "2020-05",
+   "profile_id": "open.26201.e7be740147c1"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "unknown",
+    "rcs": "unknown",
+    "sms_over_ims": "unknown",
+    "video_calling": "unknown",
+    "volte": "unknown",
+    "vonr": "unknown",
+    "vowifi": "unknown",
+    "wifi_calling_roaming": "unknown"
+   },
+   "display_name": "Telekom",
+   "match": {
+    "android_carrier_ids": [
+     2395
+    ],
+    "mccmnc": [
+     "26201",
+     "26206"
+    ]
+   },
+   "newest_entry": "2022-05",
+   "profile_id": "open.26201.fb727a260df2"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "supported",
+    "rcs": "unknown",
+    "sms_over_ims": "unknown",
+    "video_calling": "unknown",
+    "volte": "supported",
+    "vonr": "unknown",
+    "vowifi": "supported",
+    "wifi_calling_roaming": "supported"
+   },
+   "display_name": "Congstar De",
+   "match": {
+    "gid1_prefixes": [
+     "44"
+    ],
+    "mccmnc": [
+     "26201"
+    ]
+   },
+   "newest_entry": "2026-09",
+   "profile_id": "open.26201.fdceda072a5d"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "unknown",
+    "rcs": "unknown",
+    "sms_over_ims": "unknown",
+    "video_calling": "unknown",
+    "volte": "unknown",
+    "vonr": "unknown",
+    "vowifi": "unknown",
+    "wifi_calling_roaming": "unknown"
+   },
+   "display_name": "1&1",
+   "match": {
+    "gid1_prefixes": [
+     "11"
+    ],
+    "mccmnc": [
+     "26202"
+    ]
+   },
+   "newest_entry": "2016-03",
+   "profile_id": "open.26202.5e6cc8d0e19b"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "conditional",
+    "rcs": "unknown",
+    "sms_over_ims": "supported",
+    "video_calling": "unknown",
+    "volte": "conditional",
+    "vonr": "supported",
+    "vowifi": "supported",
+    "wifi_calling_roaming": "unknown"
+   },
+   "display_name": "Vodafone",
+   "match": {
+    "mccmnc": [
+     "26202"
+    ]
+   },
+   "newest_entry": "2026-09",
+   "profile_id": "open.26202.8cebd7550c67"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "supported",
+    "rcs": "unknown",
+    "sms_over_ims": "unknown",
+    "video_calling": "unknown",
+    "volte": "supported",
+    "vonr": "unknown",
+    "vowifi": "unknown",
+    "wifi_calling_roaming": "unknown"
+   },
+   "display_name": "Vodafone.de",
+   "match": {
+    "mccmnc": [
+     "26202"
+    ],
+    "spn": [
+     "Vodafone.de"
+    ]
+   },
+   "profile_id": "open.26202.b148b725e925"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "unknown",
+    "rcs": "unknown",
+    "sms_over_ims": "unknown",
+    "video_calling": "unknown",
+    "volte": "supported",
+    "vonr": "unknown",
+    "vowifi": "supported",
+    "wifi_calling_roaming": "unknown"
+   },
+   "display_name": "vf nl",
+   "match": {
+    "iccid_prefixes": [
+     "893144"
+    ],
+    "mccmnc": [
+     "26202"
+    ]
+   },
+   "newest_entry": "2025-06",
+   "profile_id": "open.26202.db9b35c48658"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "unknown",
+    "rcs": "unknown",
+    "sms_over_ims": "unknown",
+    "video_calling": "unknown",
+    "volte": "unknown",
+    "vonr": "unknown",
+    "vowifi": "unknown",
+    "wifi_calling_roaming": "unknown"
+   },
+   "display_name": "Cbeyond",
+   "match": {
+    "gid2_prefixes": [
+     "A2"
+    ],
+    "mccmnc": [
+     "310120"
+    ]
+   },
+   "newest_entry": "2020-10",
+   "profile_id": "open.310120.16d5a193139b"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "unknown",
+    "rcs": "unknown",
+    "sms_over_ims": "unknown",
+    "video_calling": "unknown",
+    "volte": "unknown",
+    "vonr": "unknown",
+    "vowifi": "unknown",
+    "wifi_calling_roaming": "unknown"
+   },
+   "display_name": "Tracfone-ATT",
+   "match": {
+    "android_carrier_ids": [
+     10000
+    ],
+    "gid1_prefixes": [
+     "DDFF",
+     "DEFF"
+    ],
+    "mccmnc": [
+     "310280",
+     "310410",
+     "311180"
+    ]
+   },
+   "newest_entry": "2026-09",
+   "profile_id": "open.310280.45bacfa96750"
+  },
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "supported",
+    "rcs": "supported",
+    "sms_over_ims": "supported",
+    "video_calling": "conditional",
+    "volte": "conditional",
+    "vonr": "unknown",
+    "vowifi": "supported",
+    "wifi_calling_roaming": "supported"
+   },
+   "display_name": "AT&T",
+   "match": {
+    "mccmnc": [
+     "310410"
+    ]
+   },
+   "newest_entry": "2026-09",
+   "profile_id": "open.310410.cdedc056c91a"
+  }
+ ],
+ "source": {
+  "checks_through": "2026-07-14",
+  "commit": "69c56e1f087073d2fa4c254d47cfacf0d736c4d4",
+  "commit_date": "2026-10-10",
+  "data_digest": "sha256:787224d07de72a5f83456993a4da08b459850757572b8cafb98ecc89d5a25c99",
+  "lookup_schema_version": 1,
+  "match_semantics": "OR within a match list; AND between match dimensions",
+  "repository": "https://github.com/open-carrier-data/open-carrier-data",
+  "resolution_order": "generic_to_specific",
+  "stale_after": "2027-01-10"
+ }
+}
