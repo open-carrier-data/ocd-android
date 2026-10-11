@@ -53,6 +53,7 @@ class ReportTest {
         assertEquals(emptyList<String>(), Report.unexpectedKeys(result.json))
         assertEquals("ocd-check-report.v1", result.json["schema"]!!.jsonPrimitive.content)
         assertEquals("none", result.json["phone_writes_performed"]!!.jsonPrimitive.content)
+        assertEquals("FP5", result.json["device"]!!.jsonObject["codename"]!!.jsonPrimitive.content)
     }
 
     @Test

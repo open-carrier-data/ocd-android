@@ -68,7 +68,7 @@ These need the planned read-only "deep check" (stage 2b, through Shizuku), so th
 ## The report
 
 The report is JSON with a fixed set of keys. Its rules:
-- **Content:** the SIM's network code, name and carrier IDs, GID1 only if you switch it on, the phone model, the Android major version, the software family (`stock`, `lineageos` or `other`), the check results, and the app and data versions.
+- **Content:** the SIM's network code, name and carrier IDs, GID1 only if you switch it on, the phone model and its code name (`Build.DEVICE`, which LineageOS uses to name device trees), the Android major version, the software family (`stock`, `lineageos` or `other`), the check results, and the app and data versions.
 - **Findings** go in as codes, not sentences.
 - **Carrier settings** go in only as a per-key comparison with OCD's answer (`matches_ocd`), never as values.
 - **Dates:** the report has the check date, never a time.
@@ -95,7 +95,7 @@ Example, built by the tests from real OCD profiles (a LIDL Connect SIM in a Gala
     },
     "checked_on": "2026-10-10",
     "phone_writes_performed": "none",
-    "device": { "model": "SM-A505F", "android_major": 14, "rom_family": "stock" },
+    "device": { "model": "SM-A505F", "codename": "a50", "android_major": 14, "rom_family": "stock" },
     "sim": {
         "home_mccmnc": "26202", "spn": "LIDL Connect",
         "android_carrier_id": 2397, "android_carrier_name": "Vodafone",

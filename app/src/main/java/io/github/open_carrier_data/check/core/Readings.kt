@@ -24,6 +24,8 @@ data class DeviceInfo(
     val manufacturer: String,
     /** Build.MODEL, for example SM-A505F. */
     val model: String,
+    /** Build.DEVICE, for example a50 or x1s: the device tree name LineageOS keys its carrier files by. */
+    val codename: String,
     val androidMajor: Int,
     val romFamily: RomFamily,
 )

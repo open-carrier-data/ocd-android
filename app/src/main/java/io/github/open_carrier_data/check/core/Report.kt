@@ -58,6 +58,7 @@ object Report {
             put("phone_writes_performed", "none")
             putJsonObject("device") {
                 put("model", readings.device.model)
+                put("codename", readings.device.codename)
                 put("android_major", readings.device.androidMajor)
                 put("rom_family", readings.device.romFamily.wire)
             }
@@ -166,7 +167,7 @@ object Report {
             "ocd_data", "ocd_data.source_commit", "ocd_data.source_commit_date",
             "ocd_data.checks_through", "ocd_data.stale_after",
             "checked_on", "phone_writes_performed",
-            "device", "device.model", "device.android_major", "device.rom_family",
+            "device", "device.model", "device.codename", "device.android_major", "device.rom_family",
             "sim", "sim.home_mccmnc", "sim.spn", "sim.android_carrier_id", "sim.android_carrier_name",
             "sim.specific_carrier_id", "sim.specific_carrier_name", "sim.gid1", "sim.gid1_status",
             "network", "network.serving_mccmnc", "network.roaming", "network.data_network",

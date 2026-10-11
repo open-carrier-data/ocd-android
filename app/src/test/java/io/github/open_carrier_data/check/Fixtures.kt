@@ -87,7 +87,7 @@ object Fixtures {
         network: NetworkReading? = network(),
         settings: CarrierSettingsReading? = settings(),
         connections: List<DataConnection>? = listOf(DataConnection("web.vodafone.de", listOf("internet", "supl", "xcap"), Radio.LTE)),
-        device: DeviceInfo = DeviceInfo("Fairphone", "FP5", 15, RomFamily.STOCK),
+        device: DeviceInfo = DeviceInfo("Fairphone", "FP5", "FP5", 15, RomFamily.STOCK),
         permission: Boolean = true,
         checkedOn: LocalDate = today,
     ) = PhoneReadings(

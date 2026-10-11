@@ -114,6 +114,7 @@ class PhoneReader(private val context: Context) {
     private fun deviceInfo() = DeviceInfo(
         manufacturer = Build.MANUFACTURER.orEmpty(),
         model = Build.MODEL.orEmpty(),
+        codename = Build.DEVICE.orEmpty(),
         androidMajor = Build.VERSION.RELEASE.orEmpty().takeWhile(Char::isDigit).toIntOrNull() ?: 0,
         romFamily = RomFamily.detect(Build.DISPLAY, Build.FINGERPRINT, Build.PRODUCT, Build.TYPE, Build.TAGS),
     )

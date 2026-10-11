@@ -388,7 +388,7 @@ private fun ReportSection(state: UiState, viewModel: CheckViewModel) {
     Section("Report") {
         Text(
             "The report holds only: the SIM's network code, name and carrier IDs, GID1 if you switch it on, " +
-                "the phone model, the Android version, the software family, the check results, and the app " +
+                "the phone model and its code name, the Android version, the software family, the check results, and the app " +
                 "and data versions. It has the date, not the time. Read it before you share it.",
             style = MaterialTheme.typography.bodyMedium,
         )

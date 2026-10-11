@@ -126,7 +126,7 @@ class FindingsTest {
 
     @Test
     fun `Samsung stock software gets the vendor IMS caveat`() {
-        val samsung = DeviceInfo("samsung", "SM-A505F", 14, RomFamily.STOCK)
+        val samsung = DeviceInfo("samsung", "SM-A505F", "a50", 14, RomFamily.STOCK)
         assertTrue("samsung_own_ims" in codes(readings(device = samsung)))
         assertFalse("samsung_own_ims" in codes(readings(device = samsung.copy(romFamily = RomFamily.LINEAGEOS))))
     }
