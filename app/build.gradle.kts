@@ -36,6 +36,11 @@ android {
         buildConfig = true
     }
 
+    testOptions {
+        // Puts the merged manifest's path on the unit-test classpath (com/android/tools/test_config.properties) for ManifestTest.
+        unitTests.isIncludeAndroidResources = true
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -69,6 +74,8 @@ dependencies {
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
 
     testImplementation(libs.junit)
 }

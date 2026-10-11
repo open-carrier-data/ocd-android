@@ -30,8 +30,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Coming back from the app's settings page with the permission changed.
+        // Coming back from the app's settings page with the permission changed, or from starting Shizuku.
         viewModel.refreshIfPermissionChanged()
+        viewModel.refreshShizuku()
     }
 }
 

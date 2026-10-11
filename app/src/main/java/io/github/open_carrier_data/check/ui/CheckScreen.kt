@@ -49,14 +49,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.open_carrier_data.check.BuildConfig
+import io.github.open_carrier_data.check.core.ApnEdited
+import io.github.open_carrier_data.check.core.ApnListParser
 import io.github.open_carrier_data.check.core.Capabilities
 import io.github.open_carrier_data.check.core.CapabilityValue
 import io.github.open_carrier_data.check.core.CarrierKeys
+import io.github.open_carrier_data.check.core.DeepCheckReading
+import io.github.open_carrier_data.check.core.EpdgName
 import io.github.open_carrier_data.check.core.FiveG
 import io.github.open_carrier_data.check.core.Gid1Status
+import io.github.open_carrier_data.check.core.ImsSource
+import io.github.open_carrier_data.check.core.LookupNetwork
 import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.Radio
 import io.github.open_carrier_data.check.core.ReportResult
+import io.github.open_carrier_data.check.core.ShellCommand
+import io.github.open_carrier_data.check.phone.ShizukuStatus
 
 @Composable
 fun CheckScreen(viewModel: CheckViewModel) {
@@ -95,6 +103,7 @@ fun CheckScreen(viewModel: CheckViewModel) {
                     NetworkSection(state)
                     CarrierSettingsSection(state, bundle)
                     ConnectionsSection(state)
+                    DeepCheckSection(state, viewModel)
                     OcdSection(state, bundle)
                 }
             }
@@ -241,7 +250,7 @@ private fun NetworkSection(state: UiState) {
         Field("5G signal reported", yesNo(network.nrSignalReported))
         Note(
             "Read from public Android calls. The 5G icon follows carrier rules, so it is a hint; " +
-                "the radio's own state needs the deep check.",
+                "the radio's own state is hidden from apps.",
         )
     }
 }
@@ -315,8 +324,145 @@ private fun ConnectionsSection(state: UiState) {
         if (connections.any { "ims" in it.serves }) {
             Note("An IMS data connection is up. VoLTE needs it, but it does not show that the phone is signed in for calls.")
         }
-        Note("Only the connections Android shows to normal apps. The phone's APN list needs the deep check.")
+        Note("Only the connections Android shows to normal apps. The phone's APN list needs the deep check below.")
     }
+}
+
+@Composable
+private fun DeepCheckSection(state: UiState, viewModel: CheckViewModel) {
+    val status = state.shizuku ?: return
+    val target = state.deepTarget
+    Section("Deep check (Shizuku)") {
+        Text(
+            "Optional. Through Shizuku, the app reads what Android hides from normal apps: whether the phone is " +
+                "signed in for VoLTE or Wi-Fi calling (Samsung's IMS), Samsung's Wi-Fi calling switch, whether the " +
+                "carrier's Wi-Fi calling server name resolves, and the phone's APN list. It runs the fixed read-only " +
+                "commands below and nothing else, and it changes nothing. Their output is reduced to the fields " +
+                "shown here inside the check; the raw text is never kept.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        ShizukuFields(status)
+        when {
+            !status.running -> Note(
+                "Start Shizuku (for example with wireless debugging), then come back. Everything above works without it.",
+            )
+            status.tooOld -> Note("This app needs Shizuku 11 or newer.")
+            status.refused -> Note("Shizuku remembers that you refused. To allow it, open the Shizuku app and switch OCD Check on there.")
+            !status.permitted -> Button(onClick = viewModel::requestShizukuPermission) { Text("Allow in Shizuku") }
+            target == null -> Note("The SIM's slot is not known, so the deep check cannot run.")
+            else -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = viewModel::runDeepCheck, enabled = !state.deepRunning && !state.loading) { Text("Run deep check") }
+                if (state.deepRunning) CircularProgressIndicator(modifier = Modifier.padding(4.dp))
+            }
+        }
+        if (!status.ready) OutlinedButton(onClick = viewModel::refreshShizuku) { Text("Look for Shizuku again") }
+        state.deepProblem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+        if (target != null) {
+            Label("Commands it runs, and only these")
+            ShellCommand.entries.mapNotNull { it.argv(target) }.forEach { argv ->
+                Text(argv.joinToString(" "), fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+            }
+            Note(
+                "The ePDG lookup sends one DNS query and, if the name resolves, one ping to the carrier's server; " +
+                    "only the first line of its output is read. The Wi-Fi calling switch is read only on Samsung's IMS.",
+            )
+        }
+        state.readings?.deep?.let {
+            HorizontalDivider()
+            DeepResults(it)
+            Note("Check again clears these results; run the deep check again after it.")
+        }
+    }
+}
+
+@Composable
+private fun ShizukuFields(status: ShizukuStatus) {
+    Field("Shizuku app", if (status.installed) "installed" else "not installed")
+    Field(
+        "Shizuku service",
+        when {
+            !status.running -> "not running"
+            status.tooOld -> "running, but too old"
+            status.asRoot -> "running (as root)"
+            else -> "running (as the shell user)"
+        },
+    )
+    if (status.running && !status.tooOld) {
+        Field("Access for OCD Check", if (status.permitted) "allowed" else if (status.refused) "refused" else "not allowed yet")
+    }
+}
+
+@Composable
+private fun DeepResults(deep: DeepCheckReading) {
+    val ims = deep.ims
+    Label("IMS (calls over 4G, 5G and Wi-Fi)")
+    when (ims.source) {
+        ImsSource.NOT_FOUND -> Note("No Samsung IMS service on this phone. Other IMS stacks are not read yet.")
+        ImsSource.UNREADABLE -> Note("Samsung's IMS state could not be read.")
+        ImsSource.SAMSUNG -> {
+            Field(
+                "Signed in",
+                when (ims.registered) {
+                    true -> "yes" + (ims.transport?.let { ", over ${it.plain}" } ?: "")
+                    false -> "no"
+                    null -> "not known (no entry for this SIM's slot)"
+                },
+                ims.state?.let { "Samsung's state: ${it.replace('_', ' ')}" },
+                emphasize = true,
+            )
+            if (ims.registered == true) {
+                Field("Services", ims.services.joinToString(", ") { it.plain }.ifEmpty { "none this app can name" })
+            }
+            ims.mno?.let { Field("Samsung's carrier table", it) }
+        }
+    }
+    Label("Wi-Fi calling")
+    Field("Switch", deep.wifiCallingSwitch.plain)
+    Field(
+        "Server name (ePDG)",
+        deep.epdgName.plain,
+        if (deep.epdgName == EpdgName.NOT_CHECKED) {
+            null
+        } else if (deep.lookupNetwork == LookupNetwork.NONE) {
+            "The phone had no network during the lookup, so this says nothing about DNS."
+        } else {
+            "Looked up over ${deep.lookupNetwork.plain}" +
+                when (deep.privateDnsActive) {
+                    true -> ", Private DNS on."
+                    false -> ", Private DNS off."
+                    null -> "."
+                }
+        },
+    )
+    val apns = deep.apnList ?: return
+    Label("APN list for this network")
+    if (!apns.readable) {
+        Note("The APN list could not be read.")
+        return
+    }
+    if (apns.rows.isEmpty()) Note("No APN rows for this network code.")
+    apns.rows.forEach { row ->
+        val details = listOfNotNull(
+            row.protocol?.let { "protocol $it" },
+            row.roamingProtocol?.let { "roaming $it" },
+            row.carrierEnabled?.let { if (it) "enabled" else "switched off by the carrier" },
+            row.mvnoType?.let { "MVNO row (matched by $it)" },
+            when (row.edited) {
+                ApnEdited.BY_USER -> "added or changed by hand"
+                ApnEdited.BY_CARRIER -> "changed by the carrier"
+                else -> null
+            },
+        )
+        Field(
+            row.apn,
+            if (row.types.isEmpty()) "types: not set" else "types: ${row.types.joinToString(", ")}",
+            details.joinToString(" · ").ifEmpty { null },
+        )
+    }
+    if (apns.leftOut > 0) {
+        Note("${apns.leftOut} row(s) left out: unusual shape, emergency, deleted, or past the limit of ${ApnListParser.MAX_ROWS} rows.")
+    }
+    Note("Rows for every SIM on this network code, including other MVNOs. User names, passwords, servers and proxies are never read.")
 }
 
 @Composable
@@ -388,8 +534,10 @@ private fun ReportSection(state: UiState, viewModel: CheckViewModel) {
     Section("Report") {
         Text(
             "The report holds only: the SIM's network code, name and carrier IDs, GID1 if you switch it on, " +
-                "the phone model and its code name, the Android version, the software family, the check results, and the app " +
-                "and data versions. It has the date, not the time. Read it before you share it.",
+                "the phone model and its code name, the Android version, the software family, the check results " +
+                "(with the deep check: the IMS state, the Wi-Fi calling switch and server name check, and the APN " +
+                "list without credentials), and the app and data versions. It has the date, not the time. " +
+                "Read it before you share it.",
             style = MaterialTheme.typography.bodyMedium,
         )
         if (state.readings?.sim?.gid1Status == Gid1Status.READ) {
