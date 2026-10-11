@@ -26,10 +26,13 @@ data class ReportResult(val json: JsonObject, val text: String, val hits: List<P
  * has no field for IMSI, ICCID, IMEI, TAC, a phone number, location, cell
  * IDs, the build fingerprint, build user or host, the baseband, APN
  * credentials or anything emergency-related.
+ *
+ * With the Shizuku deep check, `ims_registration`, `wifi_calling` and
+ * `apn_list` hold its typed results; `app.access_tier` says which access
+ * produced the report.
  */
 object Report {
     const val SCHEMA = "ocd-check-report.v1"
-    const val ACCESS_TIER = "normal_app"
 
     private val pretty = Json { prettyPrint = true }
 
@@ -46,7 +49,7 @@ object Report {
             putJsonObject("app") {
                 put("name", "OCD Check")
                 put("version", appVersion)
-                put("access_tier", ACCESS_TIER)
+                put("access_tier", readings.accessTier.wire)
             }
             putJsonObject("ocd_data") {
                 put("source_commit", bundle.source.commit)
@@ -76,7 +79,12 @@ object Report {
                     }
                 }
             }
-            put("ims_registration", Findings.NEEDS_DEEP_CHECK)
+            val deep = readings.deep
+            if (deep == null) {
+                put("ims_registration", Findings.NEEDS_DEEP_CHECK)
+            } else {
+                deep(deep)
+            }
             resolution?.let { ocd(it, bundle) }
             putJsonArray("findings") { findings.forEach { add(it.code) } }
         }
@@ -127,6 +135,48 @@ object Report {
             }
         }
 
+    private fun JsonObjectBuilder.deep(deep: DeepCheckReading) {
+        putJsonObject("ims_registration") {
+            val ims = deep.ims
+            put("source", ims.source.wire)
+            if (ims.source == ImsSource.SAMSUNG) {
+                put("registered", ims.registered)
+                ims.state?.let { put("state", it) }
+                ims.transport?.let { put("transport", it.wire) }
+                if (ims.registered == true) putJsonArray("services") { ims.services.forEach { add(it.wire) } }
+                ims.mno?.let { put("mno", it) }
+            }
+        }
+        putJsonObject("wifi_calling") {
+            put("switch", deep.wifiCallingSwitch.wire)
+            put("epdg_name", deep.epdgName.wire)
+            if (deep.epdgName != EpdgName.NOT_CHECKED) {
+                put("lookup_network", deep.lookupNetwork.wire)
+                deep.privateDnsActive?.let { put("private_dns_active", it) }
+            }
+        }
+        deep.apnList?.let { list ->
+            putJsonObject("apn_list") {
+                put("readable", list.readable)
+                if (!list.readable) return@putJsonObject
+                putJsonArray("rows") {
+                    for (row in list.rows) {
+                        add(buildJsonObject {
+                            put("apn", row.apn)
+                            putJsonArray("types") { row.types.forEach { add(it) } }
+                            row.protocol?.let { put("protocol", it) }
+                            row.roamingProtocol?.let { put("roaming_protocol", it) }
+                            row.carrierEnabled?.let { put("carrier_enabled", it) }
+                            row.mvnoType?.let { put("mvno_type", it) }
+                            put("edited", row.edited.wire)
+                        })
+                    }
+                }
+                put("left_out", list.leftOut)
+            }
+        }
+    }
+
     private fun JsonObjectBuilder.ocd(resolution: Resolution, bundle: OcdBundle) = putJsonObject("ocd") {
         putJsonArray("profiles") {
             for (profile in resolution.stack) {
@@ -176,7 +226,13 @@ object Report {
             "carrier_settings.keys",
             "data_connections", "data_connections[].apn", "data_connections[].serves",
             "data_connections[].set_up_over",
-            "ims_registration",
+            "ims_registration", "ims_registration.source", "ims_registration.registered", "ims_registration.state",
+            "ims_registration.transport", "ims_registration.services", "ims_registration.mno",
+            "wifi_calling", "wifi_calling.switch", "wifi_calling.epdg_name", "wifi_calling.lookup_network",
+            "wifi_calling.private_dns_active",
+            "apn_list", "apn_list.readable", "apn_list.rows", "apn_list.rows[].apn", "apn_list.rows[].types",
+            "apn_list.rows[].protocol", "apn_list.rows[].roaming_protocol", "apn_list.rows[].carrier_enabled",
+            "apn_list.rows[].mvno_type", "apn_list.rows[].edited", "apn_list.left_out",
             "ocd", "ocd.profiles", "ocd.profiles[].profile_id", "ocd.profiles[].display_name",
             "ocd.profiles[].match_keys", "ocd.profiles[].newest_entry",
             "ocd.answer_from", "ocd.capabilities",

@@ -15,7 +15,8 @@ data class Finding(val code: String, val text: String)
  * - No operator service-status claim is hard-coded. Context about gates is
  *   quoted from the README Limits text that ships in the data bundle.
  * - IMS registration is invisible to a normal app: say it needs the deep
- *   check, never guess.
+ *   check, never guess. With the deep check, its findings take that place
+ *   ([DeepFindings]).
  */
 object Findings {
     const val NEEDS_DEEP_CHECK = "needs_deep_check"
@@ -52,12 +53,17 @@ object Findings {
 
         findings += carrierSettings(readings, resolution)
 
-        findings += Finding(
-            NEEDS_DEEP_CHECK,
-            "Whether this phone is signed in for VoLTE or Wi-Fi calling (IMS registration) is hidden from " +
-                "normal apps, and so is whether the Wi-Fi network lets Wi-Fi calling reach the carrier's server. " +
-                "This app does not guess either; both need the deep check, which is not built yet.",
-        )
+        val deep = readings.deep
+        if (deep == null) {
+            findings += Finding(
+                NEEDS_DEEP_CHECK,
+                "Whether this phone is signed in for VoLTE or Wi-Fi calling (IMS registration) is hidden from " +
+                    "normal apps, and so is whether the Wi-Fi network lets Wi-Fi calling reach the carrier's server. " +
+                    "This app does not guess either; the optional deep check (Shizuku) reads both.",
+            )
+        } else {
+            findings += DeepFindings.compare(deep, readings, resolution)
+        }
 
         val network = readings.network
         if (network?.roaming == true) {

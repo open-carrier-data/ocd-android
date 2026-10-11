@@ -1,16 +1,26 @@
 package io.github.open_carrier_data.check
 
+import io.github.open_carrier_data.check.Fixtures.deep
 import io.github.open_carrier_data.check.Fixtures.network
 import io.github.open_carrier_data.check.Fixtures.readings
 import io.github.open_carrier_data.check.Fixtures.settings
 import io.github.open_carrier_data.check.Fixtures.sim
+import io.github.open_carrier_data.check.core.ApnEdited
+import io.github.open_carrier_data.check.core.DeepCheckReading
 import io.github.open_carrier_data.check.core.DeviceInfo
+import io.github.open_carrier_data.check.core.EpdgName
 import io.github.open_carrier_data.check.core.Finding
 import io.github.open_carrier_data.check.core.Findings
+import io.github.open_carrier_data.check.core.ImsService
+import io.github.open_carrier_data.check.core.ImsSource
+import io.github.open_carrier_data.check.core.ImsTransport
+import io.github.open_carrier_data.check.core.LookupNetwork
 import io.github.open_carrier_data.check.core.Matcher
+import io.github.open_carrier_data.check.core.NetworkReading
 import io.github.open_carrier_data.check.core.PhoneReadings
 import io.github.open_carrier_data.check.core.Radio
 import io.github.open_carrier_data.check.core.RomFamily
+import io.github.open_carrier_data.check.core.WifiCallingSwitch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -129,6 +139,90 @@ class FindingsTest {
         val samsung = DeviceInfo("samsung", "SM-A505F", "a50", 14, RomFamily.STOCK)
         assertTrue("samsung_own_ims" in codes(readings(device = samsung)))
         assertFalse("samsung_own_ims" in codes(readings(device = samsung.copy(romFamily = RomFamily.LINEAGEOS))))
+    }
+
+    private val samsung = DeviceInfo("samsung", "SM-A505F", "a50", 14, RomFamily.STOCK)
+
+    private fun deepCodes(deep: DeepCheckReading, network: NetworkReading = network()) =
+        compare(readings(device = samsung, network = network, deep = deep))
+
+    @Test
+    fun `the A50 case - Wi-Fi calling on, signed in over 4G only, and the ePDG name does not resolve`() {
+        val findings = deepCodes(deep(wifiCalling = WifiCallingSwitch.ON, epdg = EpdgName.DOES_NOT_RESOLVE))
+        val codes = findings.map { it.code }
+        assertTrue("volte_signed_in" in codes)
+        assertFalse(Findings.NEEDS_DEEP_CHECK in codes)
+        val dns = findings.single { it.code == "wifi_calling_not_signed_in_epdg_dns" }
+        assertTrue(dns.text, "dns.google" in dns.text && "Private DNS" in dns.text && "router" in dns.text)
+        assertTrue(dns.text, "epdg.epc.mnc002.mcc262.pub.3gppnetwork.org" in dns.text)
+        assertTrue(dns.text, "OCD's answer for Wi-Fi calling is supported" in dns.text)
+    }
+
+    @Test
+    fun `the A50 after the fix - signed in over Wi-Fi`() {
+        val codes = deepCodes(deep(transport = ImsTransport.IWLAN, wifiCalling = WifiCallingSwitch.ON)).map { it.code }
+        assertTrue("wifi_calling_signed_in" in codes)
+        assertFalse(codes.any { it.startsWith("wifi_calling_not_signed_in") })
+    }
+
+    @Test
+    fun `not signed in for calls over 4G, with possible causes where OCD's tables turn VoLTE on`() {
+        val finding = deepCodes(deep(registered = false)).single { it.code == "volte_not_signed_in" }
+        assertTrue(finding.text, finding.text.startsWith("Not signed in for calls over 4G"))
+        assertTrue(finding.text, "not in the plan" in finding.text)
+        val on3g = deepCodes(deep(registered = false), network(data = 3)).map { it.code }
+        assertTrue("ims_not_signed_in" in on3g)
+    }
+
+    @Test
+    fun `Wi-Fi calling on without Wi-Fi, or with a working name, gets the plain causes`() {
+        val noWifi = deepCodes(deep(wifiCalling = WifiCallingSwitch.ON, lookup = LookupNetwork.MOBILE)).map { it.code }
+        assertTrue("wifi_calling_on_no_wifi" in noWifi)
+        val plain = deepCodes(deep(wifiCalling = WifiCallingSwitch.ON)).single { it.code == "wifi_calling_not_signed_in" }
+        assertTrue("back-off" in plain.text)
+    }
+
+    @Test
+    fun `an ePDG name that does not resolve on Wi-Fi is said even with Wi-Fi calling off`() {
+        val codes = deepCodes(deep(epdg = EpdgName.DOES_NOT_RESOLVE)).map { it.code }
+        assertTrue("epdg_name_not_resolving" in codes)
+        assertFalse("epdg_name_not_resolving" in deepCodes(deep(epdg = EpdgName.DOES_NOT_RESOLVE, lookup = LookupNetwork.MOBILE)).map { it.code })
+        val offline = deepCodes(deep(wifiCalling = WifiCallingSwitch.ON, epdg = EpdgName.DOES_NOT_RESOLVE, lookup = LookupNetwork.NONE))
+        assertFalse(offline.any { "epdg" in it.code })
+        assertTrue("wifi_calling_on_no_wifi" in offline.map { it.code })
+        val withPrivateDns = deepCodes(deep(epdg = EpdgName.DOES_NOT_RESOLVE, privateDns = true)).single { it.code == "epdg_name_not_resolving" }
+        assertTrue("already on" in withPrivateDns.text)
+    }
+
+    @Test
+    fun `no Samsung IMS, an unreadable IMS, signed in without calls, and a hand-made APN`() {
+        assertTrue("ims_not_found" in deepCodes(deep(source = ImsSource.NOT_FOUND)).map { it.code })
+        assertTrue("ims_unreadable" in deepCodes(deep(source = ImsSource.UNREADABLE)).map { it.code })
+        assertTrue("ims_no_task" in deepCodes(deep(registered = null)).map { it.code })
+        assertTrue("ims_signed_in_without_calls" in deepCodes(deep(services = listOf(ImsService.SMSIP))).map { it.code })
+        assertTrue("vonr_signed_in" in deepCodes(deep(transport = ImsTransport.NR)).map { it.code })
+        val apns = Fixtures.a50Apns.copy(rows = Fixtures.a50Apns.rows.map { it.copy(edited = ApnEdited.BY_USER) })
+        assertTrue("apn_edited_by_user" in deepCodes(deep(apns = apns)).map { it.code })
+    }
+
+    @Test
+    fun `deep findings never say a feature works, that OCD is wrong, or that a carrier lacks a feature`() {
+        val scenarios = listOf(
+            deep(),
+            deep(registered = false),
+            deep(registered = null),
+            deep(transport = ImsTransport.IWLAN, wifiCalling = WifiCallingSwitch.ON),
+            deep(wifiCalling = WifiCallingSwitch.ON, epdg = EpdgName.DOES_NOT_RESOLVE, privateDns = true),
+            deep(wifiCalling = WifiCallingSwitch.ON, lookup = LookupNetwork.MOBILE),
+            deep(source = ImsSource.NOT_FOUND, epdg = EpdgName.DOES_NOT_RESOLVE),
+        )
+        val banned = Regex("(?i)(OCD is wrong|OCD's .* wrong|does not support|doesn't support|\\bworks\\b|is working|calls work)")
+        for (scenario in scenarios) {
+            for (finding in deepCodes(scenario)) {
+                assertFalse("${finding.code}: ${finding.text}", banned.containsMatchIn(finding.text))
+                assertTrue(finding.code, Regex("^[a-z_]+(:[a-z_]+)?$").matches(finding.code))
+            }
+        }
     }
 
     @Test

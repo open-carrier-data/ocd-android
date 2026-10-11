@@ -17,7 +17,17 @@ data class PhoneReadings(
     val network: NetworkReading?,
     val carrierSettings: CarrierSettingsReading?,
     val dataConnections: List<DataConnection>?,
-)
+    /** The optional Shizuku deep check; null when it has not run. */
+    val deep: DeepCheckReading? = null,
+) {
+    val accessTier: AccessTier get() = if (deep != null) AccessTier.SHIZUKU else AccessTier.NORMAL
+}
+
+/** Which access produced a report: a normal app, or the read-only deep check through Shizuku. */
+enum class AccessTier(val wire: String) {
+    NORMAL("normal"),
+    SHIZUKU("shizuku"),
+}
 
 data class DeviceInfo(
     /** Build.MANUFACTURER; on screen and in findings only, never in the report. */

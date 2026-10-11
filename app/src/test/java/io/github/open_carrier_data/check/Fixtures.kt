@@ -1,15 +1,26 @@
 package io.github.open_carrier_data.check
 
+import io.github.open_carrier_data.check.core.ApnEdited
+import io.github.open_carrier_data.check.core.ApnList
+import io.github.open_carrier_data.check.core.ApnRow
 import io.github.open_carrier_data.check.core.CarrierSettingsReading
 import io.github.open_carrier_data.check.core.DataConnection
+import io.github.open_carrier_data.check.core.DeepCheckReading
 import io.github.open_carrier_data.check.core.DeviceInfo
+import io.github.open_carrier_data.check.core.EpdgName
 import io.github.open_carrier_data.check.core.Gid1Status
+import io.github.open_carrier_data.check.core.ImsReading
+import io.github.open_carrier_data.check.core.ImsService
+import io.github.open_carrier_data.check.core.ImsSource
+import io.github.open_carrier_data.check.core.ImsTransport
+import io.github.open_carrier_data.check.core.LookupNetwork
 import io.github.open_carrier_data.check.core.NetworkReading
 import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.PhoneReadings
 import io.github.open_carrier_data.check.core.Radio
 import io.github.open_carrier_data.check.core.RomFamily
 import io.github.open_carrier_data.check.core.SimReading
+import io.github.open_carrier_data.check.core.WifiCallingSwitch
 import java.time.LocalDate
 
 /**
@@ -90,6 +101,7 @@ object Fixtures {
         device: DeviceInfo = DeviceInfo("Fairphone", "FP5", "FP5", 15, RomFamily.STOCK),
         permission: Boolean = true,
         checkedOn: LocalDate = today,
+        deep: DeepCheckReading? = null,
     ) = PhoneReadings(
         checkedOn = checkedOn,
         device = device,
@@ -99,5 +111,45 @@ object Fixtures {
         network = network,
         carrierSettings = settings,
         dataConnections = connections,
+        deep = deep,
+    )
+
+    val a50Apns = ApnList(
+        readable = true,
+        rows = listOf(
+            ApnRow("web.vodafone.de", listOf("default", "supl", "xcap"), "IPV4V6", "IPV4V6", true, null, ApnEdited.NO),
+            ApnRow("IMS", listOf("ims"), "IPV4V6", "IPV4V6", true, null, ApnEdited.NO),
+        ),
+    )
+
+    /** A deep check result; by default the A50 before its DNS fix: VoLTE signed in, Wi-Fi calling off. */
+    fun deep(
+        registered: Boolean? = true,
+        transport: ImsTransport = ImsTransport.LTE,
+        services: List<ImsService> = listOf(ImsService.MMTEL, ImsService.SMSIP),
+        source: ImsSource = ImsSource.SAMSUNG,
+        wifiCalling: WifiCallingSwitch = WifiCallingSwitch.OFF,
+        epdg: EpdgName = EpdgName.RESOLVES,
+        lookup: LookupNetwork = LookupNetwork.WIFI,
+        privateDns: Boolean? = false,
+        apns: ApnList? = a50Apns,
+    ) = DeepCheckReading(
+        ims = if (source != ImsSource.SAMSUNG) {
+            ImsReading(source)
+        } else {
+            ImsReading(
+                source = source,
+                registered = registered,
+                state = registered?.let { if (it) "registered" else "not_registered" },
+                transport = transport.takeIf { registered == true },
+                services = if (registered == true) services else emptyList(),
+                mno = "Vodafone_DE",
+            )
+        },
+        wifiCallingSwitch = wifiCalling,
+        epdgName = epdg,
+        apnList = apns,
+        lookupNetwork = lookup,
+        privateDnsActive = privateDns,
     )
 }

@@ -1,9 +1,14 @@
 package io.github.open_carrier_data.check
 
+import io.github.open_carrier_data.check.Fixtures.deep
 import io.github.open_carrier_data.check.Fixtures.readings
 import io.github.open_carrier_data.check.Fixtures.settings
 import io.github.open_carrier_data.check.Fixtures.sim
+import io.github.open_carrier_data.check.core.ApnListParser
 import io.github.open_carrier_data.check.core.DataConnection
+import io.github.open_carrier_data.check.core.DeepCheckReading
+import io.github.open_carrier_data.check.core.EpdgLookupParser
+import io.github.open_carrier_data.check.core.EpdgName
 import io.github.open_carrier_data.check.core.Findings
 import io.github.open_carrier_data.check.core.Gid1Status
 import io.github.open_carrier_data.check.core.Matcher
@@ -11,6 +16,9 @@ import io.github.open_carrier_data.check.core.PhoneReadings
 import io.github.open_carrier_data.check.core.Radio
 import io.github.open_carrier_data.check.core.Report
 import io.github.open_carrier_data.check.core.ReportResult
+import io.github.open_carrier_data.check.core.SamsungImsParser
+import io.github.open_carrier_data.check.core.SimSlot
+import io.github.open_carrier_data.check.core.WifiCallingSwitch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -54,6 +62,58 @@ class ReportTest {
         assertEquals("ocd-check-report.v1", result.json["schema"]!!.jsonPrimitive.content)
         assertEquals("none", result.json["phone_writes_performed"]!!.jsonPrimitive.content)
         assertEquals("FP5", result.json["device"]!!.jsonObject["codename"]!!.jsonPrimitive.content)
+        assertEquals("normal", result.json["app"]!!.jsonObject["access_tier"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `a Shizuku report holds the deep check's typed results and passes the scan`() {
+        val result = report(readings(deep = deep(wifiCalling = WifiCallingSwitch.ON, epdg = EpdgName.DOES_NOT_RESOLVE)))
+        assertEquals(emptyList<Any>(), result.hits)
+        assertEquals("shizuku", result.json["app"]!!.jsonObject["access_tier"]!!.jsonPrimitive.content)
+        val ims = result.json["ims_registration"]!!.jsonObject
+        assertEquals("samsung_ims", ims["source"]!!.jsonPrimitive.content)
+        assertEquals("true", ims["registered"]!!.jsonPrimitive.content)
+        assertEquals("lte", ims["transport"]!!.jsonPrimitive.content)
+        assertEquals(listOf("mmtel", "smsip"), ims["services"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals("Vodafone_DE", ims["mno"]!!.jsonPrimitive.content)
+        val wifi = result.json["wifi_calling"]!!.jsonObject
+        assertEquals("on", wifi["switch"]!!.jsonPrimitive.content)
+        assertEquals("does_not_resolve", wifi["epdg_name"]!!.jsonPrimitive.content)
+        assertEquals("wifi", wifi["lookup_network"]!!.jsonPrimitive.content)
+        val rows = result.json["apn_list"]!!.jsonObject["rows"]!!.jsonArray
+        assertEquals("web.vodafone.de", rows[0].jsonObject["apn"]!!.jsonPrimitive.content)
+        val findings = result.json["findings"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertTrue(findings.toString(), "wifi_calling_not_signed_in_epdg_dns" in findings)
+        assertFalse(Findings.NEEDS_DEEP_CHECK in findings)
+        assertEquals("none", result.json["phone_writes_performed"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `a Shizuku report built from dumps full of identifiers holds none of them`() {
+        val dump = """
+  SIM slot: [0] state: [REGISTERED] IMS Profile: [Name : Telekom DE IMS, enabled : 2, pdn : ims]
+  impi: 262011234567890@ims.mnc001.mcc262.3gppnetwork.org, impu: sip:+491510000001@ims.telekom.de
+  Governor: RegiGvnBase [mMno=Telekom_DE, mFailureCounter=0]
+  P-CSCF: [2a01:598:0:0:1, 10.1.2.3] iccid=8949010000000000001 imei=350000000000001
+    slot[0]: [Telekom DE IMS|REGISTERED] onRegistered: RAT = 13, profile=Telekom DE IMS, service=[mmtel, smsip, sip:+491510000001]
+"""
+        val apns = "Row: 0 apn=internet.telekom, type=default,supl, protocol=IPV4V6, roaming_protocol=IPV4V6, " +
+            "carrier_enabled=1, mvno_type=NULL, edited=0\nRow: 1 apn=+491510000001, type=default, protocol=IP, " +
+            "roaming_protocol=IP, carrier_enabled=1, mvno_type=NULL, edited=1"
+        val ping = "PING epdg.epc.mnc001.mcc262.pub.3gppnetwork.org (10.1.2.3) 56(84) bytes of data."
+        val deep = DeepCheckReading(
+            ims = SamsungImsParser.parse(dump.lineSequence(), SimSlot.of(0)!!),
+            wifiCallingSwitch = WifiCallingSwitch.OFF,
+            epdgName = EpdgLookupParser.parse(ping.lineSequence()),
+            apnList = ApnListParser.parse(apns.lineSequence()),
+        )
+        val result = report(readings(sim = sim(mccmnc = "26201", spn = "Telekom.de", carrierId = 3, specificCarrierId = 3), deep = deep))
+        assertTrue(result.hits.toString(), result.shareable)
+        for (value in listOf("262011234567890", "491510000001", "2a01:598", "10.1.2.3", "8949010000000000001", "350000000000001", "sip:")) {
+            assertFalse(value, value in result.text)
+        }
+        assertEquals(1, result.json["apn_list"]!!.jsonObject["rows"]!!.jsonArray.size)
+        assertEquals("Telekom_DE", result.json["ims_registration"]!!.jsonObject["mno"]!!.jsonPrimitive.content)
     }
 
     @Test
