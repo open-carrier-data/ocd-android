@@ -16,12 +16,6 @@
         android:name="${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
         tools:node="remove" />
 
-    <!-- Shizuku's provider library asks for Shizuku's pre-version-11 runtime permission. The
-         deep check needs Shizuku 11 or newer, which grants access in its own dialog. -->
-    <uses-permission
-        android:name="moe.shizuku.manager.permission.API_V23"
-        tools:node="remove" />
-
     <uses-feature
         android:name="android.hardware.telephony"
         android:required="false" />

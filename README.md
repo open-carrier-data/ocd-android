@@ -2,7 +2,7 @@
 
 OCD Check is an Android app that reads a phone's SIM, network and carrier settings and compares them with [Open Carrier Data](https://github.com/open-carrier-data/open-carrier-data) (OCD). It is read-only. It changes nothing on the phone, and it has no internet permission, so it cannot send anything.
 
-**Status: early and unpublished.** This is version 0.1.0: stage 2 of the plan (view only, normal app) plus stage 2b (the optional read-only Shizuku deep check). It has not been run on a phone yet, and it is not on any store. The JVM tests pass and the debug build assembles.
+**Status: early and unpublished.** This is version 0.1.0: stage 2 of the plan (view only, normal app) plus stage 2b (the optional read-only Shizuku deep check). It first ran on a phone on 2026-10-13 (Galaxy A50, Android 14, LIDL Connect SIM), and it is not on any store. The JVM tests pass and the debug build assembles.
 
 ## What it does
 
@@ -37,7 +37,7 @@ The remaining startup entries come from androidx: `ProcessLifecycleInitializer`,
 The deep check adds three manifest entries, none of them a permission the app holds:
 - **Shizuku's provider** (`rikka.shizuku.ShizukuProvider`). Shizuku hands its binder to the app through it. It is exported, as Shizuku requires, and guarded by `INTERACT_ACROSS_USERS_FULL`, so only the system and Shizuku's own server can call it.
 - **A `<queries>` entry** for `moe.shizuku.privileged.api`, only to show whether the Shizuku app is installed.
-- **A removal.** Shizuku's provider library asks for `moe.shizuku.manager.permission.API_V23`, the runtime permission of Shizuku before version 11. The manifest removes it; the deep check needs Shizuku 11 or newer, which grants access in its own dialog.
+- **Shizuku's own permission name.** Shizuku's provider library asks for `moe.shizuku.manager.permission.API_V23`. The Shizuku app defines it, not Android, and it grants nothing by itself; access comes only from Shizuku's own dialog. The Shizuku server finds client apps by this requested permission and sends them its binder, so the app keeps it. An earlier build removed it, and on the A50 the deep check then never saw Shizuku running.
 
 To check a build yourself:
 
@@ -45,7 +45,7 @@ To check a build yourself:
 $ANDROID_HOME/build-tools/34.0.0/aapt2 dump permissions app/build/outputs/apk/debug/app-debug.apk
 ```
 
-On 2026-10-11, with the Shizuku libraries in, this printed only `READ_PHONE_STATE` and `ACCESS_NETWORK_STATE`. `ManifestTest` checks the same on the merged manifest of every build.
+With the Shizuku libraries in, this prints `READ_PHONE_STATE`, `ACCESS_NETWORK_STATE` and Shizuku's `API_V23`, and nothing else. `ManifestTest` checks the same on the merged manifest of every build.
 
 ## What it never collects
 

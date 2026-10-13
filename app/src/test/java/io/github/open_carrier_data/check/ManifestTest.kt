@@ -11,10 +11,13 @@ import java.util.Properties
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
- * The app asks for exactly two permissions and no INTERNET, in its own
- * manifest and in the merged manifest the build packages, which also holds
- * what the libraries add (Shizuku's provider library asks for its legacy
- * permission; the app's manifest removes it).
+ * The app asks for exactly two Android permissions and no INTERNET, in its
+ * own manifest and in the merged manifest the build packages. The merged
+ * manifest also holds Shizuku's own API_V23 permission from its provider
+ * library: the Shizuku server finds client apps by that requested
+ * permission and sends them its binder, so without it the deep check never
+ * sees Shizuku running (found on the A50, 2026-10-13). It is defined by the
+ * Shizuku app, not by Android, and grants nothing until Shizuku's own dialog.
  */
 class ManifestTest {
     private val android = "http://schemas.android.com/apk/res/android"
@@ -54,9 +57,8 @@ class ManifestTest {
     fun `the merged manifest, with Shizuku's libraries, asks for nothing more`() {
         val document = parse(merged)
         val requested = requested(document)
-        assertEquals(allowed, requested)
+        assertEquals(allowed + "moe.shizuku.manager.permission.API_V23", requested)
         assertFalse("android.permission.INTERNET" in requested)
-        assertFalse(requested.any { it.startsWith("moe.shizuku") })
         assertEquals(emptyList<Element>(), document.elements("permission"))
     }
 
