@@ -56,13 +56,16 @@ class PhoneReader(private val context: Context) {
     fun hasPhonePermission(): Boolean =
         context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
 
+    /**
+     * FEATURE_TELEPHONY_SUBSCRIPTION (API 33) is declared only by devices that
+     * launched with Android 13 or later; an upgraded phone such as the Galaxy
+     * A50 on Android 14 declares just FEATURE_TELEPHONY.
+     */
     fun hasTelephony(): Boolean {
-        val feature = if (Build.VERSION.SDK_INT >= 33) {
-            PackageManager.FEATURE_TELEPHONY_SUBSCRIPTION
-        } else {
-            PackageManager.FEATURE_TELEPHONY
-        }
-        return telephony != null && context.packageManager.hasSystemFeature(feature)
+        val pm = context.packageManager
+        val subscription = Build.VERSION.SDK_INT >= 33 &&
+            pm.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_SUBSCRIPTION)
+        return telephony != null && (subscription || pm.hasSystemFeature(PackageManager.FEATURE_TELEPHONY))
     }
 
     /** Active SIMs. Without the permission only the default data SIM is known. */
