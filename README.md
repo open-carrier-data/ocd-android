@@ -198,7 +198,7 @@ The app does not open an issue on GitHub for you. Round 9 allows a prefilled `wr
 
 ## OCD data in the app
 
-`app/src/main/assets/ocd-lookup.json.gzip` (about 190 KB) is built from a checkout of OCD's public repository by `tools/build_bundle.py`. The script reads these files and changes none of them:
+`app/src/main/assets/ocd-lookup.json.gzip` (about 390 KB) is built from a checkout of OCD's public repository by `tools/build_bundle.py`. The script reads these files and changes none of them:
 
 | File | What the bundle keeps |
 |---|---|
@@ -231,11 +231,11 @@ Two differences from the resolver:
 - **Two carrier IDs.** A SIM has a carrier ID and a specific carrier ID, and a profile's `android_carrier_ids` match when either one is listed. Android's CarrierConfig app compares `cid` the same way (`DefaultCarrierConfigService`, case `"cid"`). The Python resolver takes one ID.
 - **Unreadable dimensions are kept aside.** A profile that needs a value the app cannot read (ICCID, IMSI, GID2, or GID1 without the permission) does not simply fail to match. It is listed as "cannot check". The matched stack is the same as the resolver's for the same inputs.
 
-**Device records** (OCD's round 17) say what one phone model's own carrier file sets for VoLTE, Wi-Fi calling, video calling and VoNR on one carrier profile. OCD lists them where they differ from the carrier value or the carrier value is `conditional` or `unknown`. The app reads them for the most specific profile:
+**Device records** (OCD's round 17) say what one phone model's own carrier file sets for VoLTE, Wi-Fi calling, video calling and VoNR on one carrier profile. OCD lists every device value it publishes, including those that agree with the carrier value. The app reads them for the most specific profile:
 - the phone's keys are `samsung:` and `Build.MODEL` on a Samsung phone, and the one catalog device whose unique device names list `Build.DEVICE` or whose unique models list `Build.MODEL`, compared case-folded; a name two catalog devices share matches nothing;
 - a record whose stack matches the phone's software (`stock`, or `lineageos` on a LineageOS build) reads "This phone model's own file sets VoLTE on for this SIM (one source: Samsung's carrier pack, stock firmware, newest entry 2025-02). OCD's carrier summary is conditional. Configuration, not a test.";
 - a record of another stack reads "This model's stock firmware file ...", and adds that the phone runs another software whose own file may differ; it never says "this phone";
-- without a record, the summary stays labelled as the carrier's; a missing record is never "off";
+- without a record, the summary stays labelled as the carrier's, and the screen says "OCD publishes no file of this phone model for this SIM (none read, older than five years, or not bound to one model)"; a missing record is never "off" and never agreement;
 - records built from another data digest than the bundle's are not used.
 
 The app writes nothing from a record into the phone. The findings codes are `device_record_<state>:<capability>` and `device_record_other_stack_<state>:<capability>`.

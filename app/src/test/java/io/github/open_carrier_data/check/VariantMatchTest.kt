@@ -29,6 +29,7 @@ import java.io.File
  */
 class VariantMatchTest {
     private val vodafone = "open.26202.8cebd7550c67"
+    private val telekom = "open.26201.13528695fee7"
     private val s20Stock = DeviceInfo("samsung", "SM-G981B", "x1s", 13, RomFamily.STOCK)
     private val s20Lineage = DeviceInfo("samsung", "SM-G981B", "x1s", 16, RomFamily.LINEAGEOS)
     private val nexus = DeviceInfo("LGE", "Nexus 5X", "bullhead", 8, RomFamily.LINEAGEOS)
@@ -47,6 +48,12 @@ class VariantMatchTest {
                 ),
                 "vonr" to listOf(
                     DeviceRecord("on", "samsung_omc", "stock", "2025-02", basis = "samsung_vonr_switch", devices = listOf("samsung:SM-G981B")),
+                ),
+            ),
+            // Telekom's VoLTE is supported; the S20's own on agrees and is listed too (tie-break).
+            telekom to mapOf(
+                "volte" to listOf(
+                    DeviceRecord("on", "samsung_omc", "stock", "2025-02", devices = listOf("samsung:SM-G980F", "samsung:SM-G981B")),
                 ),
             ),
         ),
@@ -98,6 +105,18 @@ class VariantMatchTest {
     }
 
     @Test
+    fun `the S20 on Telekom shows its own file next to the supported summary`() {
+        val readings = readings(sim = sim(mccmnc = "26201", spn = "", carrierId = 1911, specificCarrierId = 1911), device = s20Stock)
+        val resolution = Matcher.resolve(bundle, readings.sim!!.identity()!!)
+        assertEquals(telekom, resolution.mostSpecific!!.profileId)
+        val found = Findings.compare(readings, resolution, bundle).filter { it.code.startsWith("device_record") }
+        assertEquals(listOf("device_record_on:volte"), found.map { it.code })
+        val text = found.single().text
+        assertTrue(text, text.startsWith("This phone model's own file sets VoLTE (calls over 4G) on for this SIM"))
+        assertTrue(text, text.contains("OCD's carrier summary is supported."))
+    }
+
+    @Test
     fun `no record gives no device line, never off`() {
         assertEquals(emptyList<Any>(), findings(DeviceInfo("Fairphone", "FP5", "FP5", 15, RomFamily.STOCK)))
         // A Samsung model the records do not name.
@@ -145,6 +164,8 @@ class VariantMatchTest {
         assertEquals("on", s20.record.state)
         assertEquals("samsung_omc", s20.record.source)
         assertTrue(s20.sameStack)
+        // Every value is listed: on Telekom (supported) the S20's own on is there too.
+        assertEquals("on", shippedRecords.recordsFor(telekom, "volte", s20Stock).single().record.state)
     }
 
     @Test

@@ -6,12 +6,15 @@ import kotlinx.serialization.Serializable
 /**
  * OCD's device records (generated/devices/carrier-variants.json, round 17):
  * what one phone model's own carrier file sets for VoLTE, Wi-Fi calling, video
- * calling and VoNR on one carrier profile. Listed only where that differs from
- * the profile's value or the profile's value is conditional or unknown.
+ * calling and VoNR on one carrier profile. OCD lists every device value it
+ * publishes, including those that agree with the profile's value (round 17
+ * tie-break), so a record that agrees shows the model's own file was read.
  *
- * A record is configuration from one source, not a test. A missing record is
- * never "off": the app then shows the carrier summary, labelled as the
- * carrier's.
+ * A record is configuration from one source, not a test. A missing record
+ * means OCD reads no file of the model that sets a value there, the value is
+ * older than five years, or the model does not bind to one catalog device;
+ * it is never "off" and never agreement. The app then shows the carrier
+ * summary, labelled as the carrier's.
  */
 @Serializable
 data class DeviceRecords(

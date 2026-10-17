@@ -531,7 +531,10 @@ private fun DeviceRecordLine(state: UiState, bundle: OcdBundle, profileId: Strin
     val device = state.readings?.device ?: return
     val match = records.recordsFor(profileId, capability, device).firstOrNull()
     if (match == null) {
-        Note("Carrier summary: OCD has no file of this phone model that differs from it.")
+        Note(
+            "OCD publishes no file of this phone model for this SIM (none read, older than five years, " +
+                "or not bound to one model). The value above is the carrier summary.",
+        )
         return
     }
     val value = when (match.record.state) {
