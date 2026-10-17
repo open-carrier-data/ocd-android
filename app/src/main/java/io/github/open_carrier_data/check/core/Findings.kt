@@ -52,6 +52,7 @@ object Findings {
         if (resolution.notCheckable.isNotEmpty()) findings += hiddenSelectors(resolution, code)
 
         findings += carrierSettings(readings, resolution)
+        findings += deviceRecords(readings, resolution, bundle)
 
         val deep = readings.deep
         if (deep == null) {
@@ -86,6 +87,39 @@ object Findings {
             )
         }
         return findings
+    }
+
+    /** The capabilities OCD publishes device records for, in the app's order. */
+    val deviceRecordCapabilities = listOf("volte", "vowifi", "vonr", "video_calling")
+
+    /**
+     * One line per switch where this phone model has a device record on the
+     * most specific profile: what its own file sets, next to OCD's carrier
+     * summary. A stock record on a LineageOS build is the model's stock
+     * firmware, not this phone. No record gives no line: the carrier value
+     * then stands as the carrier's, never as this phone's.
+     */
+    fun deviceRecords(readings: PhoneReadings, resolution: Resolution, bundle: OcdBundle): List<Finding> {
+        val records = bundle.records ?: return emptyList()
+        val profile = resolution.mostSpecific ?: return emptyList()
+        return deviceRecordCapabilities.filter { it in records.capabilities }.mapNotNull { capability ->
+            val match = records.recordsFor(profile.profileId, capability, readings.device).firstOrNull()
+                ?: return@mapNotNull null
+            val state = match.record.state
+            val label = Capabilities.label(capability)
+            val sets = when (state) {
+                "on" -> "sets $label on for this SIM"
+                "off" -> "sets $label off for this SIM"
+                else -> "and another file of the same model disagree about $label for this SIM"
+            }
+            val other = if (match.sameStack) "" else
+                " This phone runs ${readings.device.romFamily.plain}, whose own file may differ."
+            Finding(
+                (if (match.sameStack) "device_record_" else "device_record_other_stack_") + "$state:$capability",
+                "${match.whose} $sets (${match.sourceLine}). OCD's carrier summary is " +
+                    "${resolution.answer(capability).wire}.$other Configuration, not a test.",
+            )
+        }
     }
 
     private fun hiddenSelectors(resolution: Resolution, code: String): Finding {

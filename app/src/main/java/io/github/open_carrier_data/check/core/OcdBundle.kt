@@ -15,7 +15,13 @@ data class OcdBundle(
     @SerialName("capability_keys") val capabilityKeys: List<String>,
     val limits: Limits,
     val profiles: List<OcdProfile>,
+    /** OCD's device records, when the snapshot has them (generated/devices/carrier-variants.json). */
+    @SerialName("device_records") val deviceRecords: DeviceRecords? = null,
 ) {
+    /** The device records, only when they were built from this snapshot's data. */
+    val records: DeviceRecords?
+        get() = deviceRecords?.takeIf { it.basedOnDataDigest == source.dataDigest }
+
     private val byMccMnc: Map<String, List<OcdProfile>> by lazy {
         val index = HashMap<String, MutableList<OcdProfile>>()
         for (profile in profiles) {
@@ -74,6 +80,8 @@ data class Limits(
     @SerialName("not_verified") val notVerified: String,
     @SerialName("tables_not_tests") val tablesNotTests: String,
     @SerialName("mvno_merge") val mvnoMerge: String,
+    /** What a device record is, from the same section; present with device records. */
+    @SerialName("device_records") val deviceRecords: String? = null,
 ) {
     fun meaning(value: CapabilityValue): String = valueMeanings[value.wire].orEmpty()
 }

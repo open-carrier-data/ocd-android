@@ -30,6 +30,7 @@ Read these before you depend on the data:
 - No profile has been verified on a phone. Every value comes from a maintained source.
 - A capability value says what carrier tables configure, not what works. It does not say the operator still offers the service. `supported` means more.
 - An MVNO without its own SPN merges into the host network's profile.
+- For VoLTE, Wi-Fi calling, video calling and VoNR, a profile's value is a summary. A device record is configuration from one vendor or ROM file, not a test result.
 
 ## How it is built
 """
@@ -101,6 +102,66 @@ class BuildBundleTest(unittest.TestCase):
     def test_unknown_match_key_fails(self) -> None:
         with self.assertRaises(build_bundle.BundleError):
             self.build(profile("open.1", {"mccmnc": ["26202"], "plmn": ["x"]}))
+
+    def variants(self, **overrides: object) -> dict:
+        data = {
+            "schema_version": 1,
+            "description": "x",
+            "based_on_data_digest": "sha256:ab",
+            "checks_through": "2026-07-14",
+            "stale_after": "2027-01-10",
+            "capabilities": ["video_calling", "volte", "vonr", "vowifi"],
+            "profiles": {
+                "open.1": {
+                    "volte": [
+                        {"devices": ["android:bullhead", "android:peridot-poco"], "newest_entry": "2024-12", "source": "lineageos_device_overlays", "stack": "lineageos", "state": "off"},
+                        {"devices": ["samsung:SM-G981B"], "newest_entry": "2025-02", "source": "samsung_omc", "stack": "stock", "state": "on"},
+                    ]
+                }
+            },
+        }
+        data.update(overrides)
+        return data
+
+    CATALOG = {
+        "devices": [
+            {"device_id": "android:bullhead", "brands": ["LGE"], "device_names": ["bullhead"], "models": ["Nexus 5X"]},
+            {"device_id": "android:peridot-poco", "brands": ["POCO"], "device_names": ["peridot"], "models": ["POCO F6"]},
+            {"device_id": "android:peridot-redmi", "brands": ["Redmi"], "device_names": ["peridot"], "models": ["Redmi Turbo 3"]},
+            {"device_id": "android:x1s", "brands": ["Samsung"], "device_names": ["x1s"], "models": ["SM-G981B"]},
+        ]
+    }
+
+    def build_with_records(self, variants: dict) -> dict:
+        return build_bundle.build_bundle(
+            lookup(profile("open.1", {"mccmnc": ["26202"]})), METADATA, README, COMMIT, "2026-10-10", variants, self.CATALOG
+        )
+
+    def test_device_records_are_bundled_with_unique_aliases(self) -> None:
+        bundle = self.build_with_records(self.variants())
+        records = bundle["device_records"]
+        self.assertEqual(records["profiles"], self.variants()["profiles"])
+        self.assertEqual(records["based_on_data_digest"], "sha256:ab")
+        # A shared codename is left out, so it matches nothing in the app.
+        self.assertEqual(
+            records["devices"],
+            {"android:bullhead": {"device_names": ["bullhead"], "models": ["Nexus 5X"]}, "android:peridot-poco": {"models": ["POCO F6"]}},
+        )
+        self.assertTrue(bundle["limits"]["device_records"].startswith("For VoLTE, Wi-Fi calling, video calling and VoNR"))
+        self.assertNotIn("device_records", self.build(profile("open.1", {"mccmnc": ["26202"]})))
+
+    def test_device_records_must_match_the_data(self) -> None:
+        for bad in (
+            self.variants(based_on_data_digest="sha256:cd"),
+            self.variants(capabilities=["volte"]),
+            self.variants(profiles={"open.2": {"volte": []}}),
+            self.variants(profiles={"open.1": {"mms": []}}),
+            self.variants(profiles={"open.1": {"volte": [{"devices": ["android:bullhead"], "source": "x", "stack": "lineageos", "state": "unknown"}]}}),
+            self.variants(profiles={"open.1": {"volte": [{"devices": ["android:bullhead"], "source": "x", "stack": "lineageos", "state": "on", "confidence": "high"}]}}),
+            self.variants(profiles={"open.1": {"volte": [{"devices": ["android:unlisted"], "source": "x", "stack": "lineageos", "state": "on"}]}}),
+        ):
+            with self.assertRaises(build_bundle.BundleError):
+                self.build_with_records(bad)
 
     def test_encoding_is_deterministic(self) -> None:
         bundle = self.build(profile("open.1", {"mccmnc": ["26202"], "android_carrier_ids": [2397]}))
