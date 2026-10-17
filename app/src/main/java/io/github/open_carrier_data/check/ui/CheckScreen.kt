@@ -56,6 +56,7 @@ import io.github.open_carrier_data.check.core.CapabilityValue
 import io.github.open_carrier_data.check.core.CarrierKeys
 import io.github.open_carrier_data.check.core.DeepCheckReading
 import io.github.open_carrier_data.check.core.EpdgName
+import io.github.open_carrier_data.check.core.Findings
 import io.github.open_carrier_data.check.core.FiveG
 import io.github.open_carrier_data.check.core.Gid1Status
 import io.github.open_carrier_data.check.core.ImsSource
@@ -500,7 +501,9 @@ private fun OcdSection(state: UiState, bundle: OcdBundle) {
                     }
                 }
                 Field(Capabilities.label(key), value.wire, note, emphasize = true)
+                DeviceRecordLine(state, bundle, most.profileId, key)
             }
+            bundle.limits.deviceRecords?.takeIf { bundle.records != null }?.let { Note("From OCD's README: $it") }
         }
         if (resolution.notCheckable.isNotEmpty()) {
             HorizontalDivider()
@@ -514,6 +517,37 @@ private fun OcdSection(state: UiState, bundle: OcdBundle) {
             }
         }
     }
+}
+
+/**
+ * For VoLTE, Wi-Fi calling, VoNR and video calling: what this phone model's own
+ * file sets, next to the carrier summary above it (OCD's device records). No
+ * record keeps the value above as the carrier's, never this phone's.
+ */
+@Composable
+private fun DeviceRecordLine(state: UiState, bundle: OcdBundle, profileId: String, capability: String) {
+    val records = bundle.records ?: return
+    if (capability !in Findings.deviceRecordCapabilities) return
+    val device = state.readings?.device ?: return
+    val match = records.recordsFor(profileId, capability, device).firstOrNull()
+    if (match == null) {
+        Note(
+            "OCD publishes no file of this phone model for this SIM (none read, older than five years, " +
+                "or not bound to one model). The value above is the carrier summary.",
+        )
+        return
+    }
+    val value = when (match.record.state) {
+        "on" -> "on"
+        "off" -> "off"
+        else -> "its files disagree"
+    }
+    Field(
+        "  ${match.whose} says",
+        value,
+        "${match.sourceLine.replaceFirstChar(Char::uppercase)}. Configuration, not a test." +
+            if (match.sameStack) "" else " This phone runs ${device.romFamily.plain}.",
+    )
 }
 
 private fun dimensionPlain(name: String): String = when (name) {

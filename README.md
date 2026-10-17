@@ -11,7 +11,7 @@ OCD Check is an Android app that reads a phone's SIM, network and carrier settin
    - **Network now:** serving network code, roaming, the data and voice network types, and three 5G hints: standalone (SA) in use, the 5G icon (`TelephonyDisplayInfo`), and whether the phone reports a 5G signal.
    - **Carrier settings on this phone:** six CarrierConfig keys and nothing else: `carrier_volte_available_bool`, `carrier_wfc_ims_available_bool`, `carrier_vt_available_bool`, `vonr_enabled_bool`, `enabledMMS` and `carrier_nr_availabilities_int_array`. It also reads whether carrier-specific settings were applied at all.
    - **Mobile data connections:** the APN name and the APN types of each mobile data connection Android shows to apps.
-2. **Looks the SIM up in OCD's data**, which ships inside the app. It shows the matching profiles, general to specific, and the most specific profile's value for every capability. Each value comes with OCD's own plain meaning from its README, "Limits to read before you ship".
+2. **Looks the SIM up in OCD's data**, which ships inside the app. It shows the matching profiles, general to specific, and the most specific profile's value for every capability. Each value comes with OCD's own plain meaning from its README, "Limits to read before you ship". For VoLTE, Wi-Fi calling, VoNR and video calling, OCD's value is a summary over every phone model's carrier table; where OCD has a device record for this phone model, the app shows it next to that summary: "this phone model's own file says on" (see "Device records" below).
 3. **Writes findings in plain language.** A finding compares a phone reading with an OCD value, for example "OCD's answer is supported; this phone's carrier settings have it off". A finding never says a feature works, that OCD is wrong, or that a carrier does not support something. Whether the phone is signed in for VoLTE or Wi-Fi calling is hidden from normal apps. The app says this needs the deep check and does not guess.
 4. **Builds a report** you can read, then copy or share through Android's share sheet. The full text is on screen before Copy and Share appear.
 5. **Optionally runs a deep check through Shizuku** (see below): whether the phone is signed in for VoLTE or Wi-Fi calling on Samsung's IMS, Samsung's Wi-Fi calling switch, whether the carrier's Wi-Fi calling server name resolves, and the phone's APN list. Without Shizuku the app works exactly as above.
@@ -111,6 +111,7 @@ The app never sends a write command. Shizuku's grant could write (`settings put`
 The report is JSON with a fixed set of keys. `app.access_tier` is `normal`, or `shizuku` when the deep check's results are in. Its rules:
 - **Content:** the SIM's network code, name and carrier IDs, GID1 only if you switch it on, the phone model and its code name (`Build.DEVICE`, which LineageOS uses to name device trees), the Android major version, the software family (`stock`, `lineageos` or `other`), the check results, and the app and data versions.
 - **Findings** go in as codes, not sentences.
+- **Device records** for this phone model go in under `ocd.device_records`, per capability, as `state`, `source`, `stack`, `newest_entry` and `this_stack` (whether the record holds for the software the phone runs).
 - **Carrier settings** go in only as a per-key comparison with OCD's answer (`matches_ocd`), never as values.
 - **Deep check results** go in only as typed fields. `ims_registration` is `needs_deep_check` without them. With them, it holds `source`, `registered`, `state`, `transport`, `services` and `mno`. Two more blocks join it: `wifi_calling` (`switch`, `epdg_name`, `lookup_network`, `private_dns_active`) and `apn_list` (`readable`, `rows` with `apn`, `types`, `protocol`, `roaming_protocol`, `carrier_enabled`, `mvno_type` and `edited`, and `left_out`).
 - **Dates:** the report has the check date, never a time.
@@ -197,13 +198,15 @@ The app does not open an issue on GitHub for you. Round 9 allows a prefilled `wr
 
 ## OCD data in the app
 
-`app/src/main/assets/ocd-lookup.json.gzip` (about 175 KB) is built from a checkout of OCD's public repository by `tools/build_bundle.py`. The script reads three files and changes none of them:
+`app/src/main/assets/ocd-lookup.json.gzip` (about 390 KB) is built from a checkout of OCD's public repository by `tools/build_bundle.py`. The script reads these files and changes none of them:
 
 | File | What the bundle keeps |
 |---|---|
 | `generated/android/lookup.json` | per profile: `profile_id`, `display_name`, `match`, `capabilities`, `newest_entry` |
 | `generated/android/metadata.json` | the snapshot's `checks_through`, `stale_after` and `data_digest` |
-| `README.md`, "Limits to read before you ship" | the plain meanings of the four capability values and five limit bullets: gates, missing switches, no phone verification, tables not tests, MVNO merge |
+| `README.md`, "Limits to read before you ship" | the plain meanings of the four capability values and five limit bullets: gates, missing switches, no phone verification, tables not tests, MVNO merge; with device records also the bullet that says what they are |
+| `generated/devices/carrier-variants.json`, when the snapshot has it | OCD's device records, whole, after checking that they were built from the same `data_digest` as `lookup.json` |
+| `generated/devices/android.json`, with device records | for each catalog device the records name, the device names (`Build.DEVICE`) and models (`Build.MODEL`) that no other catalog device lists |
 
 The bundle also records the source commit and its date. The app shows the data date and warns after `stale_after`.
 
@@ -227,6 +230,15 @@ The script refuses a public checkout with uncommitted changes in those files. Th
 Two differences from the resolver:
 - **Two carrier IDs.** A SIM has a carrier ID and a specific carrier ID, and a profile's `android_carrier_ids` match when either one is listed. Android's CarrierConfig app compares `cid` the same way (`DefaultCarrierConfigService`, case `"cid"`). The Python resolver takes one ID.
 - **Unreadable dimensions are kept aside.** A profile that needs a value the app cannot read (ICCID, IMSI, GID2, or GID1 without the permission) does not simply fail to match. It is listed as "cannot check". The matched stack is the same as the resolver's for the same inputs.
+
+**Device records** (OCD's round 17) say what one phone model's own carrier file sets for VoLTE, Wi-Fi calling, video calling and VoNR on one carrier profile. OCD lists every device value it publishes, including those that agree with the carrier value. The app reads them for the most specific profile:
+- the phone's keys are `samsung:` and `Build.MODEL` on a Samsung phone, and the one catalog device whose unique device names list `Build.DEVICE` or whose unique models list `Build.MODEL`, compared case-folded; a name two catalog devices share matches nothing;
+- a record whose stack matches the phone's software (`stock`, or `lineageos` on a LineageOS build) reads "This phone model's own file sets VoLTE on for this SIM (one source: Samsung's carrier pack, stock firmware, newest entry 2025-02). OCD's carrier summary is conditional. Configuration, not a test.";
+- a record of another stack reads "This model's stock firmware file ...", and adds that the phone runs another software whose own file may differ; it never says "this phone";
+- without a record, the summary stays labelled as the carrier's, and the screen says "OCD publishes no file of this phone model for this SIM (none read, older than five years, or not bound to one model)"; a missing record is never "off" and never agreement;
+- records built from another data digest than the bundle's are not used.
+
+The app writes nothing from a record into the phone. The findings codes are `device_record_<state>:<capability>` and `device_record_other_stack_<state>:<capability>`.
 
 The bundled data is OCD's. The OCD contributors waive their own rights in it under CC0 1.0; see OCD's `DATA-LICENSE.md`.
 

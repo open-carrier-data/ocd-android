@@ -2,7 +2,7 @@
 """Build the OCD Check app's bundled data from a checkout of Open Carrier
 Data's public repository.
 
-Reads, and never writes, three files of the public checkout:
+Reads, and never writes, these files of the public checkout:
 
 - generated/android/lookup.json: per profile, profile_id, display_name,
   match, capabilities and newest_entry are kept; everything else is dropped.
@@ -11,7 +11,16 @@ Reads, and never writes, three files of the public checkout:
 - README.md, section "Limits to read before you ship": the plain meanings of
   the four capability values and the limit bullets the app shows as general
   context (gates, tables not tests, no phone verification, MVNO merge,
-  missing switches). The app never hard-codes this text.
+  missing switches), and, with device records, the bullet that says what
+  they are. The app never hard-codes this text.
+- generated/devices/carrier-variants.json, when the checkout has it: the
+  device records for VoLTE, Wi-Fi calling, video calling and VoNR (round 17),
+  kept whole for the bundled profiles, after checking that they were built
+  from the same data digest as lookup.json.
+- generated/devices/android.json, with device records: a reduced alias map
+  for the catalog devices the records name, so the app can match its own
+  Build.DEVICE and Build.MODEL. Only names and models no other catalog device
+  shares are kept, so an ambiguous name matches nothing.
 
 Writes one deterministic gzipped JSON asset (sorted keys, no timestamps in
 the gzip header). With --check it rebuilds in memory and compares the
@@ -35,7 +44,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PUBLIC = REPO_ROOT.parent / "live-public"
 # Not ".gz": the Android build gunzips assets ending in .gz and drops the suffix.
 DEFAULT_OUT = REPO_ROOT / "app/src/main/assets/ocd-lookup.json.gzip"
-INPUTS = ("generated/android/lookup.json", "generated/android/metadata.json", "README.md")
+INPUTS = (
+    "generated/android/lookup.json",
+    "generated/android/metadata.json",
+    "README.md",
+    "generated/devices/carrier-variants.json",
+    "generated/devices/android.json",
+)
 
 PROFILE_KEYS = ("profile_id", "display_name", "match", "capabilities", "newest_entry")
 STRING_MATCH_KEYS = (
@@ -62,6 +77,14 @@ LIMIT_BULLETS = {
     "tables_not_tests": ("A capability value says what carrier tables configure", 2),
     "mvno_merge": ("An MVNO without its own", None),
 }
+# With device records, the README bullet that says what they are.
+DEVICE_RECORDS_BULLET = ("device_records", "For VoLTE, Wi-Fi calling, video calling and VoNR", None)
+
+DEVICE_RECORD_CAPABILITIES = ["video_calling", "volte", "vonr", "vowifi"]
+DEVICE_RECORD_FIELDS = {"state", "source", "stack", "newest_entry", "devices", "basis"}
+DEVICE_RECORD_STATES = {"on", "off", "conditional"}
+DEVICE_RECORD_STACKS = {"stock", "lineageos", "aosp"}
+DEVICE_KEY = re.compile(r"^(android:[a-z0-9-]{3,80}|samsung:[A-Z0-9][A-Z0-9._/+-]{1,63})$")
 
 
 class BundleError(Exception):
@@ -82,7 +105,7 @@ def first_sentences(text: str, count: int | None) -> str:
     return " ".join(sentences[:count])
 
 
-def readme_limits(readme: str) -> dict[str, Any]:
+def readme_limits(readme: str, device_records: bool = False) -> dict[str, Any]:
     start = readme.find(LIMITS_HEADING)
     if start < 0:
         raise BundleError(f"README.md has no '{LIMITS_HEADING}' section")
@@ -106,7 +129,11 @@ def readme_limits(readme: str) -> dict[str, Any]:
         "readme_section": LIMITS_HEADING.lstrip("# "),
         "value_meanings": meanings,
     }
-    for name, (opening, sentences) in LIMIT_BULLETS.items():
+    wanted = dict(LIMIT_BULLETS)
+    if device_records:
+        name, opening, sentences = DEVICE_RECORDS_BULLET
+        wanted[name] = (opening, sentences)
+    for name, (opening, sentences) in wanted.items():
         found = [bullet for bullet in bullets if bullet.startswith(opening)]
         if len(found) != 1:
             raise BundleError(f"README Limits has {len(found)} bullets starting {opening!r}")
@@ -160,12 +187,89 @@ def compact_profile(profile: dict[str, Any], capability_keys: list[str]) -> dict
     return kept
 
 
+def fold(value: str) -> str:
+    return value.casefold().strip()
+
+
+def device_aliases(catalog: dict[str, Any], wanted: set[str]) -> dict[str, dict[str, list[str]]]:
+    """For each catalog device the records name, the device names
+    (Build.DEVICE) and models (Build.MODEL) that no other catalog device
+    lists."""
+    devices = catalog.get("devices")
+    if not isinstance(devices, list):
+        raise BundleError("android.json has no devices list")
+    owners: dict[str, set[str]] = {}
+    by_id: dict[str, dict[str, Any]] = {}
+    for device in devices:
+        by_id[device["device_id"]] = device
+        for alias in list(device.get("device_names", [])) + list(device.get("models", [])):
+            owners.setdefault(fold(alias), set()).add(device["device_id"])
+    aliases: dict[str, dict[str, list[str]]] = {}
+    for device_id in sorted(wanted):
+        device = by_id.get(device_id)
+        if device is None:
+            raise BundleError(f"device records name {device_id}, which android.json does not list")
+        kept = {
+            field: sorted({value for value in device.get(field, []) if owners[fold(value)] == {device_id}})
+            for field in ("device_names", "models")
+        }
+        aliases[device_id] = {field: values for field, values in kept.items() if values}
+    return aliases
+
+
+def device_records(
+    variants: dict[str, Any],
+    catalog: dict[str, Any],
+    metadata: dict[str, Any],
+    profile_ids: set[str],
+) -> dict[str, Any]:
+    """The device records the app reads, checked against the bundle's data."""
+    if variants.get("schema_version") != 1:
+        raise BundleError(f"carrier-variants.json schema_version {variants.get('schema_version')!r} is unknown")
+    if variants.get("based_on_data_digest") != metadata.get("data_digest"):
+        raise BundleError("carrier-variants.json was built from another data digest than metadata.json")
+    if variants.get("capabilities") != DEVICE_RECORD_CAPABILITIES:
+        raise BundleError(f"carrier-variants.json capabilities {variants.get('capabilities')!r} are unknown")
+    profiles = variants.get("profiles")
+    if not isinstance(profiles, dict):
+        raise BundleError("carrier-variants.json has no profiles object")
+    android_ids: set[str] = set()
+    for profile_id, capabilities in profiles.items():
+        if profile_id not in profile_ids:
+            raise BundleError(f"carrier-variants.json names {profile_id}, which lookup.json does not list")
+        for capability, records in capabilities.items():
+            if capability not in DEVICE_RECORD_CAPABILITIES:
+                raise BundleError(f"{profile_id}: device record capability {capability!r} is unknown")
+            for record in records:
+                extra = set(record) - DEVICE_RECORD_FIELDS
+                if extra or not {"state", "source", "stack", "devices"} <= set(record):
+                    raise BundleError(f"{profile_id} {capability}: device record fields are invalid")
+                if record["state"] not in DEVICE_RECORD_STATES or record["stack"] not in DEVICE_RECORD_STACKS:
+                    raise BundleError(f"{profile_id} {capability}: device record state or stack is unknown")
+                newest = record.get("newest_entry")
+                if newest is not None and not MONTH.match(newest):
+                    raise BundleError(f"{profile_id} {capability}: newest_entry {newest!r} is not YYYY-MM")
+                for device in record["devices"]:
+                    if not isinstance(device, str) or not DEVICE_KEY.match(device):
+                        raise BundleError(f"{profile_id} {capability}: device {device!r} is not a device key")
+                    if device.startswith("android:"):
+                        android_ids.add(device)
+    return {
+        "based_on_data_digest": variants["based_on_data_digest"],
+        "capabilities": DEVICE_RECORD_CAPABILITIES,
+        "profiles": profiles,
+        "devices": device_aliases(catalog, android_ids),
+    }
+
+
 def build_bundle(
     lookup: dict[str, Any],
     metadata: dict[str, Any],
     readme: str,
     commit: str,
     commit_date: str,
+    variants: dict[str, Any] | None = None,
+    catalog: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if lookup.get("resolution_order") != "generic_to_specific":
         raise BundleError(f"unexpected resolution_order {lookup.get('resolution_order')!r}")
@@ -201,13 +305,18 @@ def build_bundle(
     }
     if isinstance(metadata.get("data_digest"), str):
         source["data_digest"] = metadata["data_digest"]
-    return {
+    bundle: dict[str, Any] = {
         "format": FORMAT,
         "source": source,
         "capability_keys": capability_keys,
-        "limits": readme_limits(readme),
+        "limits": readme_limits(readme, variants is not None),
         "profiles": compact,
     }
+    if variants is not None:
+        if catalog is None:
+            raise BundleError("device records need generated/devices/android.json")
+        bundle["device_records"] = device_records(variants, catalog, metadata, set(ids))
+    return bundle
 
 
 def encode(bundle: dict[str, Any]) -> bytes:
@@ -231,12 +340,17 @@ def read_public(public: Path, allow_dirty: bool) -> dict[str, Any]:
             "the public checkout has uncommitted changes in the input files; "
             "commit or stash them, or pass --allow-dirty:\n" + dirty
         )
+    variants_path = public / INPUTS[3]
+    variants = json.loads(variants_path.read_text(encoding="utf-8")) if variants_path.exists() else None
+    catalog = json.loads((public / INPUTS[4]).read_text(encoding="utf-8")) if variants is not None else None
     return build_bundle(
         json.loads((public / INPUTS[0]).read_text(encoding="utf-8")),
         json.loads((public / INPUTS[1]).read_text(encoding="utf-8")),
         (public / INPUTS[2]).read_text(encoding="utf-8"),
         git(public, "rev-parse", "HEAD"),
         git(public, "log", "-1", "--format=%cs"),
+        variants,
+        catalog,
     )
 
 
@@ -259,7 +373,13 @@ def main(argv: list[str]) -> int:
     summary = (
         f"{len(bundle['profiles'])} profiles, commit {source['commit'][:12]} "
         f"({source['commit_date']}), checks_through {source['checks_through']}, "
-        f"stale_after {source['stale_after']}"
+        f"stale_after {source['stale_after']}, "
+        + (
+            f"device records for {len(bundle['device_records']['profiles'])} profiles and "
+            f"{len(bundle['device_records']['devices'])} catalog devices"
+            if "device_records" in bundle
+            else "no device records"
+        )
     )
     if args.check:
         try:

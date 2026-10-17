@@ -85,7 +85,7 @@ object Report {
             } else {
                 deep(deep)
             }
-            resolution?.let { ocd(it, bundle) }
+            resolution?.let { ocd(it, bundle, readings.device) }
             putJsonArray("findings") { findings.forEach { add(it.code) } }
         }
         val hits = PrivacyScan.scan(json) + unexpectedKeys(json).map { PrivacyScan.Hit(it, "key_not_allowlisted") }
@@ -177,7 +177,7 @@ object Report {
         }
     }
 
-    private fun JsonObjectBuilder.ocd(resolution: Resolution, bundle: OcdBundle) = putJsonObject("ocd") {
+    private fun JsonObjectBuilder.ocd(resolution: Resolution, bundle: OcdBundle, device: DeviceInfo) = putJsonObject("ocd") {
         putJsonArray("profiles") {
             for (profile in resolution.stack) {
                 add(buildJsonObject {
@@ -194,6 +194,24 @@ object Report {
                 // Only the known keys: a key a later snapshot adds stays out until the allowlist names it.
                 for (key in Capabilities.labels.keys.filter { it in bundle.capabilityKeys }) {
                     put(key, resolution.answer(key).wire)
+                }
+            }
+            // This phone model's own records on the answer profile (round 17), as typed fields.
+            val records = bundle.records
+            val matches = Findings.deviceRecordCapabilities.mapNotNull { capability ->
+                records?.recordsFor(most.profileId, capability, device)?.firstOrNull()?.let { capability to it }
+            }
+            if (matches.isNotEmpty()) {
+                putJsonObject("device_records") {
+                    for ((capability, match) in matches) {
+                        putJsonObject(capability) {
+                            put("state", match.record.state)
+                            put("source", match.record.source)
+                            put("stack", match.record.stack)
+                            match.record.newestEntry?.let { put("newest_entry", it) }
+                            put("this_stack", match.sameStack)
+                        }
+                    }
                 }
             }
         }
@@ -244,7 +262,11 @@ object Report {
             listOf(base, "$base.ocd_capability", "$base.ocd_value", "$base.matches_ocd")
         }
         val capabilityKeys = Capabilities.labels.keys.map { "ocd.capabilities.$it" }
-        (fixed + settingKeys + capabilityKeys).toSet()
+        val recordKeys = listOf("ocd.device_records") + Findings.deviceRecordCapabilities.flatMap { capability ->
+            val base = "ocd.device_records.$capability"
+            listOf(base) + listOf("state", "source", "stack", "newest_entry", "this_stack").map { "$base.$it" }
+        }
+        (fixed + settingKeys + capabilityKeys + recordKeys).toSet()
     }
 
     /** Key paths in [json] that are not in [allowedPaths]. */
