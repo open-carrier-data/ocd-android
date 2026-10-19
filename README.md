@@ -294,7 +294,7 @@ OCD's round 22 lets a VoLTE, Wi-Fi calling or video calling summary read `suppor
 - in the `phone_off_ocd_supported:<capability>` finding; the code stays the same;
 - in this model's own `device_record_*` finding. When this model's own file is one of the `off` records, it adds that the model's file comes before OCD's summary.
 
-Only the three switches step 2 can label count, and only records built from the bundle's own data. `LabelHintTest` checks it on O2 DE (`26203`) video calling, as round 22 orders, with the records the public `carrier-variants.json` holds and the label set to `supported` as step 2 makes it. The bundled asset is still from public `885c0ba3`, before any step-2 label, so on a phone the hint shows only after the bundle is rebuilt from a step-2 publish.
+Only the three switches step 2 can label count, and only records built from the bundle's own data. `LabelHintTest` checks it on O2 DE (`26203`) video calling, as round 22 orders, with the records the public `carrier-variants.json` holds and the label set to `supported` as step 2 makes it. Since 2026-10-19 the bundled asset is from public `8cb64d63` (#280), the first publish with step-2 labels: O2 DE (`26203`) video calling now reads `supported` in the bundle, so the hint shows on a phone with an O2 SIM.
 
 The bundled data is OCD's. The OCD contributors waive their own rights in it under CC0 1.0; see OCD's `DATA-LICENSE.md`.
 
