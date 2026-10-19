@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.Parcel
@@ -30,10 +31,13 @@ import io.github.open_carrier_data.check.owner.core.PhoneApnRow
 import io.github.open_carrier_data.check.owner.core.PreferredApn
 import io.github.open_carrier_data.check.owner.core.Route
 import io.github.open_carrier_data.check.owner.core.SafetyException
+import io.github.open_carrier_data.check.owner.core.retrying
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import rikka.shizuku.Shizuku
@@ -50,6 +54,8 @@ data class OwnerGate(
     val shizukuPermitted: Boolean,
     val privilegedGranted: Boolean,
     val reason: String?,
+    /** CarrierConfigManager.overrideConfig(int, PersistableBundle) found (the hidden-API check passed); null when not looked up. */
+    val overrideApi: Boolean? = null,
 ) {
     val canWrite: Boolean get() = route != null && reason == null
 }
@@ -74,6 +80,15 @@ object OwnerAccess {
         return system && PRIVILEGED_PERMISSIONS.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
     }
 
+    /**
+     * The privileged route's one write API, looked up without calling it: a
+     * system app missing from the hidden-API allowlist gets no method here,
+     * and the gate falls back to Shizuku instead of failing at the first test.
+     */
+    fun overrideApiReachable(): Boolean = runCatching {
+        CarrierConfigManager::class.java.getMethod("overrideConfig", Int::class.javaPrimitiveType, PersistableBundle::class.java)
+    }.isSuccess
+
     fun shizukuState(): Triple<Boolean, Boolean, Boolean> {
         val running = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
         if (!running) return Triple(false, false, false)
@@ -92,9 +107,10 @@ object OwnerAccess {
         val ownerPhone = Build.DEVICE.equals(OWNER_DEVICE, ignoreCase = true) && Build.MODEL.equals(OWNER_MODEL, ignoreCase = true)
         val lineage = context.packageManager.hasSystemFeature("org.lineageos.android")
         val privileged = privilegedGranted(context)
+        val overrideApi = if (privileged) overrideApiReachable() else null
         val (running, root, permitted) = shizukuState()
         val route = when {
-            privileged -> Route.PRIVILEGED
+            privileged && overrideApi == true -> Route.PRIVILEGED
             running && root && permitted && Build.TYPE != "user" -> Route.SHIZUKU_ROOT
             else -> null
         }
@@ -105,15 +121,16 @@ object OwnerAccess {
             running && !permitted -> "Shizuku is running but has not granted this app"
             running && !root -> "Shizuku runs as the shell user; cmd phone cc needs root"
             Build.TYPE == "user" -> "a user build refuses cmd phone cc"
+            privileged -> "a privileged system app, but CarrierConfigManager.overrideConfig is not reachable (hidden-API allowlist), and Shizuku is not running"
             else -> "no route: not a privileged system app, and Shizuku is not running"
         }
-        return OwnerGate(route, ownerPhone, Build.TYPE, running, root, permitted, privileged, reason)
+        return OwnerGate(route, ownerPhone, Build.TYPE, running, root, permitted, privileged, reason, overrideApi)
     }
 
     /** Opens the route the gate picked, or throws. Close it with [OwnerPhoneHandle.close]. */
     suspend fun open(context: Context): OwnerPhoneHandle {
         // In a fresh process (a job after boot) Shizuku's binder arrives a moment after start.
-        if (!privilegedGranted(context)) {
+        if (!(privilegedGranted(context) && overrideApiReachable())) {
             repeat(20) {
                 if (runCatching { Shizuku.pingBinder() }.getOrDefault(false)) return@repeat
                 delay(250)
@@ -125,7 +142,8 @@ object OwnerAccess {
             Route.PRIVILEGED -> OwnerPhoneHandle(PrivilegedPhone(context)) {}
             Route.SHIZUKU_ROOT -> {
                 val bound = ShizukuPhone.bind(context) ?: throw SafetyException("no_access", "the Shizuku service did not start")
-                OwnerPhoneHandle(ShizukuPhone(context, bound.first)) { bound.second() }
+                // The service stays bound for the next step of this process (see ShizukuPhone.bind).
+                OwnerPhoneHandle(ShizukuPhone(context, bound)) {}
             }
         }
     }
@@ -214,6 +232,8 @@ class ShizukuPhone(context: Context, private val binder: IBinder) : AppSidePhone
     override suspend fun apnInsert(values: Map<String, String>) = run(OwnerCommand.APN_INSERT, OwnerArgs(binds = values))?.first == 0
     override suspend fun apnDelete(id: Long) = run(OwnerCommand.APN_DELETE, OwnerArgs(id = id))?.first == 0
 
+    override suspend fun setWifiEnabled(on: Boolean): Boolean = run(OwnerCommand.WIFI_SET, OwnerArgs(value = on))?.first == 0
+
     override suspend fun preferredApn(subId: Int): PreferredApn {
         val out = text(OwnerCommand.PREFERRED_QUERY, OwnerArgs(subId = subId)) ?: return PreferredApn(false, null)
         if ("No result found" in out) return PreferredApn(true, null)
@@ -230,15 +250,41 @@ class ShizukuPhone(context: Context, private val binder: IBinder) : AppSidePhone
 
     companion object {
         private const val BIND_TIMEOUT_MS = 20_000L
+        private const val ATTEMPTS = 3
 
-        /** Binds the owner service; the second value unbinds it. */
-        suspend fun bind(context: Context): Pair<IBinder, suspend () -> Unit>? {
-            val args = Shizuku.UserServiceArgs(ComponentName(context.packageName, OwnerShellService::class.java.name))
-                .tag("owner")
-                .daemon(false)
-                .processNameSuffix("owner")
-                .debuggable(false)
-                .version(BuildConfig.VERSION_CODE)
+        private val lock = Mutex()
+
+        @Volatile
+        private var bound: Bound? = null
+
+        private class Bound(val args: Shizuku.UserServiceArgs, val connection: ServiceConnection, val binder: IBinder)
+
+        private fun args(context: Context) = Shizuku.UserServiceArgs(ComponentName(context.packageName, OwnerShellService::class.java.name))
+            .tag("owner")
+            .daemon(false)
+            .processNameSuffix("owner")
+            .debuggable(false)
+            .version(BuildConfig.VERSION_CODE)
+
+        /**
+         * The root service, one per app process and reused by every step
+         * (daemon off: it ends with the app process). The first owner run on
+         * the S20 (2026-10-19) unbound and removed it after each step; a bind
+         * that came within milliseconds of the old service process exiting
+         * lost its record in Shizuku's server ("unable to find token") and
+         * timed out, so the APN step and a cleanup found no service. Now a
+         * live binder is reused, and a failed start is unbound, given a pause
+         * and tried again.
+         */
+        suspend fun bind(context: Context): IBinder? = lock.withLock {
+            bound?.binder?.takeIf { it.pingBinder() }?.let { return@withLock it }
+            bound?.let { stale -> unbind(stale.args, stale.connection) }
+            bound = null
+            retrying(ATTEMPTS, pause = { delay(3_000L * it) }) { bindOnce(context) }?.also { bound = it }?.binder
+        }
+
+        private suspend fun bindOnce(context: Context): Bound? {
+            val args = args(context)
             val connected = CompletableDeferred<IBinder?>()
             val connection = object : ServiceConnection {
                 override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -247,18 +293,20 @@ class ShizukuPhone(context: Context, private val binder: IBinder) : AppSidePhone
 
                 override fun onServiceDisconnected(name: ComponentName?) {
                     connected.complete(null)
+                    if (bound?.connection === this) bound = null
                 }
-            }
-            val release: suspend () -> Unit = {
-                withContext(NonCancellable + Dispatchers.Main) { runCatching { Shizuku.unbindUserService(args, connection, true) } }
             }
             withContext(Dispatchers.Main) { Shizuku.bindUserService(args, connection) }
             val binder = withTimeoutOrNull(BIND_TIMEOUT_MS) { connected.await() }
             if (binder == null) {
-                release()
+                unbind(args, connection)
                 return null
             }
-            return binder to release
+            return Bound(args, connection, binder)
+        }
+
+        private suspend fun unbind(args: Shizuku.UserServiceArgs, connection: ServiceConnection) {
+            withContext(NonCancellable + Dispatchers.Main) { runCatching { Shizuku.unbindUserService(args, connection, true) } }
         }
     }
 }
@@ -340,6 +388,12 @@ class PrivilegedPhone(context: Context) : AppSidePhone(context) {
             }
         }
     }.getOrNull()
+
+    /** A system app may still switch Wi-Fi (WifiServiceImpl lets system apps through); needs CHANGE_WIFI_STATE. */
+    @Suppress("DEPRECATION")
+    override suspend fun setWifiEnabled(on: Boolean): Boolean = withContext(Dispatchers.IO) {
+        runCatching { context.getSystemService(WifiManager::class.java)?.setWifiEnabled(on) == true }.getOrDefault(false)
+    }
 
     override suspend fun apnQuery(numeric: String) = withContext(Dispatchers.IO) {
         if (!Regex("[0-9]{5,6}").matches(numeric)) null else query("numeric = ?", arrayOf(numeric))

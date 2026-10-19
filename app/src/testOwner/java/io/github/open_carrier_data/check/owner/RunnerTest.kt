@@ -256,6 +256,114 @@ class RunnerTest {
         assertTrue(summary, "marked APN row" in summary)
         assertEquals(listOf(1L), phone.apns.map { it.id })
     }
+
+    /** The S20 on the first owner run (2026-10-19): VoLTE and Wi-Fi calling on, IMS registered over Wi-Fi. */
+    private fun imsOnWifiPhone() = FakePhone().apply {
+        defaultApp = mapOf("carrier_volte_available_bool" to "true", "carrier_wfc_ims_available_bool" to "true")
+        imsOverWifi = true
+        wifi = true
+    }
+
+    @Test
+    fun `VoLTE while IMS runs over Wi-Fi is measured with Wi-Fi off, and Wi-Fi comes back on`() = runBlocking {
+        val phone = imsOnWifiPhone()
+        val result = runner(phone).testFeature(sim, OwnerFeature.VOLTE, ocdOn, fast)
+        assertNull(result.refused)
+        assertEquals(true, result.baseline)
+        assertEquals("VoLTE registered over LTE with Wi-Fi off", true, result.baselineWorks)
+        assertEquals(true, result.offWorks)
+        assertEquals(true, result.best)
+        assertEquals(true, phone.wifi)
+        assertEquals(listOf("wifi off", "wifi on"), phone.writes.filter { it.startsWith("wifi") })
+        assertTrue("Wi-Fi off before the trial's write", phone.writes.indexOf("wifi off") < phone.writes.indexOf("set carrier_volte_available_bool=false"))
+        assertNull(phone.store.state.wifiOffSinceMs)
+        assertTrue(phone.store.state.log.any { it.kind == "wifi_off" && "IMS registered over LTE" in it.text })
+        assertTrue(phone.store.state.log.any { it.kind == "wifi_restore" })
+    }
+
+    @Test
+    fun `Wi-Fi comes back on when the VoLTE measurement stops at a refusal`() = runBlocking {
+        val phone = imsOnWifiPhone()
+        // A call starts once Wi-Fi is off: the trial's write is refused.
+        phone.onSleep = { p -> if (p.wifi == false) p.call = true }
+        phone.imsOverWifi = true
+        val result = runner(phone).testFeature(sim, OwnerFeature.VOLTE, ocdOn, fast.copy(settleMs = 30_000))
+        assertNotNull(result.refused ?: result.offReason)
+        assertEquals(true, phone.wifi)
+        assertNull(phone.store.state.wifiOffSinceMs)
+    }
+
+    @Test
+    fun `Wi-Fi comes back on when the worker is cancelled during the VoLTE measurement`() = runBlocking {
+        val phone = imsOnWifiPhone()
+        phone.onSleep = { p -> if (p.wifi == false) throw kotlinx.coroutines.CancellationException("worker stopped") }
+        val outcome = runCatching { runner(phone).testFeature(sim, OwnerFeature.VOLTE, ocdOn, fast) }
+        assertTrue(outcome.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+        assertEquals(true, phone.wifi)
+        assertNull(phone.store.state.wifiOffSinceMs)
+    }
+
+    @Test
+    fun `a Wi-Fi off left by a crash is switched back on by the cleanup`() = runBlocking {
+        val phone = FakePhone().apply { wifi = false }
+        phone.store.state = phone.store.state.copy(wifiOffSinceMs = phone.now - 60_000)
+        assertTrue(phone.store.state.anyLive)
+        val summary = runner(phone).reconcile(listOf(sim))
+        assertTrue(summary, "Wi-Fi switched back on" in summary)
+        assertEquals(true, phone.wifi)
+        assertNull(phone.store.state.wifiOffSinceMs)
+    }
+
+    @Test
+    fun `a refused Wi-Fi restore keeps its record for the next cleanup`() = runBlocking {
+        val phone = FakePhone().apply { wifi = false; wifiSwitchRefused = true }
+        phone.store.state = phone.store.state.copy(wifiOffSinceMs = phone.now - 60_000)
+        val summary = runner(phone).reconcile(listOf(sim))
+        assertTrue(summary, "refused" in summary)
+        assertNotNull(phone.store.state.wifiOffSinceMs)
+    }
+
+    @Test
+    fun `without the Wi-Fi-off measurement, VoLTE over Wi-Fi is not tested and Wi-Fi is left alone`() = runBlocking {
+        val phone = imsOnWifiPhone()
+        val result = runner(phone).testFeature(sim, OwnerFeature.VOLTE, ocdOn, fast.copy(wifiOffForVolte = false))
+        assertEquals(OwnerRunner.IMS_ON_WIFI, result.refused)
+        assertTrue(phone.writes.isEmpty())
+    }
+
+    @Test
+    fun `video calling that IMS never adds is not supported by this IMS stack, after the longer video window`() = runBlocking {
+        val phone = FakePhone().apply { defaultApp = mapOf("carrier_volte_available_bool" to "true") }
+        val startedAt = phone.now
+        val result = runner(phone).testFeature(sim, OwnerFeature.VIDEO_CALLING, OcdAnswer(null, "carrier_profile"), fast.copy(videoSettleMs = 90_000))
+        assertEquals(false, result.baseline)
+        assertEquals(false, result.onWorks)
+        assertEquals(OwnerRunner.IMS_STACK_NO_VIDEO, result.onReason)
+        assertTrue(result.bestWhy!!, "not supported by this IMS stack" in result.bestWhy!!)
+        assertTrue("waited the video window, not the 30 s one", phone.now - startedAt >= 90_000)
+        assertTrue(phone.overrides.isNullOrEmpty())
+    }
+
+    @Test
+    fun `video calling that registers within the video window is kept`() = runBlocking {
+        val phone = FakePhone().apply {
+            defaultApp = mapOf("carrier_volte_available_bool" to "true")
+            imsVideo = true
+        }
+        val result = runner(phone).testFeature(sim, OwnerFeature.VIDEO_CALLING, OcdAnswer(true, "carrier_profile"), fast.copy(videoSettleMs = 90_000))
+        assertEquals(true, result.onWorks)
+        assertEquals(true, result.best)
+        assertTrue(result.applied)
+    }
+
+    @Test
+    fun `revert all also switches Wi-Fi back on`() = runBlocking {
+        val phone = FakePhone().apply { wifi = false }
+        phone.store.state = phone.store.state.copy(wifiOffSinceMs = phone.now)
+        val summary = runner(phone).revertAll(listOf(sim))
+        assertTrue(summary, "Wi-Fi switched back on" in summary)
+        assertEquals(true, phone.wifi)
+    }
 }
 
 /** A phone whose carrier file turns VoLTE on (the default-app layer), for the off tests. */

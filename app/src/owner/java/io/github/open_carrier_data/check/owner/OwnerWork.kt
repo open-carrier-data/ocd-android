@@ -29,6 +29,7 @@ import io.github.open_carrier_data.check.owner.core.Refusals
 import io.github.open_carrier_data.check.owner.core.RunOptions
 import io.github.open_carrier_data.check.owner.core.RunResult
 import io.github.open_carrier_data.check.owner.core.SafetyException
+import io.github.open_carrier_data.check.owner.core.WeeklySchedule
 import io.github.open_carrier_data.check.owner.core.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -98,6 +99,9 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
 
     private suspend fun <T> withPhone(store: FileStateStore, block: suspend (OwnerRunner, List<OwnerSim>) -> T): T {
         val handle = OwnerAccess.open(applicationContext)
+        // The route in the log whenever it changes (privileged system app, or the Shizuku fallback).
+        val route = handle.phone.route.plain
+        if (store.read().log.lastOrNull { it.kind == "route" }?.text != route) store.update { it.logged(System.currentTimeMillis(), "route", route) }
         try {
             return block(OwnerRunner(handle.phone, store, device(applicationContext)), OwnerData.sims(applicationContext))
         } finally {
@@ -247,13 +251,21 @@ object OwnerScheduler {
         .setRequiresDeviceIdle(true)
         .build()
 
+    /** The VoLTE step switches Wi-Fi off while IMS runs over it: no network constraint, or WorkManager would stop it. */
+    private fun scheduledWithoutNetwork(): Constraints = Constraints.Builder()
+        .setRequiresCharging(true)
+        .setRequiresDeviceIdle(true)
+        .build()
+
     fun ensureWeekly(context: Context, on: Boolean) {
         val wm = WorkManager.getInstance(context)
         if (!on) {
             wm.cancelUniqueWork(WEEKLY)
             return
         }
+        val lastRun = FileStateStore(context).read().runs.lastOrNull()?.startedMs
         val request = PeriodicWorkRequestBuilder<OwnerWorker>(7, TimeUnit.DAYS)
+            .setInitialDelay(WeeklySchedule.initialDelayMs(lastRun, System.currentTimeMillis()), TimeUnit.MILLISECONDS)
             .setConstraints(scheduledConstraints())
             .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_WEEKLY))
             .addTag(WEEKLY)
@@ -314,9 +326,10 @@ object OwnerScheduler {
         val steps = mutableListOf<OneTimeWorkRequest>()
         for (sim in sims) {
             for (feature in OwnerFeature.entries) {
+                val stepConstraints = if (scheduled && feature == OwnerFeature.VOLTE) scheduledWithoutNetwork() else constraints
                 steps += step(
                     workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_FEATURE, OwnerWorker.KEY_SLOT to sim.slot, OwnerWorker.KEY_FEATURE to feature.wire),
-                    constraints, expedite = false,
+                    stepConstraints, expedite = false,
                 )
             }
             if (apns) steps += step(workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_APN, OwnerWorker.KEY_SLOT to sim.slot), constraints, false)

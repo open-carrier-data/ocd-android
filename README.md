@@ -344,14 +344,18 @@ The bundled data is OCD's. The OCD contributors waive their own rights in it und
 
 The `owner` build type is the owner's part 2, built as he directed on 2026-10-19 evening ("develop it exactly like this"; OCD's private `research/rule-decisions-20261006/README.md`, "Owner direction, 2026-10-19 evening" and round 25). It is for the owner's S20 (LineageOS 23.2 userdebug, PHH IMS) only. It is never a release asset, a CI artifact (the build refuses to package it when `CI` is set), a store build or part of a ROM anyone else runs.
 
+**Its form: a system app with a Settings entry** (the owner, 2026-10-19: "more of a system app and less of a user app — a system service that does all of this in the background, and a UI you can access through the settings, like an 'Open Carrier Data' entry in the settings"). The owner build has no launcher icon. It is installed as a privileged system app, and its screen is **Settings > Network & internet > Open Carrier Data**, between SIMs and Airplane mode, with a live summary ("1 kept · last test Oct 19, 2026"). The screen shows the status (route, writes, last reconcile), the kept values, "Test now" and "Test again", "Revert all", "Pull update", the upload, the schedule and the log, and links to the read-only check. Everything also runs without the screen: the boot and SIM-change reconcile, the weekly test and the update pulls are WorkManager jobs started by `OwnerBootReceiver` (boot, the app's own update, carrier-config changes).
+
+How the entry works: Settings lists activities with the action `com.android.settings.action.IA_SETTINGS` from **system apps only** (SettingsLib `TileUtils.loadActivityTiles` skips any `ResolveInfo` that is not `system`) and files them by the meta-data `com.android.settings.category`; `com.android.settings.category.ia.wireless` is `CategoryKey.CATEGORY_NETWORK`, the Network & internet screen (`NetworkDashboardFragment`). `OwnerActivity` carries that filter with the title, the icon (tintable), the order (-10) and `com.android.settings.summary_uri`, which Settings calls (`getDynamicSummary`) on `OwnerSettingsProvider`; the provider answers only the system uid, root, the shell and the app itself. The activity is exported but guarded by `MODIFY_PHONE_STATE`, which Settings (the system uid), Settings search (SettingsIntelligence) and adb hold and a normal app cannot get. Installed as a user app the entry does not appear, and the screen opens only with `adb shell am start -n io.github.open_carrier_data.check.owner/io.github.open_carrier_data.check.owner.OwnerActivity`.
+
 **What it does.**
 1. **Loads the data and pulls updates.** It fetches the latest release of OCD's public repository from GitHub (`data-2026.10` today): `SHA256SUMS`, `release.json`, `metadata.json`, `lookup.json`, `carrier-variants.json` and `apns-conf.xml`. Every file must match `SHA256SUMS` and `release.json`. The data digest cannot be recomputed on the phone, so it must be the same in `release.json`, `metadata.json`, `carrier-variants.json` (`based_on_data_digest`) and the `apns-conf.xml` header. `lookup.json` has no APN rows; they come from `apns-conf.xml`. Until a pull, the bundled snapshot of the same release is used.
-2. **Tests every entry, on and off.** For each SIM and each IMS switch (VoLTE, Wi-Fi calling, video calling, VoNR, SMS over IMS) it reads the phone's value and its evidence, then sets the other value as a test override, waits up to 120 s for IMS to register with the feature's service on its bearer (or for the service to go), and reverts with proof. For OCD's internet APN rows for the SIM that the phone lacks, it inserts the row (marked "(OCD Check test)"), makes it the preferred APN, waits for mobile data to validate, and removes it again. VoNR's on-test stops before any change on the S20: its modem has standalone 5G switched off.
+2. **Tests every entry, on and off.** For each SIM and each IMS switch (VoLTE, Wi-Fi calling, video calling, VoNR, SMS over IMS) it reads the phone's value and its evidence, then sets the other value as a test override, waits up to 120 s for IMS to register with the feature's service on its bearer (or for the service to go; video calling on gets 5 minutes, and when IMS stays registered for voice the whole time but never adds video, the result is "not supported by this IMS stack"), and reverts with proof. VoLTE cannot be seen while IMS runs over Wi-Fi, so then the app switches Wi-Fi off for VoLTE's measurement (OCD Lab's `--wifi-off-test`), waits for IMS to register over mobile, measures, and switches Wi-Fi back on in every case, also on an error or a stopped job; the Wi-Fi-off is recorded before it happens, and the cleanup switches Wi-Fi on again after a crash. The log says "wifi_off" and "wifi_restore". For OCD's internet APN rows for the SIM that the phone lacks, it inserts the row (marked "(OCD Check test)"), makes it the preferred APN, waits for mobile data to validate, and removes it again. VoNR's on-test stops before any change on the S20: its modem has standalone 5G switched off.
 3. **Applies the best working value locally**: on when on registers; else off, when off works and, for a voice feature, a call of the owner's own went active with it off; else the phone's own value. An APN row is kept only when mobile data works with it and not without it.
-4. **Re-applies at boot and on a SIM change.** Overrides live in memory and a reboot drops them, so after a boot (once the 10 minutes in which a change is refused have passed) the start-up pass applies the keeps of the SIM in each slot again. A keep of a SIM that left its slot is cleared.
+4. **Re-applies at boot and on a SIM change.** Overrides live in memory and a reboot drops them, so after a boot (once the 10 minutes in which a change is refused have passed) the start-up pass applies the keeps of the SIM in each slot again. It is a plain background job, and Android batches those: on the S20 (`min_ready_cpu_only_jobs_count=3`, `max_cpu_only_job_batch_delay_ms` 31 minutes) a lone one can wait up to half an hour more, so the pass comes 10 to about 40 minutes after the boot. A keep of a SIM that left its slot is cleared.
 5. **Tests again** on a tap ("Test again"); a kept value that no longer works is dropped.
 6. **Uploads** by opening a prefilled issue on OCD's "Wrong or missing carrier data" form in the browser. The owner reads it and submits it himself; the app sends nothing. The text passes the report's privacy scan first, and a result never moves an OCD value by itself.
-7. **Runs weekly** through WorkManager (fetched by Gradle, owner build only): pull, then test, only while the phone is idle, charging and on Wi-Fi; the steps still refuse in a call or while roaming. The schedule can be switched off.
+7. **Runs weekly** through WorkManager (fetched by Gradle, owner build only): pull, then test, only while the phone is idle, charging and on Wi-Fi; the steps still refuse in a call or while roaming. The first weekly run comes a week after the last test, and the screen shows the next run, or "due now" once that time has passed and the job waits for idle, charging and Wi-Fi. The VoLTE step of a weekly run asks for idle and charging only, since it switches Wi-Fi off itself. The schedule can be switched off.
 8. **Reverts smartly.** Every start looks for leftovers: a trial left by a crash or a kill is reverted with proof, a trial still live after a reboot is a stop event, and a marked APN row the state does not keep is removed. While anything is live, an ongoing notification offers a one-tap "Revert all", and the owner screen has the same button.
 
 **The safety floor**, the same for both routes and enforced in code with tests:
@@ -363,19 +367,62 @@ The `owner` build type is the owner's part 2, built as he directed on 2026-10-19
 - the write gate: the S20 (`x1s`, `SM-G981B`) on its LineageOS build and a route; the A50 and every other phone stay read-only and the screen says why;
 - round 25's first-use order: until one override has been left live through a reboot and was gone afterwards ("Start check 3", then reboot), nothing is kept, no off is tested and a weekly run changes nothing. Checks 1 and 2 (only after the S20 build's boot check; the first apply on the cable with a lab `--read` before and after) are the owner's to keep.
 
-**Two routes behind one interface** (`OwnerPhone`), picked at run time:
-- **Privileged system app** (the target form): when the APK sits in `/system/priv-app/` or `/product/priv-app/` and `app/src/owner/priv-app/privapp-permissions-ocd-check-owner.xml` grants `MODIFY_PHONE_STATE`, `READ_PRIVILEGED_PHONE_STATE`, `WRITE_APN_SETTINGS`, `DUMP` and `READ_LOGS`, the app uses `CarrierConfigManager.overrideConfig` (the system API that is never persistent) and the telephony provider directly; reads run `dumpsys` and `logcat` as the app. No root and no Shizuku. To build it into the owner's ROM: put `app-owner.apk` in `priv-app/OcdCheckOwner/OcdCheckOwner.apk` of the partition and the XML in that partition's `etc/permissions/`, signed with the owner key as built here. Only for the owner's own ROM.
-- **Shizuku as root**, when the privileged permissions are not granted: Shizuku's server running as root starts `OwnerShellService`, which runs only the closed `OwnerCommand` list (`cmd phone cc set-value -s SLOT KEY true|false`, `cmd phone cc clear-values -s SLOT`, `content` on the APN table and the preferred APN, and the reads). `cmd phone cc` needs root and a non-user build. Shizuku must grant the app once in its own dialog.
+**Two routes behind one interface** (`OwnerPhone`), picked at run time; the log notes the route whenever it changes:
+- **Privileged system app** (the target form, used automatically): when the APK sits in a `priv-app/` folder, `app/src/owner/priv-app/privapp-permissions-ocd-check-owner.xml` grants `MODIFY_PHONE_STATE`, `READ_PRIVILEGED_PHONE_STATE`, `WRITE_APN_SETTINGS`, `DUMP` and `READ_LOGS`, and `CarrierConfigManager.overrideConfig(int, PersistableBundle)` is reachable (the same file puts the app on the hidden-API allowlist; the gate looks the method up without calling it), the app uses `overrideConfig` (the system API that is never persistent), the telephony provider directly, and `WifiManager.setWifiEnabled` (allowed for system apps) for VoLTE's Wi-Fi-off measurement; reads run `dumpsys` and `logcat` as the app. No root and no Shizuku. `READ_LOGS` still meets Android's log-access prompt: in the foreground it asks the owner once; in the background it is declined, and the evidence then has no IWLAN lines.
+- **Shizuku as root**, the fallback only, when the privileged route is not there: Shizuku's server running as root starts `OwnerShellService`, which runs only the closed `OwnerCommand` list (`cmd phone cc set-value -s SLOT KEY true|false`, `cmd phone cc clear-values -s SLOT`, `content` on the APN table and the preferred APN, `cmd wifi set-wifi-enabled enabled|disabled`, and the reads). `cmd phone cc` needs root and a non-user build. Shizuku must grant the app once in its own dialog. The service is bound once per app process and reused by every step: on the first owner run (2026-10-19) it was unbound and removed after each step, and a bind that came within milliseconds of the old service process exiting lost its record in Shizuku's server ("unable to find token"), so the APN step and a cleanup found no service. A failed start is now unbound, paused and tried again (three times).
 
-**Build and install.**
+**Build.**
 ```bash
 # local.properties (never committed): ocd.owner.storeFile, ocd.owner.storePassword, ocd.owner.keyAlias, ocd.owner.keyPassword
 ./gradlew testOwnerUnitTest lintOwner assembleOwner
-adb -s <S20 serial> install -r app/build/outputs/apk/owner/app-owner.apk
 ```
-The APK is `io.github.open_carrier_data.check.owner`, so it sits next to the read-only app. Without the signing properties it stays unsigned; it never takes the debug key. Its extra permissions are `INTERNET`, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED` and the five privileged ones, which an adb install never gets; WorkManager adds `WAKE_LOCK` and `FOREGROUND_SERVICE`.
+The APK is `io.github.open_carrier_data.check.owner`, so it sits next to the read-only app. Without the signing properties it stays unsigned; it never takes the debug key. Its extra permissions are `INTERNET`, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`, `CHANGE_WIFI_STATE` and the five privileged ones, which an adb install never gets; WorkManager adds `WAKE_LOCK` and `FOREGROUND_SERVICE`. Its native library (`libandroidx.graphics.path.so`) is stored uncompressed (`extractNativeLibs=false`), so it runs from a system partition as it is.
 
-**Kept apart from the read-only builds.** The owner code is in `app/src/owner/` only. Debug and release compile the no-op `OwnerHook` from `app/src/readonly/` instead, and `ReadOnlyBuildTest` (run by `testDebugUnitTest` and `testReleaseUnitTest`) proves they hold no owner class and no WorkManager, while `ManifestTest` and `AllowlistTest` keep their meaning for them. The owner build's own tests are in `app/src/testOwner/`, with OCD Lab's fixtures (`tools/ocd_lab/fixtures/`): the key guard and the command list, the dump parser and the revert proof, the session against a fake phone (register first, revert keeps the kept values, an unprovable revert stops, the guards stop before any change, the revert waits for a call), the refusals, the loop (best value, smart revert, voice offs, VoNR, cleanup, re-apply, check 3, revert all, APN trials), the release check, the APN rows and the issue URL.
+**Install by hand as a privileged system app** (what runs on the owner's S20 since 2026-10-19; the record and a rollback script are in the S20 workspace, `reports/ocd-systemapp-<timestamp>/`). The ROM enforces the privapp allowlist (`ro.control_privapp_permissions=enforce`): a privileged permission the APK asks for and the XML lacks stops `system_server` at boot, which `OwnerManifestTest` guards against.
+```bash
+adb -s <S20 serial> root && adb -s <S20 serial> remount    # once: adb disable-verity and a reboot, if remount asks for it
+adb -s <S20 serial> uninstall io.github.open_carrier_data.check.owner   # a user-app copy first (export its files/ before)
+adb -s <S20 serial> shell mkdir -p /system_ext/priv-app/OcdCheckOwner
+adb -s <S20 serial> push app/build/outputs/apk/owner/app-owner.apk /system_ext/priv-app/OcdCheckOwner/OcdCheckOwner.apk
+adb -s <S20 serial> push app/src/owner/priv-app/privapp-permissions-ocd-check-owner.xml /system_ext/etc/permissions/
+adb -s <S20 serial> shell 'chmod 644 /system_ext/priv-app/OcdCheckOwner/OcdCheckOwner.apk /system_ext/etc/permissions/privapp-permissions-ocd-check-owner.xml; restorecon -R /system_ext/priv-app/OcdCheckOwner /system_ext/etc/permissions/privapp-permissions-ocd-check-owner.xml'
+adb -s <S20 serial> reboot
+adb -s <S20 serial> shell pm grant io.github.open_carrier_data.check.owner android.permission.READ_PHONE_STATE
+adb -s <S20 serial> shell pm grant io.github.open_carrier_data.check.owner android.permission.POST_NOTIFICATIONS
+```
+Files copied into the app's data folder by hand need its SELinux categories (`chcon -R "$(stat -c %C /data/data/<pkg>/files)" /data/data/<pkg>/files`), or the app cannot write its state. A later build can go over the system copy with `adb install -r` (it becomes an updated system app and keeps its privileges); a new privileged permission needs the XML first.
+
+**In a full ROM build.** The same two files, as part of the owner's own LineageOS tree (never a ROM for anyone else):
+- a prebuilt module, for example `vendor/ocd/Android.bp`, with the APK as built here (signed with the owner key):
+  ```
+  android_app_import {
+      name: "OcdCheckOwner",
+      apk: "OcdCheckOwner.apk",
+      presigned: true,
+      privileged: true,
+      system_ext_specific: true,
+      dex_preopt: { enabled: false },
+      required: ["privapp-permissions-ocd-check-owner.xml", "default-permissions-ocd-check-owner.xml"],
+  }
+  prebuilt_etc {
+      name: "privapp-permissions-ocd-check-owner.xml",
+      src: "privapp-permissions-ocd-check-owner.xml",
+      sub_dir: "permissions",
+      system_ext_specific: true,
+  }
+  prebuilt_etc {
+      name: "default-permissions-ocd-check-owner.xml",
+      src: "default-permissions-ocd-check-owner.xml",
+      sub_dir: "default-permissions",
+      system_ext_specific: true,
+  }
+  ```
+- `PRODUCT_PACKAGES += OcdCheckOwner` in the device's product makefile, behind a switch the owner sets for his own builds (for the S20: `device/samsung/x1s/lineage_x1s_phhims_common.mk`, next to `PhhImsX1s` and `SamsungCarrierBridge`, inside `ifeq ($(OCD_OWNER_APP),true)`);
+- `app/src/owner/priv-app/default-permissions-ocd-check-owner.xml` grants `READ_PHONE_STATE` and `POST_NOTIFICATIONS` on the first boot (`DefaultPermissionGrantPolicy`, revocable), in place of the two `pm grant` lines.
+
+The S20 workspace has the device-tree note for this (`notes/ocd-system-app-in-rom.md` there), with the step from the hand install to the ROM (roll the overlay copy back first, or it shadows the ROM's files).
+
+**Kept apart from the read-only builds.** The owner code is in `app/src/owner/` only. Debug and release compile the no-op `OwnerHook` from `app/src/readonly/` instead, and `ReadOnlyBuildTest` (run by `testDebugUnitTest` and `testReleaseUnitTest`) proves they hold no owner class and no WorkManager, while `ManifestTest` and `AllowlistTest` keep their meaning for them. The owner build's own tests are in `app/src/testOwner/`, with OCD Lab's fixtures (`tools/ocd_lab/fixtures/`): the key guard and the command list, the dump parser and the revert proof, the session against a fake phone (register first, revert keeps the kept values, an unprovable revert stops, the guards stop before any change, the revert waits for a call), the refusals, the loop (best value, smart revert, voice offs, VoNR, cleanup, re-apply, check 3, revert all, APN trials, VoLTE with Wi-Fi off and Wi-Fi always back on, the longer video window and "not supported by this IMS stack"), the release check, the APN rows, the issue URL, the Settings entry and the allowlist in the merged manifest, the schedule line, the Settings summary and the retried service start.
 
 ## Planned
 
@@ -443,7 +490,7 @@ To move to newer libraries, install build-tools 35 or later, raise AGP, and then
 | `app/src/readonly/java/.../OwnerHook.kt` | the no-op owner hook that debug and release compile |
 | `app/src/owner/java/.../owner/core/` | the owner build's plain Kotlin: the write list and key guard, the dump and revert proof, the refusals, the evidence, the session and the loop, the release check, the APN rows, the issue URL and the state |
 | `app/src/owner/java/.../owner/` | the two routes (`OwnerAccess.kt`), the Shizuku service, the data pull, WorkManager jobs, the boot and revert-all receivers, the notification and the owner screen |
-| `app/src/owner/priv-app/` | the privapp-permissions allowlist for the privileged route |
+| `app/src/owner/priv-app/` | the privapp-permissions allowlist (with the hidden-API entry) for the privileged route, and the default-permissions file for a ROM build |
 
 ## Licence
 

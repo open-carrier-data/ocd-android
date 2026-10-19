@@ -1,7 +1,10 @@
 package io.github.open_carrier_data.check.owner.core
 
 import io.github.open_carrier_data.check.core.DeviceInfo
+import io.github.open_carrier_data.check.core.ImsService
 import io.github.open_carrier_data.check.core.OcdBundle
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /** How one run tests. */
 data class RunOptions(
@@ -20,6 +23,16 @@ data class RunOptions(
     val apns: Boolean = true,
     /** A scheduled run: refused until the first-use checks are done. */
     val scheduled: Boolean = false,
+    /**
+     * VoLTE while IMS runs over Wi-Fi: switch Wi-Fi off for the measurement
+     * (lab `--wifi-off-test`) and always back on afterwards. Without it, VoLTE
+     * cannot be observed then and its test is skipped with [IMS_ON_WIFI].
+     */
+    val wifiOffForVolte: Boolean = true,
+    /** Video calling on: PHH IMS can take minutes to add video to a registration. */
+    val videoSettleMs: Long = 300_000,
+    /** How long Wi-Fi gets to connect again after the measurement. */
+    val wifiBackMs: Long = 60_000,
 )
 
 /**
@@ -41,10 +54,20 @@ class OwnerRunner(
         val session = OwnerSession(phone, store, sim, device.model)
         val start = FeatureResult(feature, null, null, ocd)
         if (options.scheduled && !store.read().rebootCleared) return start.copy(refused = FIRST_USE_PENDING)
+        var wifiTurnedOff = false
         try {
             session.guard(callWaitMs = 0)
             session.takeSnapshot()
-            val base = session.observe()
+            var base = session.observe()
+            if (feature == OwnerFeature.VOLTE && imsOnWifi(base)) {
+                // VoLTE cannot be seen while IMS runs over Wi-Fi: measure it with Wi-Fi off, as the lab does.
+                if (!options.wifiOffForVolte) {
+                    log("wifi_off", "VoLTE on slot ${sim.slot + 1}: IMS runs over Wi-Fi and the Wi-Fi-off measurement is not chosen; VoLTE not tested")
+                    return start.copy(baseline = base.switch(feature), refused = IMS_ON_WIFI)
+                }
+                wifiTurnedOff = true
+                base = wifiOff(session, options)
+            }
             val baseline = base.switch(feature) ?: return start.copy(refused = "switch_unreadable")
             val baselineWorks = Evidence.working(feature, base)
             var result = start.copy(baseline = baseline, baselineWorks = baselineWorks)
@@ -70,7 +93,58 @@ class OwnerRunner(
             runCatching { session.revertTrials("error: ${e.reason}") }
             log("refused", "${feature.wire} on slot ${sim.slot}: ${e.reason}")
             return start.copy(refused = e.reason)
+        } finally {
+            // Also on an error or a cancelled worker: Wi-Fi always comes back on.
+            if (wifiTurnedOff) withContext(NonCancellable) { wifiBack(options) }
         }
+    }
+
+    private fun imsOnWifi(o: Observation): Boolean = o.ims.registered == true && o.ims.transport?.isWifi == true && o.wifiConnected == true
+
+    /**
+     * Switches Wi-Fi off (recorded first, so a crash leaves a record the
+     * cleanup acts on) and waits for IMS to leave Wi-Fi. Returns the
+     * observation to measure from.
+     */
+    private suspend fun wifiOff(session: OwnerSession, options: RunOptions): Observation {
+        session.guard(callWaitMs = 0)
+        store.update { it.copy(wifiOffSinceMs = phone.nowMs()) }
+        if (!phone.setWifiEnabled(false)) throw SafetyException("wifi_off_refused", "the phone refused to switch Wi-Fi off")
+        log("wifi_off", "VoLTE on slot ${session.slot + 1}: IMS runs over Wi-Fi; Wi-Fi switched off for the measurement")
+        var waited = 0L
+        var o = session.observe()
+        while (waited < options.settleMs && !(o.ims.registered == true && o.ims.transport?.isWifi == false)) {
+            if (o.callActive) throw SafetyException(Refusal.CALL_ACTIVE.wire, Refusal.CALL_ACTIVE.plain)
+            phone.sleep(options.pollMs)
+            waited += options.pollMs
+            o = session.observe()
+        }
+        log(
+            "wifi_off",
+            if (o.ims.transport?.isWifi == false) "IMS registered over ${o.ims.transport} ${waited / 1000} s after Wi-Fi went off" else "IMS did not register over mobile within ${waited / 1000} s of Wi-Fi off",
+        )
+        return o
+    }
+
+    /** Wi-Fi on again, then a wait for it to connect. The record stays while the phone refuses, for the cleanup. */
+    private suspend fun wifiBack(options: RunOptions) {
+        if (store.read().wifiOffSinceMs == null) return
+        if (!restoreWifi("end of the VoLTE measurement")) return
+        var waited = 0L
+        while (waited < options.wifiBackMs && phone.wifiConnected() != true) {
+            phone.sleep(2_000)
+            waited += 2_000
+        }
+        log("wifi_restore", if (phone.wifiConnected() == true) "Wi-Fi connected again after ${waited / 1000} s" else "Wi-Fi switched on, not yet connected after ${waited / 1000} s")
+    }
+
+    /** Switches Wi-Fi back on when the state records it off. Returns false while the phone refuses. */
+    suspend fun restoreWifi(reason: String): Boolean {
+        if (store.read().wifiOffSinceMs == null) return true
+        val ok = phone.setWifiEnabled(true)
+        if (ok) store.update { it.copy(wifiOffSinceMs = null) }
+        log("wifi_restore", "Wi-Fi switched back on ($reason)${if (ok) "" else ": refused, the cleanup tries again"}")
+        return ok
     }
 
     private fun skipReason(feature: OwnerFeature, value: Boolean, base: Observation, options: RunOptions): String? = when {
@@ -87,14 +161,20 @@ class OwnerRunner(
     /** One value on, settle, measure, revert with proof. */
     private suspend fun trial(session: OwnerSession, feature: OwnerFeature, value: Boolean, options: RunOptions): Trial {
         session.apply(feature, value)
+        val videoOn = feature == OwnerFeature.VIDEO_CALLING && value
+        val settleMs = if (videoOn) maxOf(options.videoSettleMs, options.settleMs) else options.settleMs
         var waited = 0L
         var verdict = Verdict(Outcome.WAIT, "not_yet")
         var voice: Boolean? = null
         var callSeen = false
-        while (waited < options.settleMs) {
+        var voiceRegistered = false
+        var videoSeen = false
+        while (waited < settleMs) {
             phone.sleep(options.pollMs)
             waited += options.pollMs
             val o = session.observe()
+            if (o.ims.registered == true && ImsService.MMTEL in o.ims.services) voiceRegistered = true
+            if (o.ims.registered == true && ImsService.MMTEL_VIDEO in o.ims.services) videoSeen = true
             if (o.callActive) {
                 callSeen = true
                 if (o.callNetworkType != null) voice = true
@@ -131,7 +211,15 @@ class OwnerRunner(
         }
         log("trial", "${feature.wire}=$value: ${verdict.outcome} (${verdict.reason}), voice ${voice ?: "not measured"}")
         if (voice == false) session.stop("lost_voice with ${feature.wire} off")
-        return Trial(works, verdict.reason.takeIf { waited < options.settleMs || verdict.outcome != Outcome.WAIT } ?: "settle_timeout", voice, proof, lostVoice = voice == false)
+        val timedOut = waited >= settleMs && verdict.outcome == Outcome.WAIT && verdict.reason != "call_started"
+        val reason = when {
+            // IMS registered for voice the whole time, but never offered video: the stack does not do video.
+            timedOut && videoOn && voiceRegistered && !videoSeen -> IMS_STACK_NO_VIDEO
+            timedOut -> "settle_timeout"
+            else -> verdict.reason
+        }
+        if (reason == IMS_STACK_NO_VIDEO) log("trial", "video_calling=true: IMS registered for voice for ${settleMs / 1000} s but never with video; not supported by this IMS stack")
+        return Trial(works, reason, voice, proof, lostVoice = voice == false)
     }
 
     /**
@@ -147,6 +235,7 @@ class OwnerRunner(
         val offOk = if (!baseline) true else r.offWorks == true && (!feature.voice || r.offVoiceMeasured == true)
         val (best, why) = when {
             onWorks == true -> true to "on registered with its service"
+            offOk && !baseline && r.onReason == IMS_STACK_NO_VIDEO -> false to "not supported by this IMS stack (registered for voice, never with video); the phone's own off stays"
             offOk && !baseline -> false to "on did not register; the phone's own off stays"
             offOk -> false to if (feature.voice) "on did not register; off kept with voice measured" else "on did not register; service off"
             else -> null to "nothing better measured; the phone's own value stays"
@@ -282,9 +371,16 @@ class OwnerRunner(
      */
     suspend fun reconcile(sims: List<OwnerSim>): String {
         val notes = mutableListOf<String>()
+        if (store.read().wifiOffSinceMs != null) {
+            notes += if (restoreWifi("leftover of an interrupted VoLTE measurement")) {
+                "Wi-Fi switched back on after an interrupted VoLTE measurement"
+            } else {
+                "Wi-Fi restore refused; retried later"
+            }
+        }
         val state = store.read()
         val bootAt = phone.nowMs() - phone.uptimeMs()
-        val cc = phone.carrierConfigText()?.let(CcDump::parse) ?: return "carrier config unreadable; cleanup waits"
+        val cc = phone.carrierConfigText()?.let(CcDump::parse) ?: return (notes + "carrier config unreadable; cleanup waits").joinToString("; ")
         for (trial in state.overrides.filter { it.hold == Hold.TRIAL }) {
             val present = cc.phones[trial.slot]?.get(CcLayer.OVERRIDE)?.get(trial.key).asBool() == trial.value
             if (trial.sinceMs < bootAt && present) {
@@ -387,6 +483,7 @@ class OwnerRunner(
     /** One-tap revert-all: every override of every slot with a SIM, and every APN row. Waits for a call to end. */
     suspend fun revertAll(sims: List<OwnerSim>): String {
         val notes = mutableListOf<String>()
+        if (store.read().wifiOffSinceMs != null) notes += if (restoreWifi("revert all")) "Wi-Fi switched back on" else "Wi-Fi restore refused"
         for (slot in store.read().overrides.map { it.slot }.toSortedSet()) {
             val sim = sims.firstOrNull { it.slot == slot }
             if (sim == null) {
@@ -435,6 +532,12 @@ class OwnerRunner(
 
     companion object {
         const val FIRST_USE_PENDING = "first_use_reboot_check_pending"
+
+        /** VoLTE not tested: IMS runs over Wi-Fi and the Wi-Fi-off measurement was not chosen. */
+        const val IMS_ON_WIFI = "ims_on_wifi"
+
+        /** Video calling on: IMS stayed registered for voice through the whole window and never offered video. */
+        const val IMS_STACK_NO_VIDEO = "not_supported_by_this_ims_stack"
         const val PROBE_WHY = "first-use check 3"
 
         /** OCD's answer for every feature, for the plan and the report. */

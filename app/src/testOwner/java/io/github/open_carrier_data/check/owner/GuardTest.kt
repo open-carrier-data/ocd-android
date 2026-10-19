@@ -45,14 +45,21 @@ class GuardTest {
         binds = mapOf("name" to "LIDL Internet${ApnColumns.MARKER}", "apn" to "web.vodafone.de", "numeric" to "26202", "type" to "default,supl"))
 
     @Test
-    fun `every command has a fixed shape, and the writes are the five listed`() {
+    fun `every command has a fixed shape, and the writes are the seven listed`() {
         val lines = OwnerCommand.entries.associateWith { it.argv(args)!!.joinToString(" ") }
         assertEquals("cmd phone cc set-value -s 0 carrier_volte_available_bool true", lines[OwnerCommand.CC_SET])
         assertEquals("cmd phone cc clear-values -s 0", lines[OwnerCommand.CC_CLEAR])
         assertEquals("content delete --uri content://telephony/carriers --where _id=7", lines[OwnerCommand.APN_DELETE])
         assertEquals("content insert --uri content://telephony/carriers/preferapn/subId/3 --bind apn_id:l:7", lines[OwnerCommand.PREFERRED_SET])
+        // VoLTE's Wi-Fi-off measurement (the owner's first run, 2026-10-19): Wi-Fi only, never svc.
+        assertEquals("cmd wifi set-wifi-enabled enabled", lines[OwnerCommand.WIFI_SET])
+        assertEquals("cmd wifi set-wifi-enabled disabled", OwnerCommand.WIFI_SET.argv(args.copy(value = false))!!.joinToString(" "))
+        assertNull(OwnerCommand.WIFI_SET.argv(args.copy(value = null)))
         assertEquals(
-            setOf(OwnerCommand.CC_SET, OwnerCommand.CC_CLEAR, OwnerCommand.APN_INSERT, OwnerCommand.APN_DELETE, OwnerCommand.PREFERRED_SET, OwnerCommand.PREFERRED_CLEAR),
+            setOf(
+                OwnerCommand.CC_SET, OwnerCommand.CC_CLEAR, OwnerCommand.APN_INSERT, OwnerCommand.APN_DELETE, OwnerCommand.PREFERRED_SET, OwnerCommand.PREFERRED_CLEAR,
+                OwnerCommand.WIFI_SET,
+            ),
             OwnerCommand.entries.filter { it.writes }.toSet(),
         )
         val banned = Regex("(^|\\s)-p(\\s|$)|persistent|settings put|reboot|\\bam\\b|\\bsvc\\b|setprop|tel:|ACTION_CALL|KEYCODE|\\bsu\\b|\\bsh\\b|[;&|`$<>\\n]")
