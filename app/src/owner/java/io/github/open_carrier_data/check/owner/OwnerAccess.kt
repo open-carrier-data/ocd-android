@@ -232,6 +232,8 @@ class ShizukuPhone(context: Context, private val binder: IBinder) : AppSidePhone
 
     override suspend fun apnQuery(numeric: String) = PhoneApnRow.parseQuery(text(OwnerCommand.APN_QUERY, OwnerArgs(numeric = numeric)))
     override suspend fun apnQueryMarked() = PhoneApnRow.parseQuery(text(OwnerCommand.APN_QUERY_MARKED))
+    override suspend fun apnConflicts(values: Map<String, String>) =
+        PhoneApnRow.parseQuery(text(OwnerCommand.APN_CONFLICTS, OwnerArgs(binds = values)))?.map { it.id }
     override suspend fun apnInsert(values: Map<String, String>) = run(OwnerCommand.APN_INSERT, OwnerArgs(binds = values))?.first == 0
     override suspend fun apnDelete(id: Long) = run(OwnerCommand.APN_DELETE, OwnerArgs(id = id))?.first == 0
 
@@ -443,6 +445,18 @@ class PrivilegedPhone(context: Context) : AppSidePhone(context) {
 
     override suspend fun apnQueryMarked() = withContext(Dispatchers.IO) { query("name LIKE ?", arrayOf("%" + ApnColumns.MARKER.trim())) }
 
+    override suspend fun apnConflicts(values: Map<String, String>): List<Long>? = withContext(Dispatchers.IO) {
+        // The same checks as the Shizuku route's argv.
+        if (OwnerCommand.APN_CONFLICTS.argv(OwnerArgs(binds = values)) == null) return@withContext null
+        val match = ApnColumns.conflictMatch(values)
+        runCatching {
+            resolver.query(carriers, arrayOf("_id"), match.joinToString(" AND ") { "${it.first} = ?" }, match.map { it.second }.toTypedArray(), null)?.use { c ->
+                buildList { while (c.moveToNext()) add(c.getLong(0)) }
+            }
+        }.getOrNull()
+    }
+
+    /** True only when the provider added a row: a merge into an existing row answers no URI. */
     override suspend fun apnInsert(values: Map<String, String>): Boolean = withContext(Dispatchers.IO) {
         // The same checks as the Shizuku route's argv.
         if (OwnerCommand.APN_INSERT.argv(OwnerArgs(binds = values)) == null) return@withContext false

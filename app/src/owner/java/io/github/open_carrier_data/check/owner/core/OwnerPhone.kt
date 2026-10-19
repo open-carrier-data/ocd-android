@@ -52,6 +52,13 @@ interface OwnerPhone {
 
     /** Rows whose name carries [ApnColumns.MARKER], for every network code. */
     suspend fun apnQueryMarked(): List<PhoneApnRow>?
+
+    /**
+     * IDs of the rows an insert of [values] would be merged into instead of
+     * added ([ApnColumns.conflictMatch]); empty when it would add a row, null
+     * when the table could not be read.
+     */
+    suspend fun apnConflicts(values: Map<String, String>): List<Long>?
     suspend fun apnInsert(values: Map<String, String>): Boolean
     suspend fun apnDelete(id: Long): Boolean
     suspend fun preferredApn(subId: Int): PreferredApn

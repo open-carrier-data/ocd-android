@@ -192,6 +192,33 @@ object ApnColumns {
         return out
     }
 
+    /**
+     * The telephony provider's UNIQUE columns of the carriers table, with the
+     * value it stores when an insert leaves one out (TelephonyProvider
+     * CARRIERS_UNIQUE_FIELDS_DEFAULTS, AOSP 16). An insert that matches an
+     * existing row on all of them is not added: the provider merges it into
+     * that row (name, types and the rest) and answers with no row. On the
+     * S20 (2026-10-19) that renamed stock Vodafone rows with the test marker,
+     * and the revert then deleted them. Name and type are not among these
+     * columns, so a row that differs from a phone row only in its types is
+     * the same row to the provider.
+     */
+    val UNIQUE: Map<String, String> = linkedMapOf(
+        "numeric" to "", "mcc" to "", "mnc" to "", "apn" to "", "proxy" to "", "port" to "",
+        "mmsproxy" to "", "mmsport" to "", "mmsc" to "", "carrier_enabled" to "1", "bearer" to "0",
+        "mvno_type" to "", "mvno_match_data" to "", "profile_id" to "0", "protocol" to "IP",
+        "roaming_protocol" to "IP", "user_editable" to "1", "owned_by" to "1", "apn_set_id" to "0",
+        "carrier_id" to "-1", "infrastructure_bitmask" to "3", "esim_bootstrap_provisioning" to "0",
+    )
+
+    /**
+     * The provider's own conflict lookup (selectConflictingRow) for an insert
+     * of [values]: each UNIQUE column equal to the value the insert would
+     * store. An insert through the general URI is always owned by others.
+     */
+    fun conflictMatch(values: Map<String, String>): List<Pair<String, String>> =
+        UNIQUE.map { (column, default) -> column to if (column == "owned_by") default else values[column] ?: default }
+
     /** "1|2|13" to the provider's integer bitmask: bit (n - 1) for each network type n. */
     fun bitmask(value: String): String? {
         val parts = value.split('|').map { it.trim() }.filter { it.isNotEmpty() }

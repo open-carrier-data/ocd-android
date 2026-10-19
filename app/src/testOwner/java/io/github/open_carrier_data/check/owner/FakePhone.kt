@@ -193,8 +193,28 @@ open class FakePhone(
 
     override suspend fun apnQuery(numeric: String) = apns.toList()
     override suspend fun apnQueryMarked() = apns.filter { it.name?.endsWith(" (OCD Check test)") == true }
+    /** The phone rows an insert would merge into, as the provider sees them: here the same APN and protocol (default IP). */
+    private fun conflicting(values: Map<String, String>) =
+        apns.filter { it.apn == values["apn"] && (it.protocol ?: "IP") == (values["protocol"] ?: "IP") }
+
+    /** The conflict lookup fails (null) or misses every conflict (an older provider with other UNIQUE columns). */
+    var conflictsUnreadable = false
+    var conflictsBlind = false
+
+    override suspend fun apnConflicts(values: Map<String, String>): List<Long>? = when {
+        conflictsUnreadable -> null
+        conflictsBlind -> emptyList()
+        else -> conflicting(values).map { it.id }
+    }
+
     override suspend fun apnInsert(values: Map<String, String>): Boolean {
         writes += "apn insert ${values["apn"]}"
+        val old = conflicting(values).firstOrNull()
+        if (old != null) {
+            // TelephonyProvider: the insert is merged into the existing row (name, types) and answers no row.
+            apns[apns.indexOf(old)] = old.copy(name = values["name"], types = (old.types + values["type"].orEmpty().split(',')).distinct())
+            return false
+        }
         apns += PhoneApnRow(nextId++, values["name"], values["apn"].orEmpty(), values["type"].orEmpty().split(','), values["protocol"], values["mvno_type"])
         return true
     }
