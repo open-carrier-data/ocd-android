@@ -3,6 +3,8 @@ package io.github.open_carrier_data.check.owner
 import io.github.open_carrier_data.check.core.SimIdentity
 import io.github.open_carrier_data.check.owner.core.CcDump
 import io.github.open_carrier_data.check.owner.core.CcResult
+import io.github.open_carrier_data.check.owner.core.EmergencyApi
+import io.github.open_carrier_data.check.owner.core.ImsApi
 import io.github.open_carrier_data.check.owner.core.KeyGuard
 import io.github.open_carrier_data.check.owner.core.MemoryStore
 import io.github.open_carrier_data.check.owner.core.MobileData
@@ -50,7 +52,7 @@ open class FakePhone(
     var sim: Boolean = true,
     var honourClear: Boolean = true,
 ) : OwnerPhone {
-    override val route = Route.SHIZUKU_ROOT
+    override val route get() = if (privileged) Route.PRIVILEGED else Route.SHIZUKU_ROOT
     var overrides: MutableMap<String, String>? = null
     var persistent: MutableMap<String, String>? = null
 
@@ -104,7 +106,9 @@ open class FakePhone(
         return text
     }
 
-    override suspend fun phoneText(): String {
+    private class FakeIms(val registered: Boolean, val voice: Boolean, val video: Boolean, val sms: Boolean, val onWifi: Boolean)
+
+    private fun ims(): FakeIms {
         val volte = effective("carrier_volte_available_bool") == "true"
         val sms = effective("imssms.sms_over_ims_supported_bool") == "true"
         val video = effective("carrier_vt_available_bool") == "true"
@@ -113,15 +117,51 @@ open class FakePhone(
         val onWifi = imsOverWifi && wifi == true && wfc
         val voice = if (onWifi) true else volte
         val registered = imsWorks && (voice || sms)
+        return FakeIms(registered, registered && voice, registered && voice && video && imsVideo, registered && sms, onWifi)
+    }
+
+    override suspend fun phoneText(): String? {
+        if (privileged) return null
+        val ims = ims()
         val second = OwnerFixtures.PHONE.indexOf("GsmCdmaPhone extends:", OwnerFixtures.PHONE.indexOf("mPhoneId=0"))
         var section = OwnerFixtures.PHONE.substring(0, second)
-        section = section.replace("mImsMmTelRegistrationState = 0", "mImsMmTelRegistrationState = ${if (registered) 2 else 0}")
-            .replace("Voice: false Video: false UT: false SMS: false", "Voice: ${registered && voice} Video: ${registered && voice && video && imsVideo} UT: false SMS: ${registered && sms}")
+        section = section.replace("mImsMmTelRegistrationState = 0", "mImsMmTelRegistrationState = ${if (ims.registered) 2 else 0}")
+            .replace("Voice: false Video: false UT: false SMS: false", "Voice: ${ims.voice} Video: ${ims.video} UT: false SMS: ${ims.sms}")
         if (ecbm) section = section.replace("isInEcm()=false", "isInEcm()=true")
         return section + OwnerFixtures.PHONE.substring(second)
     }
 
-    override suspend fun ecmProperty(): String = ""
+    override suspend fun ecmProperty(): String? = if (privileged) null else ""
+
+    /**
+     * The privileged route: no phone dump; the emergency state and IMS come
+     * from the system APIs. [emergencyApiAnswers] false makes every emergency
+     * call fail (null), as when a binder is missing.
+     */
+    var privileged = false
+    var emergencyApiAnswers = true
+    var emergencySms = false
+
+    override suspend fun emergencyApi(): EmergencyApi? = when {
+        !privileged -> null
+        !emergencyApiAnswers -> EmergencyApi(null, null, null)
+        else -> EmergencyApi(ecbm = ecbm, inEmergencyCall = false, emergencySmsMode = emergencySms)
+    }
+
+    override suspend fun imsApi(slot: Int, subId: Int): ImsApi? {
+        if (!privileged) return null
+        val ims = ims()
+        return ImsApi(
+            registrationState = if (ims.registered) ImsApi.REGISTERED else ImsApi.NOT_REGISTERED,
+            transportType = if (!ims.registered) -1 else if (ims.onWifi) ImsApi.TRANSPORT_WLAN else ImsApi.TRANSPORT_WWAN,
+            voice = ims.voice,
+            video = ims.video,
+            sms = ims.sms,
+            volteByUser = true,
+            vtByUser = true,
+            wfcByUser = true,
+        )
+    }
     override suspend fun iwlanLogText(slot: Int): String = ""
 
     override suspend fun ccSet(slot: Int, subId: Int, key: String, value: Boolean): CcResult {

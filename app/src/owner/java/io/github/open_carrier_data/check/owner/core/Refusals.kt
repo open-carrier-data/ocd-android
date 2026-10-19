@@ -36,6 +36,8 @@ data class SafetyInputs(
     val nowMs: Long,
     val uptimeMs: Long,
     val seen: EmergencySeen?,
+    /** The privileged route's emergency state from the system APIs, in place of the phone dump; null on the Shizuku route. */
+    val emergencyApi: EmergencyApi? = null,
 )
 
 data class SafetyVerdict(
@@ -63,10 +65,11 @@ object Refusals {
     fun check(input: SafetyInputs): SafetyVerdict {
         val registry = input.registry
         val phone = input.phoneDump
-        if (registry.isNullOrBlank() || phone.isNullOrBlank()) {
+        val api = input.emergencyApi
+        if (registry.isNullOrBlank() || (phone.isNullOrBlank() && api == null)) {
             return SafetyVerdict(Refusal.EMERGENCY_STATE_UNREADABLE, null, null, input.seen)
         }
-        val emergency = EmergencyParser.parse(registry, phone, input.ecmProperty)
+        val emergency = EmergencyParser.parse(registry, phone, input.ecmProperty, api)
         val bootAt = input.nowMs - input.uptimeMs
         var seen = input.seen?.takeIf { it.firstSeenAtMs >= bootAt }
         val mark = emergency.outgoingMark
@@ -76,6 +79,8 @@ object Refusals {
         val refusal = when {
             emergency.inEmergencyCall == null || emergency.ecbm == null || emergency.outgoingEmergencyCallSinceBoot == null ->
                 Refusal.EMERGENCY_STATE_UNREADABLE
+            // The API always answers the SMS mode; an older dump may lack the line, so only the API route needs it.
+            api != null && emergency.emergencySmsMode == null -> Refusal.EMERGENCY_STATE_UNREADABLE
             emergency.inEmergencyCall -> Refusal.EMERGENCY_CALL_ACTIVE
             emergency.ecbm -> Refusal.EMERGENCY_CALLBACK_MODE
             emergency.emergencySmsMode == true -> Refusal.EMERGENCY_SMS_MODE
@@ -89,5 +94,17 @@ object Refusals {
             else -> null
         }
         return SafetyVerdict(refusal, emergency, roaming, seen)
+    }
+
+    /** Which inputs left the emergency state unreadable, for the log. Names only, no values. */
+    fun unreadable(input: SafetyInputs, verdict: SafetyVerdict): List<String> = buildList {
+        val api = input.emergencyApi
+        if (input.registry.isNullOrBlank()) add("registry")
+        if (input.phoneDump.isNullOrBlank() && api == null) add("phone dump and system API")
+        val e = verdict.emergency ?: return@buildList
+        if (e.ecbm == null) add("emergency callback mode")
+        if (e.inEmergencyCall == null) add("emergency call")
+        if (api != null && e.emergencySmsMode == null) add("emergency SMS mode")
+        if (e.outgoingEmergencyCallSinceBoot == null) add("registry emergency number")
     }
 }
