@@ -127,7 +127,14 @@ object EmergencyParser {
     private val ECBM_DURATION = Regex("mECBMDuration=(-?\\d+)")
     private val SCBM_DURATION = Regex("mSCBMDuration=(-?\\d+)")
 
-    fun parse(registry: String, phoneText: String, ecmProperty: String?): EmergencyReading {
+    /**
+     * Merges every source the route has: the registry (both routes), the phone
+     * service's dump and the ECM property (Shizuku route), and the system APIs
+     * (privileged route, [api]). Any source saying true wins; a value is known
+     * when the dump or the API gave it.
+     */
+    fun parse(registry: String, phoneText: String?, ecmProperty: String?, api: EmergencyApi? = null): EmergencyReading {
+        val phoneText = phoneText.orEmpty()
         val outgoing = mutableListOf<Boolean>()
         var mark: Int? = null
         val ecbmRegistry = mutableListOf<Boolean>()
@@ -148,11 +155,14 @@ object EmergencyParser {
         val inCall = IN_CALL.findAll(phoneText).map { it.groupValues[1] == "true" }.toList()
         val smsMode = SMS_MODE.findAll(phoneText).map { it.groupValues[1] == "true" }.toList()
         val property = ecmProperty?.trim()?.takeIf { it.isNotEmpty() }.asBool()
+        val ecbmRead = ecmDump + listOfNotNull(api?.ecbm)
+        val inCallRead = inCall + listOfNotNull(api?.inEmergencyCall)
+        val smsRead = smsMode + listOfNotNull(api?.emergencySmsMode)
         fun anyOf(values: List<Boolean>): Boolean? = if (values.any { it }) true else if (values.isNotEmpty()) false else null
         return EmergencyReading(
-            ecbm = if (ecmDump.any { it } || property == true || ecbmRegistry.any { it }) true else if (ecmDump.isNotEmpty()) false else null,
-            inEmergencyCall = anyOf(inCall),
-            emergencySmsMode = if (smsMode.any { it } || scbmRegistry.any { it }) true else if (smsMode.isNotEmpty()) false else null,
+            ecbm = if (ecbmRead.any { it } || property == true || ecbmRegistry.any { it }) true else if (ecbmRead.isNotEmpty()) false else null,
+            inEmergencyCall = anyOf(inCallRead),
+            emergencySmsMode = if (smsRead.any { it } || scbmRegistry.any { it }) true else if (smsRead.isNotEmpty()) false else null,
             outgoingEmergencyCallSinceBoot = anyOf(outgoing),
             outgoingMark = mark,
         )

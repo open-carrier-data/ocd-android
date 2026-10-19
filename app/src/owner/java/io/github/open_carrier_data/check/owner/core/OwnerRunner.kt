@@ -296,20 +296,33 @@ class OwnerRunner(
 
     private suspend fun apnTrial(sim: OwnerSim, row: OcdApnRow, options: RunOptions, keepIfWorks: Boolean): ApnResult {
         val values = ApnColumns.values(row)
+        // The provider merges an insert that matches a phone row on its UNIQUE columns into that row; never insert one.
+        val conflicts = phone.apnConflicts(values) ?: return ApnResult(row.label, row.key, "refused_apn_table_unreadable")
+        if (conflicts.isNotEmpty()) {
+            log("apn_trial", "${row.label}: the phone has this APN already (row ${conflicts.joinToString()}: same provider key, other name or types); not inserted")
+            return ApnResult(row.label, row.key, SAME_AS_PHONE_ROW)
+        }
+        val before = phone.apnQuery(sim.identity.mccmnc) ?: return ApnResult(row.label, row.key, "refused_apn_table_unreadable")
+        val marked = phone.apnQueryMarked() ?: return ApnResult(row.label, row.key, "refused_apn_table_unreadable")
+        val maxIdBefore = (before + marked).maxOfOrNull { it.id } ?: 0L
         val preferred = phone.preferredApn(sim.subId)
         if (!preferred.readable) return ApnResult(row.label, row.key, "refused_preferred_apn_unreadable")
-        val record = LiveApn(sim.key, null, row.label, row.key, Hold.TRIAL, phone.nowMs(), preferred.id, true, madePreferred = false)
+        val record = LiveApn(sim.key, null, row.label, row.key, Hold.TRIAL, phone.nowMs(), preferred.id, true, madePreferred = false, maxIdBefore = maxIdBefore)
         store.update { it.copy(apns = it.apns + record) }
         var live = record
         try {
-            if (!phone.apnInsert(values)) {
+            val inserted = phone.apnInsert(values)
+            val id = phone.apnQuery(sim.identity.mccmnc)?.firstOrNull { it.id > maxIdBefore && it.key == row.key && it.name?.endsWith(ApnColumns.MARKER) == true }?.id
+            if (!inserted || id == null) {
+                // A phone row that now carries the marker was merged into: stop, never delete it.
+                val changed = phone.apnQueryMarked()?.filter { it.id <= maxIdBefore }
+                if (changed == null || changed.isNotEmpty()) {
+                    store.update { s -> s.copy(apns = s.apns.filterNot { it.sinceMs == record.sinceMs && it.apnKey == record.apnKey }) }
+                    OwnerSession(phone, store, sim, device.model).stop("apn_insert_merged: ${row.label} changed phone row(s) ${changed?.map { it.id } ?: "unreadable"}; restore the APN list")
+                    return ApnResult(row.label, row.key, "insert_merged_into_phone_row")
+                }
                 revertApn(sim, live)
-                return ApnResult(row.label, row.key, "insert_failed")
-            }
-            val id = phone.apnQuery(sim.identity.mccmnc)?.firstOrNull { it.key == row.key && it.name?.endsWith(ApnColumns.MARKER) == true }?.id
-            if (id == null) {
-                revertApn(sim, live)
-                return ApnResult(row.label, row.key, "inserted_row_not_found")
+                return ApnResult(row.label, row.key, if (!inserted) "insert_failed" else "inserted_row_not_found")
             }
             live = live.copy(rowId = id, madePreferred = true)
             store.update { s -> s.copy(apns = s.apns.map { if (it.sinceMs == record.sinceMs && it.apnKey == record.apnKey) live else it }) }
@@ -344,7 +357,9 @@ class OwnerRunner(
         val session = OwnerSession(phone, store, sim, device.model)
         session.waitIdle(8 * 60_000)
         if (live.madePreferred) phone.setPreferredApn(sim.subId, live.preferredBefore)
-        val id = live.rowId ?: phone.apnQuery(sim.identity.mccmnc)?.firstOrNull { it.key == live.apnKey && it.name?.endsWith(ApnColumns.MARKER) == true }?.id
+        // Only a row added after the record: a phone row (at or below maxIdBefore) is never deleted as ours.
+        val floor = live.maxIdBefore ?: Long.MAX_VALUE
+        val id = live.rowId ?: phone.apnQuery(sim.identity.mccmnc)?.firstOrNull { it.id > floor && it.key == live.apnKey && it.name?.endsWith(ApnColumns.MARKER) == true }?.id
         if (id != null) phone.apnDelete(id)
         val gone = id == null || phone.apnQuery(sim.identity.mccmnc)?.none { it.id == id } == true
         val preferredBack = !live.madePreferred || phone.preferredApn(sim.subId).let { it.readable && it.id == live.preferredBefore }
@@ -451,9 +466,15 @@ class OwnerRunner(
             notes += "APN trial ${apn.label}: ${if (revertApn(sim, apn)) "removed" else "removal FAILED"}"
         }
         val keptIds = store.read().apns.mapNotNull { it.rowId }.toSet()
-        phone.apnQueryMarked()?.filter { it.id !in keptIds }?.forEach { row ->
-            phone.apnDelete(row.id)
-            notes += "removed a marked APN row the state does not keep (${row.apn})"
+        val strays = phone.apnQueryMarked()?.filter { it.id !in keptIds }.orEmpty()
+        if (strays.isNotEmpty() && store.read().stop != null) {
+            // After a stop a marked row may be a phone row the provider merged an insert into; the owner decides.
+            notes += "marked APN row(s) ${strays.map { it.id }} left for the owner (stop flag set)"
+        } else {
+            strays.forEach { row ->
+                phone.apnDelete(row.id)
+                notes += "removed a marked APN row the state does not keep (${row.apn})"
+            }
         }
         val summary = if (notes.isEmpty()) "no leftovers" else notes.joinToString("; ")
         store.update { it.copy(lastCleanup = summary).logged(phone.nowMs(), "cleanup", summary).probeSettled() }
@@ -535,6 +556,9 @@ class OwnerRunner(
 
         /** VoLTE not tested: IMS runs over Wi-Fi and the Wi-Fi-off measurement was not chosen. */
         const val IMS_ON_WIFI = "ims_on_wifi"
+
+        /** The phone has the row already as far as the provider is concerned (same UNIQUE columns); an insert would merge into it. */
+        const val SAME_AS_PHONE_ROW = "same_as_phone_row"
 
         /** Video calling on: IMS stayed registered for voice through the whole window and never offered video. */
         const val IMS_STACK_NO_VIDEO = "not_supported_by_this_ims_stack"

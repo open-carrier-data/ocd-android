@@ -31,6 +31,7 @@ enum class OwnerCommand(val timeoutSeconds: Long, val writes: Boolean) {
     CC_CLEAR(60, true),
     APN_QUERY(30, false),
     APN_QUERY_MARKED(30, false),
+    APN_CONFLICTS(30, false),
     APN_INSERT(30, true),
     APN_DELETE(30, true),
     PREFERRED_QUERY(20, false),
@@ -62,6 +63,11 @@ enum class OwnerCommand(val timeoutSeconds: Long, val writes: Boolean) {
             "content", "query", "--uri", CARRIERS, "--projection", PhoneApnRow.COLUMNS.joinToString(":"),
             "--where", "name LIKE '%${ApnColumns.MARKER.trim()}'",
         )
+        // The rows the provider would merge an insert of these values into (its UNIQUE columns).
+        APN_CONFLICTS -> binds(a)?.let { binds ->
+            val where = ApnColumns.conflictMatch(binds).joinToString(" AND ") { (column, value) -> "$column='${value.replace("'", "''")}'" }
+            listOf("content", "query", "--uri", CARRIERS, "--projection", "_id", "--where", where)
+        }
         APN_INSERT -> binds(a)?.let { binds ->
             listOf("content", "insert", "--uri", CARRIERS) + binds.flatMap { (column, value) ->
                 listOf("--bind", "$column:${if (column in ApnColumns.INTEGER) "i" else "s"}:$value")

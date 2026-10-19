@@ -10,11 +10,14 @@
     OwnerManifestTest keeps the two in step.
 
     MODIFY_PHONE_STATE: CarrierConfigManager.overrideConfig(subId, bundle), never persistent;
-          also guards the Settings entry's activity.
-    READ_PRIVILEGED_PHONE_STATE: subscription and carrier state for the refusals.
+          telecom's isInEmergencyCall for the refusals; also guards the Settings entry's activity.
+    READ_PRIVILEGED_PHONE_STATE: the emergency state (callback mode, emergency SMS mode) and
+          IMS (ImsMmTelManager registration, capabilities, switches) for the refusals and the
+          evidence, through the system APIs.
     WRITE_APN_SETTINGS: the APN trials and their revert.
-    DUMP: dumpsys carrier_config, telephony.registry and the phone service, read for the
-          refusals, the evidence and the revert proof.
+    DUMP: dumpsys carrier_config and telephony.registry, read for the refusals, the evidence
+          and the revert proof. The phone service's dump goes through ActivityManager, which
+          also wants PACKAGE_USAGE_STATS; the app reads that state through the APIs instead.
     READ_LOGS: the IWLAN tags of logcat, dumped and never cleared (Wi-Fi calling back-off).
           Android 13+ still asks the user once while the app is in the foreground, and
           declines in the background; the evidence then lacks the IWLAN lines.

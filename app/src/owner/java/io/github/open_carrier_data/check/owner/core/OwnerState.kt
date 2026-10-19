@@ -48,6 +48,8 @@ data class LiveApn(
     val preferredBefore: Long?,
     val preferredReadable: Boolean,
     val madePreferred: Boolean,
+    /** The highest row ID before the insert: a row at or below it is the phone's own and is never deleted as ours. */
+    val maxIdBefore: Long? = null,
 )
 
 /** One event of the local log (LB9 standard: redacted typed fields only). */

@@ -22,10 +22,22 @@ interface OwnerPhone {
     /** `dumpsys carrier_config`: kept in memory for the revert proof, never stored. */
     suspend fun carrierConfigText(): String?
     suspend fun registryText(): String?
+
+    /** `dumpsys activity service com.android.phone`; null on the privileged route, which reads [emergencyApi] and [imsApi] instead. */
     suspend fun phoneText(): String?
 
     /** `getprop ril.cdma.inecmmode` (emergency callback mode). */
     suspend fun ecmProperty(): String?
+
+    /**
+     * The emergency state from the system APIs, where the route cannot read
+     * the phone service's dump ([phoneText] null on the privileged route).
+     * Null: this route reads it from the dump.
+     */
+    suspend fun emergencyApi(): EmergencyApi? = null
+
+    /** One slot's IMS from ImsMmTelManager, the privileged route's stand-in for [phoneText]. Null: this route reads the dump. */
+    suspend fun imsApi(slot: Int, subId: Int): ImsApi? = null
 
     /** The IWLAN tags of one slot, dumped from logcat, never cleared. */
     suspend fun iwlanLogText(slot: Int): String?
@@ -40,6 +52,13 @@ interface OwnerPhone {
 
     /** Rows whose name carries [ApnColumns.MARKER], for every network code. */
     suspend fun apnQueryMarked(): List<PhoneApnRow>?
+
+    /**
+     * IDs of the rows an insert of [values] would be merged into instead of
+     * added ([ApnColumns.conflictMatch]); empty when it would add a row, null
+     * when the table could not be read.
+     */
+    suspend fun apnConflicts(values: Map<String, String>): List<Long>?
     suspend fun apnInsert(values: Map<String, String>): Boolean
     suspend fun apnDelete(id: Long): Boolean
     suspend fun preferredApn(subId: Int): PreferredApn

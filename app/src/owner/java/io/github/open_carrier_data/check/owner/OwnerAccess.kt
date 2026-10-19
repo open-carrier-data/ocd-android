@@ -18,10 +18,13 @@ import android.os.ParcelFileDescriptor
 import android.os.PersistableBundle
 import android.os.SystemClock
 import android.telephony.CarrierConfigManager
+import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import io.github.open_carrier_data.check.BuildConfig
 import io.github.open_carrier_data.check.owner.core.ApnColumns
 import io.github.open_carrier_data.check.owner.core.CcResult
+import io.github.open_carrier_data.check.owner.core.EmergencyApi
+import io.github.open_carrier_data.check.owner.core.ImsApi
 import io.github.open_carrier_data.check.owner.core.KeyGuard
 import io.github.open_carrier_data.check.owner.core.MobileData
 import io.github.open_carrier_data.check.owner.core.OwnerArgs
@@ -229,6 +232,8 @@ class ShizukuPhone(context: Context, private val binder: IBinder) : AppSidePhone
 
     override suspend fun apnQuery(numeric: String) = PhoneApnRow.parseQuery(text(OwnerCommand.APN_QUERY, OwnerArgs(numeric = numeric)))
     override suspend fun apnQueryMarked() = PhoneApnRow.parseQuery(text(OwnerCommand.APN_QUERY_MARKED))
+    override suspend fun apnConflicts(values: Map<String, String>) =
+        PhoneApnRow.parseQuery(text(OwnerCommand.APN_CONFLICTS, OwnerArgs(binds = values)))?.map { it.id }
     override suspend fun apnInsert(values: Map<String, String>) = run(OwnerCommand.APN_INSERT, OwnerArgs(binds = values))?.first == 0
     override suspend fun apnDelete(id: Long) = run(OwnerCommand.APN_DELETE, OwnerArgs(id = id))?.first == 0
 
@@ -314,8 +319,11 @@ class ShizukuPhone(context: Context, private val binder: IBinder) : AppSidePhone
 /**
  * Route (a): the app as a privileged system app. CarrierConfigManager's
  * system API overrideConfig(subId, bundle), which is never persistent, and
- * the telephony provider directly. Reads run dumpsys and logcat as the app,
- * with the DUMP and READ_LOGS permissions of the allowlist.
+ * the telephony provider directly. The carrier config and the registry are
+ * read with dumpsys as the app (DUMP), the IWLAN tags with logcat
+ * (READ_LOGS); the emergency state and IMS through the system APIs
+ * ([emergencyApi], [imsApi]), since the phone service's dump is closed to
+ * an app.
  */
 class PrivilegedPhone(context: Context) : AppSidePhone(context) {
     override val route = Route.PRIVILEGED
@@ -343,9 +351,45 @@ class PrivilegedPhone(context: Context) : AppSidePhone(context) {
 
     override suspend fun carrierConfigText() = local(OwnerCommand.CC_DUMP)
     override suspend fun registryText() = local(OwnerCommand.REGISTRY)
-    override suspend fun phoneText() = local(OwnerCommand.PHONE)
-    override suspend fun ecmProperty() = local(OwnerCommand.ECM_PROPERTY)
+
+    /**
+     * Not read here: `dumpsys activity service com.android.phone` goes through
+     * ActivityManager, which wants PACKAGE_USAGE_STATS besides DUMP ("Permission
+     * Denial: can't dump ActivityManager", the S20 on 2026-10-19). The
+     * emergency state and IMS come from [emergencyApi] and [imsApi].
+     */
+    override suspend fun phoneText(): String? = null
+
+    /** Not read here: SELinux keeps priv_app from ril.cdma.inecmmode (radio_cdma_ecm_prop); [emergencyApi] reads the mode. */
+    override suspend fun ecmProperty(): String? = null
     override suspend fun iwlanLogText(slot: Int) = local(OwnerCommand.IWLAN_LOG, OwnerArgs(slot = slot))
+
+    override suspend fun emergencyApi(): EmergencyApi = withContext(Dispatchers.IO) {
+        val telephony = SystemBinders.telephony()
+        EmergencyApi(
+            ecbm = ecbm(telephony),
+            inEmergencyCall = SystemBinders.call(SystemBinders.telecom(context), SystemBinders.TELECOM, "isInEmergencyCall"),
+            emergencySmsMode = SystemBinders.call(telephony, SystemBinders.TELEPHONY, "isInEmergencySmsMode"),
+        )
+    }
+
+    /**
+     * ITelephony.getEmergencyCallbackMode for the default phone and every
+     * active subscription; true when any says so, null when one call fails.
+     */
+    @SuppressLint("MissingPermission")
+    private fun ecbm(telephony: Any?): Boolean? {
+        val subs = runCatching {
+            context.getSystemService(SubscriptionManager::class.java)?.activeSubscriptionInfoList.orEmpty().map { it.subscriptionId }
+        }.getOrNull() ?: return null
+        val answers = (listOf(SubscriptionManager.INVALID_SUBSCRIPTION_ID) + subs).distinct().map { sub ->
+            SystemBinders.call(telephony, SystemBinders.TELEPHONY, "getEmergencyCallbackMode", sub)
+        }
+        return if (answers.any { it == true }) true else if (answers.all { it == false }) false else null
+    }
+
+    override suspend fun imsApi(slot: Int, subId: Int): ImsApi =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) ImsApiReader.read(context, subId) else ImsApi(null, null, null, null, null)
 
     private fun overrideConfig(subId: Int, bundle: PersistableBundle?): CcResult = try {
         val manager = context.getSystemService(CarrierConfigManager::class.java) ?: return CcResult(false, "no_carrier_config_manager")
@@ -401,6 +445,18 @@ class PrivilegedPhone(context: Context) : AppSidePhone(context) {
 
     override suspend fun apnQueryMarked() = withContext(Dispatchers.IO) { query("name LIKE ?", arrayOf("%" + ApnColumns.MARKER.trim())) }
 
+    override suspend fun apnConflicts(values: Map<String, String>): List<Long>? = withContext(Dispatchers.IO) {
+        // The same checks as the Shizuku route's argv.
+        if (OwnerCommand.APN_CONFLICTS.argv(OwnerArgs(binds = values)) == null) return@withContext null
+        val match = ApnColumns.conflictMatch(values)
+        runCatching {
+            resolver.query(carriers, arrayOf("_id"), match.joinToString(" AND ") { "${it.first} = ?" }, match.map { it.second }.toTypedArray(), null)?.use { c ->
+                buildList { while (c.moveToNext()) add(c.getLong(0)) }
+            }
+        }.getOrNull()
+    }
+
+    /** True only when the provider added a row: a merge into an existing row answers no URI. */
     override suspend fun apnInsert(values: Map<String, String>): Boolean = withContext(Dispatchers.IO) {
         // The same checks as the Shizuku route's argv.
         if (OwnerCommand.APN_INSERT.argv(OwnerArgs(binds = values)) == null) return@withContext false

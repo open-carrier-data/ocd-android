@@ -41,19 +41,20 @@ class OwnerSession(
 
     /** The refusals now; stores the emergency sighting for the next check. */
     suspend fun safety(): SafetyVerdict {
-        val verdict = Refusals.check(
-            SafetyInputs(
-                registry = phone.registryText(),
-                phoneDump = phone.phoneText(),
-                ecmProperty = phone.ecmProperty(),
-                slot = slot,
-                homeMccMnc = sim.identity.mccmnc,
-                nowMs = phone.nowMs(),
-                uptimeMs = phone.uptimeMs(),
-                seen = store.read().emergencySeen,
-            ),
+        val input = SafetyInputs(
+            registry = phone.registryText(),
+            phoneDump = phone.phoneText(),
+            ecmProperty = phone.ecmProperty(),
+            slot = slot,
+            homeMccMnc = sim.identity.mccmnc,
+            nowMs = phone.nowMs(),
+            uptimeMs = phone.uptimeMs(),
+            seen = store.read().emergencySeen,
+            emergencyApi = phone.emergencyApi(),
         )
+        val verdict = Refusals.check(input)
         if (verdict.seen != store.read().emergencySeen) store.update { it.copy(emergencySeen = verdict.seen) }
+        if (verdict.refusal == Refusal.EMERGENCY_STATE_UNREADABLE) log("unreadable", "slot $slot emergency state: ${Refusals.unreadable(input, verdict).joinToString()}")
         return verdict
     }
 
@@ -176,15 +177,16 @@ class OwnerSession(
         val effective = cc.effective(slot)
         val simSlot = SimSlot.of(slot) ?: throw SafetyException("slot", "slot $slot out of range")
         val reg = RegistryParser.parse(registry.lineSequence(), simSlot)
-        val aosp = phoneText?.let { AospImsParser.parse(it.lineSequence(), simSlot) }
+        val api = phone.imsApi(slot, sim.subId)
+        val aosp = api?.state() ?: phoneText?.let { AospImsParser.parse(it.lineSequence(), simSlot) }
         val nowSeconds = phone.nowMs() / 1000.0
         val iwlan = phone.iwlanLogText(slot)?.let {
             IwlanLogParser.parse(it.lineSequence(), HomeNetwork.of(sim.identity.mccmnc)?.epdgFqdn, nowSeconds)
         }
         return Observation(
             config = keys.mapNotNull { key -> effective[key]?.let { key to it } }.toMap(),
-            ims = AospImsParser.reading(aosp, reg, dumpRead = phoneText != null),
-            flags = phoneText?.let { ImsFlags.parse(it, slot) } ?: ImsFlags(),
+            ims = AospImsParser.reading(aosp, reg, dumpRead = api != null || phoneText != null),
+            flags = api?.flags() ?: phoneText?.let { ImsFlags.parse(it, slot) } ?: ImsFlags(),
             ps = RegistrationParser.wwanPs(RegistryText.block(registry, slot)),
             lteVops = reg?.lteVops,
             nrVops = reg?.nrVops,
