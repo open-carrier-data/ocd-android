@@ -48,6 +48,7 @@ object OwnerNotifications {
             if (state.stop != null) append("Stopped: ").append(state.stop.take(80)).append(". ")
             if (kept > 0) append("$kept kept: ").append(state.overrides.filter { it.hold == Hold.KEPT }.joinToString { "${it.key.substringBefore("_bool")}=${it.value}" }).append(". ")
             if (trials > 0) append("$trials under test.")
+            if (state.wifiOffSinceMs != null) append(" Wi-Fi is off for a VoLTE measurement.")
         }
         val open = PendingIntent.getActivity(
             context, 0, Intent(context, OwnerActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
@@ -58,7 +59,7 @@ object OwnerNotifications {
         )
         val notification = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setContentTitle("OCD Check owner: carrier settings changed on this phone")
+            .setContentTitle("Open Carrier Data: carrier settings changed on this phone")
             .setContentText(text.ifBlank { "Live settings" })
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setOngoing(true)
@@ -82,7 +83,9 @@ class RevertAllReceiver : BroadcastReceiver() {
 }
 
 /**
- * Boot and SIM changes: the cleanup pass reverts leftovers, clears a keep of
+ * The background service's triggers, with no screen open (the owner's
+ * "system service that does all of this in the background"). Boot and SIM
+ * changes: the cleanup pass reverts leftovers, clears a keep of
  * a SIM that left its slot, and applies again the keeps of the SIM now in
  * the slot (the owner's "re-apply per matching SIM at boot or SIM change").
  * The carrier config broadcast also follows the owner build's own writes;
@@ -91,7 +94,8 @@ class RevertAllReceiver : BroadcastReceiver() {
 class OwnerBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            Intent.ACTION_BOOT_COMPLETED -> {
+            // A boot, or an update of the app itself (an adb install over the system copy).
+            Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
                 OwnerScheduler.cleanup(context, afterBoot = true)
                 OwnerScheduler.ensureWeekly(context, FileStateStore(context).read().scheduleOn)
             }

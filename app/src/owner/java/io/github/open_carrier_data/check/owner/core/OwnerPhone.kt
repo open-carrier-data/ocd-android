@@ -50,6 +50,13 @@ interface OwnerPhone {
     suspend fun mobileData(subId: Int): MobileData
     suspend fun wifiConnected(): Boolean?
 
+    /**
+     * Wi-Fi on or off, for VoLTE's measurement while IMS runs over Wi-Fi (lab
+     * `--wifi-off-test`). Always switched back on by the runner, and by the
+     * cleanup from the state's record after a crash. False: the phone refused.
+     */
+    suspend fun setWifiEnabled(on: Boolean): Boolean
+
     fun nowMs(): Long
     fun uptimeMs(): Long
     suspend fun sleep(ms: Long)

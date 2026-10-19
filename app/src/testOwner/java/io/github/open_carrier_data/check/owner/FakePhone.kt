@@ -53,6 +53,9 @@ open class FakePhone(
     override val route = Route.SHIZUKU_ROOT
     var overrides: MutableMap<String, String>? = null
     var persistent: MutableMap<String, String>? = null
+
+    /** The carrier config app's own values for phone 0 (mConfigFromDefaultApp), below the override layers. */
+    var defaultApp: Map<String, String>? = null
     var call = false
     var roaming = false
     var ecbm = false
@@ -67,32 +70,53 @@ open class FakePhone(
     /** IMS registers mmtel when VoLTE is on, smsip when SMS over IMS is on; [imsWorks] false keeps it unregistered. */
     var imsWorks = true
 
+    /** IMS rides on Wi-Fi while Wi-Fi is up (the S20 with Wi-Fi calling on): the IMS data connection is on WLAN. */
+    var imsOverWifi = false
+
+    /** IMS adds video to its registration when video calling is on (PHH IMS does not). */
+    var imsVideo = false
+
+    /** The phone refuses Wi-Fi changes. */
+    var wifiSwitchRefused = false
+
     /** Called during a sleep, to change the phone mid-test. */
     var onSleep: (FakePhone) -> Unit = {}
 
     fun effective(key: String): String? {
         val base = CcDump.parse(OwnerFixtures.CC).effective(0)
-        return overrides?.get(key) ?: persistent?.get(key) ?: base[key]
+        return overrides?.get(key) ?: persistent?.get(key) ?: defaultApp?.get(key) ?: base[key]
     }
 
     override suspend fun carrierConfigText(): String =
-        OwnerFixtures.withOverride(OwnerFixtures.withOverride(OwnerFixtures.CC, "mOverrideConfigs", overrides), "mPersistentOverrideConfigs", persistent)
+        OwnerFixtures.withOverride(
+            OwnerFixtures.withOverride(OwnerFixtures.withOverride(OwnerFixtures.CC, "mConfigFromDefaultApp", defaultApp), "mOverrideConfigs", overrides),
+            "mPersistentOverrideConfigs", persistent,
+        )
 
     override suspend fun registryText(): String {
         var text = OwnerFixtures.REGISTRY
         if (call) text = text.replaceFirst("mCallState=0", "mCallState=2").replaceFirst("Foreground call state: 0", "Foreground call state: 1").replaceFirst("mCallNetworkType=0", "mCallNetworkType=13")
         if (roaming) text = text.replace("isRoaming=false", "isRoaming=true")
+        if (imsOverWifi && wifi == true) {
+            text = text.replace("state: HANDOVERINPROGRESS, transport: WLAN", "state: CONNECTED, transport: WLAN")
+                .replace("state: CONNECTED, transport: WWAN, id: 2", "state: DISCONNECTED, transport: WWAN, id: 2")
+        }
         return text
     }
 
     override suspend fun phoneText(): String {
         val volte = effective("carrier_volte_available_bool") == "true"
         val sms = effective("imssms.sms_over_ims_supported_bool") == "true"
-        val registered = imsWorks && (volte || sms)
+        val video = effective("carrier_vt_available_bool") == "true"
+        val wfc = effective("carrier_wfc_ims_available_bool") == "true"
+        // Over Wi-Fi, IMS registers for voice when Wi-Fi calling is on, whatever VoLTE says.
+        val onWifi = imsOverWifi && wifi == true && wfc
+        val voice = if (onWifi) true else volte
+        val registered = imsWorks && (voice || sms)
         val second = OwnerFixtures.PHONE.indexOf("GsmCdmaPhone extends:", OwnerFixtures.PHONE.indexOf("mPhoneId=0"))
         var section = OwnerFixtures.PHONE.substring(0, second)
         section = section.replace("mImsMmTelRegistrationState = 0", "mImsMmTelRegistrationState = ${if (registered) 2 else 0}")
-            .replace("Voice: false Video: false UT: false SMS: false", "Voice: ${registered && volte} Video: false UT: false SMS: ${registered && sms}")
+            .replace("Voice: false Video: false UT: false SMS: false", "Voice: ${registered && voice} Video: ${registered && voice && video && imsVideo} UT: false SMS: ${registered && sms}")
         if (ecbm) section = section.replace("isInEcm()=false", "isInEcm()=true")
         return section + OwnerFixtures.PHONE.substring(second)
     }
@@ -151,6 +175,13 @@ open class FakePhone(
         MobileData(true, apns.firstOrNull { it.id == preferred }?.key in workingApnKeys)
 
     override suspend fun wifiConnected(): Boolean? = wifi
+
+    override suspend fun setWifiEnabled(on: Boolean): Boolean {
+        writes += "wifi ${if (on) "on" else "off"}"
+        if (wifiSwitchRefused) return false
+        wifi = on
+        return true
+    }
     override fun nowMs(): Long = now
     override fun uptimeMs(): Long = uptime
     override suspend fun sleep(ms: Long) {

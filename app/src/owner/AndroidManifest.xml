@@ -13,6 +13,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Re-applies the kept values of the SIM in each slot after a boot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!--
+        VoLTE's measurement while IMS runs over Wi-Fi: Wi-Fi off for the trial and
+        always back on (lab wifi-off test). WifiManager lets only system apps do it.
+    -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
     <!--
         The privileged route: granted only when the app is installed as a priv-app
@@ -35,26 +40,84 @@
         android:name="android.permission.READ_LOGS"
         tools:ignore="ProtectedPermissions" />
 
+    <!--
+        The owner's target form (2026-10-19): a system app with no launcher icon. Its
+        screen is the "Open Carrier Data" entry in Settings > Network & internet, and
+        the work runs in the background (boot and SIM-change reconcile, the weekly
+        test, update pulls) without the screen.
+    -->
     <application
         android:label="@string/app_name_owner"
         android:largeHeap="true"
         tools:replace="android:label">
+
+        <!-- No launcher icon: the read-only check stays reachable from the owner screen only. -->
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="false"
+            tools:replace="android:exported">
+            <intent-filter tools:node="removeAll" />
+        </activity>
+
+        <!--
+            The Settings entry. Settings lists activities for IA_SETTINGS only from system
+            apps (TileUtils: ResolveInfo.system) and puts this one on the Network & internet
+            screen (CategoryKey.CATEGORY_NETWORK, NetworkDashboardFragment), after the SIMs
+            (order -15) and before Airplane mode (-5). Guarded by MODIFY_PHONE_STATE: Settings
+            (the system uid), Settings search (SettingsIntelligence holds it) and adb open it;
+            a normal app cannot.
+        -->
         <activity
             android:name=".owner.OwnerActivity"
-            android:exported="false"
-            android:label="@string/owner_tools" />
+            android:exported="true"
+            android:icon="@drawable/ic_settings_ocd"
+            android:label="@string/owner_tools"
+            android:permission="android.permission.MODIFY_PHONE_STATE">
+            <intent-filter>
+                <action android:name="com.android.settings.action.IA_SETTINGS" />
+            </intent-filter>
+            <meta-data
+                android:name="com.android.settings.category"
+                android:value="com.android.settings.category.ia.wireless" />
+            <meta-data
+                android:name="com.android.settings.title"
+                android:resource="@string/settings_entry_title" />
+            <meta-data
+                android:name="com.android.settings.summary_uri"
+                android:value="content://${applicationId}.settings/getDynamicSummary" />
+            <meta-data
+                android:name="com.android.settings.icon"
+                android:resource="@drawable/ic_settings_ocd" />
+            <meta-data
+                android:name="com.android.settings.icon_tintable"
+                android:value="true" />
+            <meta-data
+                android:name="com.android.settings.order"
+                android:value="-10" />
+            <meta-data
+                android:name="com.android.settings.keyhint"
+                android:value="open_carrier_data" />
+        </activity>
+
+        <!-- The entry's live summary; answers only the system, root, the shell and the app. -->
+        <provider
+            android:name=".owner.OwnerSettingsProvider"
+            android:authorities="${applicationId}.settings"
+            android:exported="true"
+            tools:ignore="ExportedContentProvider" />
 
         <receiver
             android:name=".owner.RevertAllReceiver"
             android:exported="false" />
 
-        <!-- Boot and carrier-config changes (both exempt from the implicit-broadcast limits). -->
+        <!-- Boot, the app's own update and carrier-config changes (all exempt from the implicit-broadcast limits). -->
         <receiver
             android:name=".owner.OwnerBootReceiver"
             android:exported="true"
             tools:ignore="ExportedReceiver">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.telephony.action.CARRIER_CONFIG_CHANGED" />
             </intent-filter>
         </receiver>

@@ -1,16 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
     OCD Check owner build as a privileged system app (the owner's target form, 2026-10-19).
-    Install to /system/etc/permissions/ (or /product/etc/permissions/ for a /product/priv-app
-    install), next to the APK in /system/priv-app/OcdCheckOwner/ (or /product/priv-app/).
+    Install to /system_ext/etc/permissions/ next to the APK in
+    /system_ext/priv-app/OcdCheckOwner/OcdCheckOwner.apk (or the /product pair).
     Only for the owner's own ROM; never for a ROM anyone else runs (round 25 OB1, AV2).
 
-    MODIFY_PHONE_STATE: CarrierConfigManager.overrideConfig(subId, bundle), never persistent.
+    The ROM enforces this list (ro.control_privapp_permissions=enforce): a privileged
+    permission the APK asks for and this file lacks stops system_server at boot.
+    OwnerManifestTest keeps the two in step.
+
+    MODIFY_PHONE_STATE: CarrierConfigManager.overrideConfig(subId, bundle), never persistent;
+          also guards the Settings entry's activity.
     READ_PRIVILEGED_PHONE_STATE: subscription and carrier state for the refusals.
     WRITE_APN_SETTINGS: the APN trials and their revert.
     DUMP: dumpsys carrier_config, telephony.registry and the phone service, read for the
           refusals, the evidence and the revert proof.
     READ_LOGS: the IWLAN tags of logcat, dumped and never cleared (Wi-Fi calling back-off).
+          Android 13+ still asks the user once while the app is in the foreground, and
+          declines in the background; the evidence then lacks the IWLAN lines.
 -->
 <permissions>
     <privapp-permissions package="io.github.open_carrier_data.check.owner">
@@ -20,4 +27,12 @@
         <permission name="android.permission.DUMP" />
         <permission name="android.permission.READ_LOGS" />
     </privapp-permissions>
+
+    <!--
+        overrideConfig(int, PersistableBundle) is a @SystemApi, reached by reflection
+        from an SDK build; a system app on this list is exempt from the hidden-API
+        checks (SystemConfig hidden-api-whitelisted-app, honoured in /system_ext and
+        /system/etc/permissions).
+    -->
+    <hidden-api-whitelisted-app package="io.github.open_carrier_data.check.owner" />
 </permissions>

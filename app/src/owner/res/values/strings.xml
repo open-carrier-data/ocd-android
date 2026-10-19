@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name_owner">OCD Check owner</string>
-    <string name="owner_tools">OCD owner tools</string>
+    <string name="app_name_owner">Open Carrier Data</string>
+    <string name="owner_tools">Open Carrier Data</string>
+    <!-- The Settings entry under Network & internet (Settings injection). -->
+    <string name="settings_entry_title">Open Carrier Data</string>
 </resources>

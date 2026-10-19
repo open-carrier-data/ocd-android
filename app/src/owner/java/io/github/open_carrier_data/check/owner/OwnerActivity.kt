@@ -23,6 +23,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -45,7 +48,9 @@ import io.github.open_carrier_data.check.owner.core.Hold
 import io.github.open_carrier_data.check.owner.core.IssueReport
 import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerState
+import io.github.open_carrier_data.check.owner.core.WeeklySchedule
 import io.github.open_carrier_data.check.owner.core.update
+import io.github.open_carrier_data.check.ui.MainActivity
 import io.github.open_carrier_data.check.ui.OcdCheckTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -86,16 +91,19 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         val gate = withContext(Dispatchers.Default) { OwnerAccess.gate(context) }
         val sims = runCatching { OwnerData.sims(context) }.getOrNull()
         val wm = WorkManager.getInstance(context)
-        val weekly = withContext(Dispatchers.IO) {
+        val state = store.read()
+        val info = withContext(Dispatchers.IO) {
             runCatching { wm.getWorkInfosForUniqueWork(OwnerScheduler.WEEKLY).get() }.getOrNull()
-        }?.firstOrNull { !it.state.isFinished }?.let { info ->
-            "registered (${info.state.name.lowercase()}), next run after ${DateFormat.getDateTimeInstance().format(Date(info.nextScheduleTimeMillis))}"
-        } ?: "not registered"
+        }?.firstOrNull { !it.state.isFinished }
+        // WorkManager's next time is the earliest start; once it has passed the job waits for idle, charging and Wi-Fi.
+        val weekly = WeeklySchedule.line(state.scheduleOn, info != null, info?.nextScheduleTimeMillis, System.currentTimeMillis()) {
+            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it))
+        }
         val run = withContext(Dispatchers.IO) { runCatching { wm.getWorkInfosForUniqueWork(OwnerScheduler.RUN).get() }.getOrNull() }.orEmpty()
         val running = run.count { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
         _ui.value = _ui.value.copy(
             gate = gate,
-            state = store.read(),
+            state = state,
             sims = sims,
             weekly = weekly,
             run = if (running > 0) "$running step(s) to go" else "idle",
@@ -146,7 +154,12 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     fun issueUrl(): String? = store.read().runs.lastOrNull { it.features.isNotEmpty() }?.let(IssueReport::url)
 }
 
-/** The owner tools: data, the write gate, live settings, tests, upload, schedule and the log. */
+/**
+ * The owner screen, opened from Settings > Network & internet > Open Carrier
+ * Data (the build has no launcher icon): status, kept values, test now and
+ * again, revert all, update pull, upload, schedule and the log. Everything
+ * here also runs without it, in the background.
+ */
 class OwnerActivity : ComponentActivity() {
     private val viewModel: OwnerViewModel by viewModels()
 
@@ -160,7 +173,16 @@ class OwnerActivity : ComponentActivity() {
             requestPermissions(arrayOf(Manifest.permission.READ_PHONE_STATE), 2)
         }
         io.github.open_carrier_data.check.OwnerHook.onAppStart(applicationContext)
-        setContent { OcdCheckTheme { OwnerScreen(viewModel, ::openIssue) } }
+        setContent {
+            OcdCheckTheme {
+                OwnerScreen(
+                    viewModel,
+                    openIssue = ::openIssue,
+                    openCheck = { startActivity(Intent(this, MainActivity::class.java)) },
+                    back = ::finish,
+                )
+            }
+        }
     }
 
     private fun openIssue() {
@@ -174,15 +196,22 @@ class OwnerActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OwnerScreen(viewModel: OwnerViewModel, openIssue: () -> Unit) {
+private fun OwnerScreen(viewModel: OwnerViewModel, openIssue: () -> Unit, openCheck: () -> Unit, back: () -> Unit) {
     val ui by viewModel.ui.collectAsState()
-    Scaffold { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Open Carrier Data") },
+                navigationIcon = { TextButton(onClick = back) { Text("Back") } },
+            )
+        },
+    ) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("OCD Check owner tools", style = MaterialTheme.typography.headlineSmall)
             Text(
                 "Tests and applies carrier settings on this phone. Never an emergency, e911, ECBM, WPS, TTY, RTT or iwlan key; never an " +
                     "emergency call; nothing changes in a call, in emergency callback mode, within 10 minutes of an emergency call, " +
@@ -191,16 +220,28 @@ private fun OwnerScreen(viewModel: OwnerViewModel, openIssue: () -> Unit) {
             )
             ui.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
             val gate = ui.gate
-            OwnerCard("Access") {
+            OwnerCard("Status") {
                 if (gate == null) {
                     Text("Reading…")
                 } else {
                     Line("Route", gate.route?.plain ?: "none")
-                    Line("Privileged system app", if (gate.privilegedGranted) "yes, permissions granted" else "no")
-                    Line("Shizuku", if (!gate.shizukuRunning) "not running" else "running as ${if (gate.shizukuRoot) "root" else "shell"}${if (gate.shizukuPermitted) "" else ", not granted"}")
+                    Line(
+                        "Privileged system app",
+                        when {
+                            !gate.privilegedGranted -> "no"
+                            gate.overrideApi == true -> "yes, permissions granted, overrideConfig reachable"
+                            else -> "permissions granted, but overrideConfig is not reachable"
+                        },
+                    )
+                    // Shizuku is only the fallback when the privileged permissions are missing.
+                    if (!gate.privilegedGranted) {
+                        Line("Shizuku", if (!gate.shizukuRunning) "not running" else "running as ${if (gate.shizukuRoot) "root" else "shell"}${if (gate.shizukuPermitted) "" else ", not granted"}")
+                    }
                     Line("Build type", gate.buildType)
                     Line("Writes", if (gate.canWrite) "allowed" else "refused: ${gate.reason}")
-                    if (gate.shizukuRunning && !gate.shizukuPermitted) {
+                    Line("Background", "boot and SIM-change reconcile, weekly test, update pulls")
+                    Line("Last reconcile", ui.state.lastCleanup ?: "not run yet")
+                    if (!gate.privilegedGranted && gate.shizukuRunning && !gate.shizukuPermitted) {
                         OutlinedButton(onClick = { runCatching { Shizuku.requestPermission(4713) } }) { Text("Grant Shizuku") }
                     }
                 }
@@ -211,7 +252,7 @@ private fun OwnerScreen(viewModel: OwnerViewModel, openIssue: () -> Unit) {
             }
             OwnerCard("Data") {
                 Text(ui.state.release.line(), style = MaterialTheme.typography.bodyMedium)
-                Button(onClick = viewModel::pull) { Text("Pull the latest release") }
+                Button(onClick = viewModel::pull) { Text("Pull update") }
             }
             OwnerCard("SIMs") {
                 val sims = ui.sims
@@ -221,18 +262,22 @@ private fun OwnerScreen(viewModel: OwnerViewModel, openIssue: () -> Unit) {
                     else -> sims.forEach { Line("Slot ${it.slot + 1}", "${it.name} (${it.identity.mccmnc})") }
                 }
             }
-            OwnerCard("Live on this phone") {
+            OwnerCard("Kept values") {
                 val s = ui.state
                 if (!s.anyLive) Text("Nothing. The phone runs its own carrier settings.")
-                s.overrides.forEach { Line("Slot ${it.slot + 1} ${it.key}", "${it.value} (${if (it.hold == Hold.KEPT) "kept" else "under test"})") }
-                s.apns.forEach { Line("APN ${it.label}", if (it.hold == Hold.KEPT) "kept" else "under test") }
-                Line("Leftover check", s.lastCleanup ?: "not run yet")
+                s.overrides.filter { it.hold == Hold.KEPT }.forEach {
+                    Line("Slot ${it.slot + 1} ${it.key}", "${it.value}, kept for ${it.sim.label}${it.why?.let { w -> ": $w" } ?: ""}")
+                }
+                s.apns.filter { it.hold == Hold.KEPT }.forEach { Line("APN ${it.label}", "kept as the preferred APN") }
+                s.overrides.filter { it.hold == Hold.TRIAL }.forEach { Line("Slot ${it.slot + 1} ${it.key}", "${it.value}, under test") }
+                s.apns.filter { it.hold == Hold.TRIAL }.forEach { Line("APN ${it.label}", "under test") }
+                if (s.wifiOffSinceMs != null) Line("Wi-Fi", "off for a VoLTE measurement; switched back on at its end")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = viewModel::revertAll, enabled = s.anyLive) { Text("Revert all") }
                     OutlinedButton(onClick = viewModel::cleanup) { Text("Check for leftovers") }
                 }
             }
-            OwnerCard("First use (round 25)") {
+            if (!ui.state.rebootCleared) OwnerCard("First use (round 25)") {
                 Text(
                     "1. Only after the S20 build's boot check, never together with another build change. " +
                         "2. The first apply on the cable, with a lab --read before and after. " +
@@ -256,8 +301,11 @@ private fun OwnerScreen(viewModel: OwnerViewModel, openIssue: () -> Unit) {
                 Check("Voice check: I place a call myself while a voice feature is off (2 minutes)", voice) { voice = it }
                 Check("Test OCD's internet APN rows the phone lacks", apns) { apns = it }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { viewModel.test(offs, voice, apns) }, enabled = gate?.canWrite == true && ui.sims?.isNotEmpty() == true) { Text("Test now") }
-                    OutlinedButton(onClick = { viewModel.test(offs, voice, apns) }, enabled = gate?.canWrite == true && ui.state.anyLive) { Text("Test again") }
+                    Button(onClick = { viewModel.test(offs, voice, apns) }, enabled = gate?.canWrite == true && ui.sims?.isNotEmpty() == true && ui.run == "idle") { Text("Test now") }
+                    OutlinedButton(
+                        onClick = { viewModel.test(offs, voice, apns) },
+                        enabled = gate?.canWrite == true && ui.sims?.isNotEmpty() == true && ui.state.runs.isNotEmpty() && ui.run == "idle",
+                    ) { Text("Test again") }
                 }
             }
             OwnerCard("Last result") {
@@ -270,11 +318,12 @@ private fun OwnerScreen(viewModel: OwnerViewModel, openIssue: () -> Unit) {
                         Line(
                             f.feature.label,
                             "phone ${f.baseline.onOff()}, OCD ${f.ocd.value.onOff()}, best ${f.best.onOff()}" +
-                                (if (f.applied) ", applied" else "") + (f.refused?.let { ", refused: $it" } ?: ""),
+                                (if (f.applied) ", applied" else "") + (f.refused?.let { ", refused: $it" } ?: "") +
+                                (f.bestWhy?.let { " ($it)" } ?: ""),
                         )
                     }
                     run.apns.forEach { Line("APN ${it.label}", it.status + (it.dataWorks?.let { w -> if (w) ", data works" else ", no data" } ?: "")) }
-                    OutlinedButton(onClick = openIssue, enabled = run.features.isNotEmpty()) { Text("Report on GitHub (opens a prefilled issue)") }
+                    OutlinedButton(onClick = openIssue, enabled = run.features.isNotEmpty()) { Text("Upload: report on GitHub (opens a prefilled issue)") }
                 }
             }
             OwnerCard("Schedule") {
@@ -284,6 +333,7 @@ private fun OwnerScreen(viewModel: OwnerViewModel, openIssue: () -> Unit) {
                 }
                 Text(ui.weekly, style = MaterialTheme.typography.bodySmall)
             }
+            OutlinedButton(onClick = openCheck) { Text("Open the read-only check") }
             OwnerCard("Log") {
                 ui.state.log.takeLast(25).reversed().forEach {
                     Text("${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it.atMs))} ${it.kind}: ${it.text}", style = MaterialTheme.typography.bodySmall)

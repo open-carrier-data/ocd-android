@@ -46,7 +46,7 @@ object OwnerHook {
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Button(onClick = { context.startActivity(Intent(context, OwnerActivity::class.java)) }, modifier = Modifier.padding(top = 8.dp)) {
-                    Text("Open owner tools")
+                    Text("Open Carrier Data owner screen")
                 }
             }
         }

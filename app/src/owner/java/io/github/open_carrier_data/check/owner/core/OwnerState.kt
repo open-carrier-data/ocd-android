@@ -122,8 +122,14 @@ data class OwnerState(
     val rebootCleared: Boolean = false,
     /** When the reboot check's override was applied; null when none is pending. */
     val rebootProbeAtMs: Long? = null,
+    /**
+     * Set before the owner build switches Wi-Fi off for VoLTE's measurement,
+     * cleared once Wi-Fi is back on: a crash in between leaves the record, and
+     * the cleanup switches Wi-Fi on again.
+     */
+    val wifiOffSinceMs: Long? = null,
 ) {
-    val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty()
+    val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
 
     fun kept(slot: Int): Map<String, Boolean> =
         overrides.filter { it.slot == slot && it.hold == Hold.KEPT }.associate { it.key to it.value }

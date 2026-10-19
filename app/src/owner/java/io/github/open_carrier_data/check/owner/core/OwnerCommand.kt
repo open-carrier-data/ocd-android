@@ -15,9 +15,10 @@ data class OwnerArgs(
  * The owner build's whole command list for the Shizuku route (and the read
  * commands of the privileged route). Every argv is built from constants and
  * validated arguments only; no other text reaches a process. The writes are
- * `cmd phone cc set-value` without `-p`, `cmd phone cc clear-values`, and
- * `content` on the APN table and the preferred APN. Never `-p`, never
- * `settings put`, never a reboot, never a dial.
+ * `cmd phone cc set-value` without `-p`, `cmd phone cc clear-values`,
+ * `content` on the APN table and the preferred APN, and `cmd wifi` for
+ * VoLTE's Wi-Fi-off measurement. Never `-p`, never `settings put`, never a
+ * reboot, never a dial.
  */
 enum class OwnerCommand(val timeoutSeconds: Long, val writes: Boolean) {
     UID(5, false),
@@ -34,7 +35,8 @@ enum class OwnerCommand(val timeoutSeconds: Long, val writes: Boolean) {
     APN_DELETE(30, true),
     PREFERRED_QUERY(20, false),
     PREFERRED_SET(20, true),
-    PREFERRED_CLEAR(20, true);
+    PREFERRED_CLEAR(20, true),
+    WIFI_SET(20, true);
 
     /** The argv, or null when an argument is missing or of the wrong shape. A forbidden key throws. */
     fun argv(a: OwnerArgs): List<String>? = when (this) {
@@ -72,6 +74,8 @@ enum class OwnerCommand(val timeoutSeconds: Long, val writes: Boolean) {
             sub(a)?.let { listOf("content", "insert", "--uri", "$PREFERAPN/$it", "--bind", "apn_id:l:$id") }
         }
         PREFERRED_CLEAR -> sub(a)?.let { listOf("content", "delete", "--uri", "$PREFERAPN/$it") }
+        // VoLTE's measurement while IMS runs over Wi-Fi; the runner always switches it back on.
+        WIFI_SET -> a.value?.let { listOf("cmd", "wifi", "set-wifi-enabled", if (it) "enabled" else "disabled") }
     }
 
     companion object {
