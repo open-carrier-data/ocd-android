@@ -279,6 +279,68 @@ enum class LookupNetwork(val wire: String, val plain: String) {
     NOT_KNOWN("not_known", "not known"),
 }
 
+/**
+ * The phone's Private DNS on the default network, as a class. The app reads
+ * it itself from the network's LinkProperties (`isPrivateDnsActive`,
+ * `getPrivateDnsServerName`: public API, ACCESS_NETWORK_STATE), so no shell
+ * command is needed. A hostname is classed at once and never kept: a
+ * provider's hostname can carry a personal configuration ID.
+ *
+ * [ecs] says whether the server passes EDNS Client Subnet (ECS), the first
+ * three parts of the client's IP address, to the name servers it asks
+ * (OCD Lab research note ocd-lab-20261018, measured 2026-10-19): Google and
+ * Quad9's ECS service do, Quad9's default service and Cloudflare do not.
+ * Null when not known.
+ */
+@Serializable
+enum class PrivateDns(val wire: String, val plain: String, val ecs: Boolean?) {
+    /** Off, or automatic while the network's resolver offers no encrypted DNS. */
+    NOT_IN_USE("not_in_use", "not in use", null),
+
+    /** Automatic: the network's own resolver, encrypted. */
+    AUTOMATIC("automatic", "automatic (the network's own resolver, encrypted)", null),
+    GOOGLE("google", "dns.google (Google)", true),
+    QUAD9_ECS("quad9_ecs", "dns11.quad9.net (Quad9 with ECS)", true),
+    QUAD9("quad9", "dns.quad9.net (Quad9's default service)", false),
+    CLOUDFLARE("cloudflare", "Cloudflare", false),
+
+    /** A hostname this app does not know; it is not kept. */
+    OTHER("other", "a server this app does not know", null);
+
+    /** The phone sends every lookup to this hostname (Android's strict mode). */
+    val strict: Boolean get() = this != NOT_IN_USE && this != AUTOMATIC
+
+    companion object {
+        private val GOOGLE_NAMES = setOf("dns.google", "8888.google")
+        private val QUAD9_ECS_NAMES = setOf("dns11.quad9.net")
+        private val QUAD9_NAMES = setOf("dns.quad9.net", "dns9.quad9.net", "dns10.quad9.net")
+        private val CLOUDFLARE_NAMES = setOf(
+            "one.one.one.one", "1dot1dot1dot1.cloudflare-dns.com", "cloudflare-dns.com",
+            "security.cloudflare-dns.com", "family.cloudflare-dns.com",
+        )
+
+        /**
+         * From LinkProperties: a server name means strict mode; without one,
+         * [active] tells automatic from not in use. Null when neither is known.
+         */
+        fun classify(active: Boolean?, hostname: String?): PrivateDns? {
+            val name = hostname?.trim()?.trimEnd('.')?.lowercase()?.takeIf { it.isNotEmpty() }
+            return when {
+                name != null -> when (name) {
+                    in GOOGLE_NAMES -> GOOGLE
+                    in QUAD9_ECS_NAMES -> QUAD9_ECS
+                    in QUAD9_NAMES -> QUAD9
+                    in CLOUDFLARE_NAMES -> CLOUDFLARE
+                    else -> OTHER
+                }
+                active == true -> AUTOMATIC
+                active == false -> NOT_IN_USE
+                else -> null
+            }
+        }
+    }
+}
+
 @Serializable
 enum class ApnEdited(val wire: String) {
     NO("no"),
@@ -320,6 +382,8 @@ data class ApnList(
     val rows: List<ApnRow> = emptyList(),
     /** Rows not shown: odd shape, emergency, deleted, or past the row limit. */
     val leftOut: Int = 0,
+    /** Rows identical to a shown row in every kept column, shown once (Samsung keeps a copy per SIM slot). */
+    val repeated: Int = 0,
 ) {
     companion object {
         val UNREADABLE = ApnList(readable = false)
@@ -338,6 +402,8 @@ data class DeepCheckReading(
     val lookupNetwork: LookupNetwork = LookupNetwork.NOT_KNOWN,
     /** Private DNS active on the default network during the lookup; null when not known. */
     val privateDnsActive: Boolean? = null,
+    /** The Private DNS server's class, read by the app with the network; null when not known. */
+    val privateDns: PrivateDns? = null,
     /** VoPS from the registry; null when the registry was not read. */
     val networkOffer: NetworkOffer? = null,
     /** AOSP IWLAN's log state; null on Samsung's IMS or when not read. */

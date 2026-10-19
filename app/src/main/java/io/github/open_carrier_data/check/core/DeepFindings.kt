@@ -10,7 +10,12 @@ internal object DeepFindings {
     fun compare(deep: DeepCheckReading, readings: PhoneReadings, resolution: Resolution): List<Finding> {
         val findings = mutableListOf<Finding>()
         findings += ims(deep, readings, resolution)
-        wifiCalling(deep, resolution)?.let { findings += it }
+        val device = readings.device
+        val samsung = device.manufacturer.equals("samsung", ignoreCase = true) && device.romFamily == RomFamily.STOCK
+        // Vodafone Germany's DNS location filter: a carrier-specific cause, named right after the DNS finding.
+        val carrierHint = VodafoneDnsHint.finding(deep, resolution.identity.mccmnc, samsung)
+        wifiCalling(deep, resolution, carrierHint != null)?.let { findings += it }
+        carrierHint?.let { findings += it }
         heldBack(deep)?.let { findings += it }
         if (deep.apnList?.rows.orEmpty().any { it.edited == ApnEdited.BY_USER }) {
             findings += Finding(
@@ -134,7 +139,8 @@ internal object DeepFindings {
         )
     }
 
-    private fun wifiCalling(deep: DeepCheckReading, resolution: Resolution): Finding? {
+    /** With [carrierHint], the next finding names this SIM's network's DNS cause and fixes, so this one does not advise. */
+    private fun wifiCalling(deep: DeepCheckReading, resolution: Resolution, carrierHint: Boolean): Finding? {
         val ims = deep.ims
         val onWifi = deep.lookupNetwork == LookupNetwork.WIFI
         // Without any network, ping also says "unknown host"; that is no DNS answer.
@@ -149,13 +155,16 @@ internal object DeepFindings {
             if (pingFails) add("does not resolve $over")
             if (phoneLookupFailed) add("got no address in the phone's own lookup ${age(lookup!!.ageMinutes)}")
         }.joinToString(", and ")
-        val resolver = when (deep.wifiResolver) {
+        // With a Private DNS hostname (strict mode) the Wi-Fi's own resolver is not asked.
+        val resolver = if (deep.privateDns?.strict == true) "" else when (deep.wifiResolver) {
             WifiResolver.LOCAL -> " This Wi-Fi gives the phone a resolver in the local network (usually the router), which " +
                 "passes the lookup on to its provider's resolver; some resolvers cannot reach a carrier's name servers."
             WifiResolver.PUBLIC, WifiResolver.MIXED -> " This Wi-Fi gives the phone ${deep.wifiResolver.plain}."
             else -> ""
         }
-        val dnsAdvice = if (deep.privateDnsActive == true) {
+        val dnsAdvice = if (carrierHint) {
+            "The next finding names the likely cause on this SIM's network and the fixes."
+        } else if (deep.privateDnsActive == true) {
             "Private DNS is already on and does not resolve it either; try another Private DNS server, for example dns.google."
         } else {
             "Set Private DNS to a public resolver, for example dns.google (Settings, Network, Private DNS), " +

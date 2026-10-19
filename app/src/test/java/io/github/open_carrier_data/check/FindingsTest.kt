@@ -155,9 +155,12 @@ class FindingsTest {
         assertTrue("volte_signed_in" in codes)
         assertFalse(Findings.NEEDS_DEEP_CHECK in codes)
         val dns = findings.single { it.code == "wifi_calling_not_signed_in_epdg_dns" }
-        assertTrue(dns.text, "dns.google" in dns.text && "Private DNS" in dns.text && "router" in dns.text)
         assertTrue(dns.text, "epdg.epc.mnc002.mcc262.pub.3gppnetwork.org" in dns.text)
         assertTrue(dns.text, "OCD's answer for Wi-Fi calling is supported" in dns.text)
+        // On a 26202 SIM the next finding names Vodafone's DNS filter and the A50's fix (VodafoneDnsHintTest).
+        val hint = findings[findings.indexOf(dns) + 1]
+        assertEquals("vodafone_de_epdg_dns_filter", hint.code)
+        assertTrue(hint.text, "dns.google" in hint.text && "Private DNS" in hint.text && "router" in hint.text)
     }
 
     @Test
@@ -192,8 +195,10 @@ class FindingsTest {
         val offline = deepCodes(deep(wifiCalling = WifiCallingSwitch.ON, epdg = EpdgName.DOES_NOT_RESOLVE, lookup = LookupNetwork.NONE))
         assertFalse(offline.any { "epdg" in it.code })
         assertTrue("wifi_calling_on_no_wifi" in offline.map { it.code })
-        val withPrivateDns = deepCodes(deep(epdg = EpdgName.DOES_NOT_RESOLVE, privateDns = true)).single { it.code == "epdg_name_not_resolving" }
-        assertTrue("already on" in withPrivateDns.text)
+        // The general advice, on a SIM without a carrier-specific DNS hint.
+        val withPrivateDns = compare(readings(device = samsung, sim = sim(mccmnc = "26201", spn = "Telekom.de", carrierId = 3, specificCarrierId = 3), deep = deep(epdg = EpdgName.DOES_NOT_RESOLVE, privateDns = true)))
+            .single { it.code == "epdg_name_not_resolving" }
+        assertTrue(withPrivateDns.text, "already on" in withPrivateDns.text)
     }
 
     @Test

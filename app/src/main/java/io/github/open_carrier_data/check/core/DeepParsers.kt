@@ -125,18 +125,30 @@ object ApnListParser {
     private val ROW = Regex("^Row: \\d+ (.*)$")
     private val SPLIT = Regex(", (?=(?:${COLUMNS.joinToString("|")})=)")
 
+    /**
+     * Rows whose kept columns are all the same are shown once and counted in
+     * [ApnList.repeated]: Samsung keeps a copy of each row per SIM slot (A50,
+     * One UI on Android 14, 2026-10-19), which the projection cannot tell apart.
+     */
     fun parse(lines: Sequence<String>): ApnList {
         var answered = false
         val rows = mutableListOf<ApnRow>()
+        val seen = HashSet<ApnRow>()
         var leftOut = 0
+        var repeated = 0
         for (line in lines) {
             if (line.startsWith("No result found")) answered = true
             val body = ROW.find(line)?.groupValues?.get(1) ?: continue
             answered = true
             val row = row(body)
-            if (row == null || rows.size >= MAX_ROWS) leftOut++ else rows += row
+            when {
+                row == null -> leftOut++
+                !seen.add(row) -> repeated++
+                rows.size >= MAX_ROWS -> leftOut++
+                else -> rows += row
+            }
         }
-        return if (answered) ApnList(readable = true, rows = rows, leftOut = leftOut) else ApnList.UNREADABLE
+        return if (answered) ApnList(readable = true, rows = rows, leftOut = leftOut, repeated = repeated) else ApnList.UNREADABLE
     }
 
     private fun row(body: String): ApnRow? {

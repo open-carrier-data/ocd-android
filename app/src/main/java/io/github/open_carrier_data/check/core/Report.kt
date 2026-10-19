@@ -166,6 +166,8 @@ object Report {
             if (deep.epdgName != EpdgName.NOT_CHECKED) {
                 put("lookup_network", deep.lookupNetwork.wire)
                 deep.privateDnsActive?.let { put("private_dns_active", it) }
+                // A class only, never the hostname.
+                deep.privateDns?.let { put("private_dns", it.wire) }
             }
             deep.wifiResolver?.let { put("wifi_resolver", it.wire) }
             deep.iwlan?.let { iwlan ->
@@ -281,8 +283,8 @@ object Report {
             "ims_registration.last_disconnect_code", "ims_registration.last_disconnect_reason",
             "network_offer", "network_offer.lte_vops", "network_offer.nr_vops",
             "wifi_calling", "wifi_calling.switch", "wifi_calling.epdg_name", "wifi_calling.lookup_network",
-            "wifi_calling.private_dns_active", "wifi_calling.wifi_resolver", "wifi_calling.phone_lookup",
-            "wifi_calling.phone_lookup_age", "wifi_calling.tunnel", "wifi_calling.last_refusal",
+            "wifi_calling.private_dns_active", "wifi_calling.private_dns", "wifi_calling.wifi_resolver",
+            "wifi_calling.phone_lookup", "wifi_calling.phone_lookup_age", "wifi_calling.tunnel", "wifi_calling.last_refusal",
             "wifi_calling.held_back_by", "wifi_calling.held_back_minutes",
             "apn_list", "apn_list.readable", "apn_list.rows", "apn_list.rows[].apn", "apn_list.rows[].types",
             "apn_list.rows[].protocol", "apn_list.rows[].roaming_protocol", "apn_list.rows[].carrier_enabled",
