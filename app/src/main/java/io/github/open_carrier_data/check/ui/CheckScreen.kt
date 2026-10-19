@@ -472,6 +472,20 @@ private fun DeepResults(deep: DeepCheckReading) {
                 }
         },
     )
+    deep.privateDns?.let {
+        Field(
+            "Private DNS",
+            it.plain,
+            listOfNotNull(
+                when (it.ecs) {
+                    true -> "Passes ECS (part of your IP address) on to the name servers it asks."
+                    false -> "Sends no ECS."
+                    null -> null
+                },
+                if (it.strict) "Every lookup on this phone goes to this server; the Wi-Fi's resolver is not used." else null,
+            ).joinToString(" ").ifEmpty { null },
+        )
+    }
     deep.wifiResolver?.let { Field("This Wi-Fi's DNS resolver", it.plain) }
     deep.iwlan?.let { iwlan ->
         val lookup = iwlan.phoneLookup
@@ -520,6 +534,9 @@ private fun DeepResults(deep: DeepCheckReading) {
             if (row.types.isEmpty()) "types: not set" else "types: ${row.types.joinToString(", ")}",
             details.joinToString(" · ").ifEmpty { null },
         )
+    }
+    if (apns.repeated > 0) {
+        Note("${apns.repeated} identical row(s) shown once. Samsung keeps a copy of each row per SIM slot.")
     }
     if (apns.leftOut > 0) {
         Note("${apns.leftOut} row(s) left out: unusual shape, emergency, deleted, or past the limit of ${ApnListParser.MAX_ROWS} rows.")

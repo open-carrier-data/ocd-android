@@ -26,7 +26,9 @@ import org.junit.Test
  * test_phone_check.py's fixture (the owner's A50); the extra lines carry the
  * kinds of identifiers a real dump holds (made up here) to show none of them
  * leaves a parser. APN rows use the `content` tool's format
- * (frameworks/base/cmds/content Content.java) with the A50's two rows.
+ * (frameworks/base/cmds/content Content.java) with the A50's two rows, and
+ * the A50's real output of 2026-10-19 (src/test/resources/a50/), which holds
+ * no identifier.
  */
 class DeepParsersTest {
     private val slot0 = SimSlot.of(0)!!
@@ -173,6 +175,23 @@ class DeepParsersTest {
     }
 
     @Test
+    fun `APN list - the A50's real output holds each row once per SIM slot, shown once (2026-10-19)`() {
+        // `content query` on the A50 (One UI, Android 14) with the deep check's projection, unchanged:
+        // Samsung keeps the two 26202 rows for sim_slot 0 and 1.
+        val text = requireNotNull(javaClass.getResource("/a50/apn_lidl_two_slots.txt")).readText()
+        val list = ApnListParser.parse(lines(text))
+        assertTrue(list.readable)
+        assertEquals(ApnListParser.parse(lines(apnRows)).rows, list.rows)
+        assertEquals(2, list.repeated)
+        assertEquals(0, list.leftOut)
+        // A row that differs in one kept column is a row of its own.
+        val handMade = ApnListParser.parse(lines(text + apnRow(4, edited = "1")))
+        assertEquals(3, handMade.rows.size)
+        assertEquals(ApnEdited.BY_USER, handMade.rows[2].edited)
+        assertEquals(2, handMade.repeated)
+    }
+
+    @Test
     fun `APN list - emergency and deleted rows are left out, MVNO and hand-made rows are marked`() {
         val text = listOf(
             apnRow(0, apn = "sos", type = "emergency"),
@@ -193,10 +212,15 @@ class DeepParsersTest {
         assertEquals(ApnList(readable = true), ApnListParser.parse(lines("No result found.")))
         val error = "Error while accessing provider:telephony\njava.lang.SecurityException: No permission to access APN settings"
         assertEquals(ApnList.UNREADABLE, ApnListParser.parse(lines(error)))
-        val many = (0 until 45).joinToString("\n") { apnRow(it) }
+        val many = (0 until 45).joinToString("\n") { apnRow(it, apn = "apn$it.example") }
         val list = ApnListParser.parse(lines(many))
         assertEquals(ApnListParser.MAX_ROWS, list.rows.size)
         assertEquals(5, list.leftOut)
+        // Identical rows count as repeated, not against the limit.
+        val same = ApnListParser.parse(lines((0 until 45).joinToString("\n") { apnRow(it) }))
+        assertEquals(1, same.rows.size)
+        assertEquals(44, same.repeated)
+        assertEquals(0, same.leftOut)
     }
 
     @Test

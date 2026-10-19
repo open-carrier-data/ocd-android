@@ -12,6 +12,7 @@ import io.github.open_carrier_data.check.core.CallWatchSummary
 import io.github.open_carrier_data.check.core.DeepCheckReading
 import io.github.open_carrier_data.check.core.DeepCheckTarget
 import io.github.open_carrier_data.check.core.LookupNetwork
+import io.github.open_carrier_data.check.core.PrivateDns
 import io.github.open_carrier_data.check.core.SimSlot
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -77,7 +78,11 @@ class ShizukuAccess(private val context: Context) {
         val bound = bind(args("deepcheck")) ?: return null
         try {
             val text = withContext(Dispatchers.IO) { DeepCheckProtocol.call(bound.binder, target) } ?: return null
-            return DeepCheckReading.decode(text).copy(lookupNetwork = network.first, privateDnsActive = network.second)
+            return DeepCheckReading.decode(text).copy(
+                lookupNetwork = network.kind,
+                privateDnsActive = network.privateDnsActive,
+                privateDns = network.privateDns,
+            )
         } finally {
             bound.unbind()
         }
@@ -151,18 +156,31 @@ class ShizukuAccess(private val context: Context) {
         return Bound(binder, release)
     }
 
-    /** The default network's kind and whether Private DNS is active on it, with ACCESS_NETWORK_STATE only. */
-    private fun defaultNetwork(): Pair<LookupNetwork, Boolean?> {
-        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return LookupNetwork.NOT_KNOWN to null
-        val network = runCatching { cm.activeNetwork }.getOrNull() ?: return LookupNetwork.NONE to null
-        val caps = runCatching { cm.getNetworkCapabilities(network) }.getOrNull() ?: return LookupNetwork.NOT_KNOWN to null
+    private class DefaultNetwork(
+        val kind: LookupNetwork,
+        val privateDnsActive: Boolean? = null,
+        val privateDns: PrivateDns? = null,
+    )
+
+    /**
+     * The default network's kind and its Private DNS, with ACCESS_NETWORK_STATE
+     * only (LinkProperties, public since Android 9). The strict-mode hostname is
+     * classed here and dropped.
+     */
+    private fun defaultNetwork(): DefaultNetwork {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return DefaultNetwork(LookupNetwork.NOT_KNOWN)
+        val network = runCatching { cm.activeNetwork }.getOrNull() ?: return DefaultNetwork(LookupNetwork.NONE)
+        val caps = runCatching { cm.getNetworkCapabilities(network) }.getOrNull() ?: return DefaultNetwork(LookupNetwork.NOT_KNOWN)
         val kind = when {
             caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> LookupNetwork.OTHER
             caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> LookupNetwork.WIFI
             caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> LookupNetwork.MOBILE
             else -> LookupNetwork.OTHER
         }
-        return kind to runCatching { cm.getLinkProperties(network)?.isPrivateDnsActive }.getOrNull()
+        val link = runCatching { cm.getLinkProperties(network) }.getOrNull() ?: return DefaultNetwork(kind)
+        val active = runCatching { link.isPrivateDnsActive }.getOrNull()
+        val privateDns = PrivateDns.classify(active, runCatching { link.privateDnsServerName }.getOrNull())
+        return DefaultNetwork(kind, active, privateDns)
     }
 
     companion object {

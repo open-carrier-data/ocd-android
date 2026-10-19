@@ -1,0 +1,4 @@
+Row: 0 apn=web.vodafone.de, type=default,supl,xcap, protocol=IPV4V6, roaming_protocol=IPV4V6, carrier_enabled=1, mvno_type=, edited=0
+Row: 1 apn=IMS, type=ims, protocol=IPV4V6, roaming_protocol=IPV4V6, carrier_enabled=1, mvno_type=, edited=0
+Row: 2 apn=web.vodafone.de, type=default,supl,xcap, protocol=IPV4V6, roaming_protocol=IPV4V6, carrier_enabled=1, mvno_type=, edited=0
+Row: 3 apn=IMS, type=ims, protocol=IPV4V6, roaming_protocol=IPV4V6, carrier_enabled=1, mvno_type=, edited=0
