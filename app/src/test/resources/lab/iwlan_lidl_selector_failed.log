@@ -1,0 +1,4 @@
+1792369140.187  9848  7802 D EpdgSelector: epdg.epc.mnc002.mcc262.pub.3gppnetwork.org: []
+1792369140.199  9848 10004 D IwlanDataService[0]: Tunnel closed! APN: ims, Error: TYPE: IWLAN_EPDG_SELECTOR_SERVER_SELECTION_FAILED 
+1792370155.776  9848  8071 D EpdgSelector: epdg.epc.mnc002.mcc262.pub.3gppnetwork.org: []
+1792370155.786  9848 10004 D IwlanDataService[0]: Tunnel closed! APN: ims, Error: TYPE: IWLAN_EPDG_SELECTOR_SERVER_SELECTION_FAILED 

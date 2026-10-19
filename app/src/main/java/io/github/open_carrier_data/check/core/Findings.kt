@@ -51,7 +51,7 @@ object Findings {
         }
         if (resolution.notCheckable.isNotEmpty()) findings += hiddenSelectors(resolution, code)
 
-        findings += carrierSettings(readings, resolution)
+        findings += carrierSettings(readings, resolution, bundle)
         findings += deviceRecords(readings, resolution, bundle)
 
         val deep = readings.deep
@@ -114,10 +114,12 @@ object Findings {
             }
             val other = if (match.sameStack) "" else
                 " This phone runs ${readings.device.romFamily.plain}, whose own file may differ."
+            // Round 22: a supported summary next to off records says so, here too.
+            val hint = LabelHints.offRecords(bundle, resolution, readings.device, capability)?.let { " ${it.text}" }.orEmpty()
             Finding(
                 (if (match.sameStack) "device_record_" else "device_record_other_stack_") + "$state:$capability",
                 "${match.whose} $sets (${match.sourceLine}). OCD's carrier summary is " +
-                    "${resolution.answer(capability).wire}.$other Configuration, not a test.",
+                    "${resolution.answer(capability).wire}.$other Configuration, not a test.$hint",
             )
         }
     }
@@ -143,7 +145,7 @@ object Findings {
         )
     }
 
-    private fun carrierSettings(readings: PhoneReadings, resolution: Resolution): List<Finding> {
+    private fun carrierSettings(readings: PhoneReadings, resolution: Resolution, bundle: OcdBundle): List<Finding> {
         val settings = readings.carrierSettings
         if (!readings.permissionGranted) {
             return listOf(
@@ -176,6 +178,8 @@ object Findings {
                         "$label: OCD's answer is ${ocd.wire}; this phone's carrier settings have it off " +
                             "(${key.key} = false). " +
                             (if (ocd == CapabilityValue.CONDITIONAL) "OCD's sources disagree for this SIM, often between phone models. " else "") +
+                            // Round 22: a supported summary can sit next to off records; say so.
+                            LabelHints.offRecords(bundle, resolution, readings.device, capability)?.let { "${it.text} " }.orEmpty() +
                             "Carrier settings come from the phone's own software and can differ between phone " +
                             "models and software versions.",
                     )

@@ -27,9 +27,10 @@ data class ReportResult(val json: JsonObject, val text: String, val hits: List<P
  * IDs, the build fingerprint, build user or host, the baseband, APN
  * credentials or anything emergency-related.
  *
- * With the Shizuku deep check, `ims_registration`, `wifi_calling` and
- * `apn_list` hold its typed results; `app.access_tier` says which access
- * produced the report.
+ * With the Shizuku deep check, `ims_registration`, `network_offer`,
+ * `wifi_calling` and `apn_list` hold its typed results; `app.access_tier`
+ * says which access produced the report. Guided call tests are not in the
+ * report: they stay on the phone.
  */
 object Report {
     const val SCHEMA = "ocd-check-report.v1"
@@ -139,12 +140,24 @@ object Report {
         putJsonObject("ims_registration") {
             val ims = deep.ims
             put("source", ims.source.wire)
-            if (ims.source == ImsSource.SAMSUNG) {
+            if (ims.source == ImsSource.SAMSUNG || ims.source == ImsSource.AOSP) {
                 put("registered", ims.registered)
                 ims.state?.let { put("state", it) }
                 ims.transport?.let { put("transport", it.wire) }
                 if (ims.registered == true) putJsonArray("services") { ims.services.forEach { add(it.wire) } }
                 ims.mno?.let { put("mno", it) }
+                ims.imsPdn?.let { put("ims_pdn", it.wire) }
+                ims.registrationLogTransport?.let { put("registration_log_transport", it.wire) }
+                ims.lastDisconnect?.let { reason ->
+                    put("last_disconnect_code", reason.code)
+                    reason.name?.let { put("last_disconnect_reason", it) }
+                }
+            }
+        }
+        deep.networkOffer?.let { offer ->
+            putJsonObject("network_offer") {
+                put("lte_vops", offer.lteVops?.wire ?: "not_reported")
+                put("nr_vops", offer.nrVops?.wire ?: "not_reported")
             }
         }
         putJsonObject("wifi_calling") {
@@ -153,6 +166,24 @@ object Report {
             if (deep.epdgName != EpdgName.NOT_CHECKED) {
                 put("lookup_network", deep.lookupNetwork.wire)
                 deep.privateDnsActive?.let { put("private_dns_active", it) }
+            }
+            deep.wifiResolver?.let { put("wifi_resolver", it.wire) }
+            deep.iwlan?.let { iwlan ->
+                val lookup = iwlan.phoneLookup
+                put(
+                    "phone_lookup",
+                    when {
+                        lookup == null -> "not_in_log"
+                        !lookup.standardName -> "other_name"
+                        lookup.resolved -> "resolved"
+                        else -> "no_address"
+                    },
+                )
+                lookup?.let { put("phone_lookup_age", it.ageBucket) }
+                put("tunnel", when (iwlan.tunnelUp) { true -> "up"; false -> "down"; null -> "not_in_log" })
+                iwlan.lastRefusal?.let { put("last_refusal", it) }
+                iwlan.heldBackBy?.let { put("held_back_by", it.wire) }
+                iwlan.heldBackMinutes?.let { put("held_back_minutes", it) }
             }
         }
         deep.apnList?.let { list ->
@@ -246,8 +277,13 @@ object Report {
             "data_connections[].set_up_over",
             "ims_registration", "ims_registration.source", "ims_registration.registered", "ims_registration.state",
             "ims_registration.transport", "ims_registration.services", "ims_registration.mno",
+            "ims_registration.ims_pdn", "ims_registration.registration_log_transport",
+            "ims_registration.last_disconnect_code", "ims_registration.last_disconnect_reason",
+            "network_offer", "network_offer.lte_vops", "network_offer.nr_vops",
             "wifi_calling", "wifi_calling.switch", "wifi_calling.epdg_name", "wifi_calling.lookup_network",
-            "wifi_calling.private_dns_active",
+            "wifi_calling.private_dns_active", "wifi_calling.wifi_resolver", "wifi_calling.phone_lookup",
+            "wifi_calling.phone_lookup_age", "wifi_calling.tunnel", "wifi_calling.last_refusal",
+            "wifi_calling.held_back_by", "wifi_calling.held_back_minutes",
             "apn_list", "apn_list.readable", "apn_list.rows", "apn_list.rows[].apn", "apn_list.rows[].types",
             "apn_list.rows[].protocol", "apn_list.rows[].roaming_protocol", "apn_list.rows[].carrier_enabled",
             "apn_list.rows[].mvno_type", "apn_list.rows[].edited", "apn_list.left_out",

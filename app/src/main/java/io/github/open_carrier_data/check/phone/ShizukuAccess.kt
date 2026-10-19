@@ -8,9 +8,11 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.IBinder
 import io.github.open_carrier_data.check.BuildConfig
+import io.github.open_carrier_data.check.core.CallWatchSummary
 import io.github.open_carrier_data.check.core.DeepCheckReading
 import io.github.open_carrier_data.check.core.DeepCheckTarget
 import io.github.open_carrier_data.check.core.LookupNetwork
+import io.github.open_carrier_data.check.core.SimSlot
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -72,11 +74,55 @@ class ShizukuAccess(private val context: Context) {
     suspend fun run(target: DeepCheckTarget): DeepCheckReading? {
         if (!status().ready) return null
         val network = defaultNetwork()
-        val args = Shizuku.UserServiceArgs(ComponentName(context.packageName, DeepCheckService::class.java.name))
-            .daemon(false)
-            .processNameSuffix("deepcheck")
-            .debuggable(false)
-            .version(BuildConfig.VERSION_CODE)
+        val bound = bind(args("deepcheck")) ?: return null
+        try {
+            val text = withContext(Dispatchers.IO) { DeepCheckProtocol.call(bound.binder, target) } ?: return null
+            return DeepCheckReading.decode(text).copy(lookupNetwork = network.first, privateDnsActive = network.second)
+        } finally {
+            bound.unbind()
+        }
+    }
+
+    /**
+     * Starts the guided call test's watch for [slot] in a service process of
+     * its own, so a deep check cannot stop it. The watch runs until
+     * [CallWatchSession.stop]; it only reads the registry and never touches a call.
+     */
+    suspend fun startCallWatch(slot: SimSlot): CallWatchSession? {
+        if (!status().ready) return null
+        val bound = bind(args("callwatch")) ?: return null
+        val started = runCatching { withContext(Dispatchers.IO) { DeepCheckProtocol.watchStart(bound.binder, slot) } }.getOrDefault(false)
+        if (!started) {
+            bound.unbind()
+            return null
+        }
+        return CallWatchSession(bound)
+    }
+
+    /** A running watch. [read] shows it so far; [stop] ends it, returns what it saw and stops the service. */
+    class CallWatchSession internal constructor(private val bound: Bound) {
+        suspend fun read(): CallWatchSummary? =
+            runCatching { withContext(Dispatchers.IO) { DeepCheckProtocol.watchRead(bound.binder) } }.getOrNull()
+
+        suspend fun stop(): CallWatchSummary? = try {
+            runCatching { withContext(Dispatchers.IO) { DeepCheckProtocol.watchStop(bound.binder) } }.getOrNull()
+        } finally {
+            bound.unbind()
+        }
+    }
+
+    private fun args(name: String) = Shizuku.UserServiceArgs(ComponentName(context.packageName, DeepCheckService::class.java.name))
+        .tag(name)
+        .daemon(false)
+        .processNameSuffix(name)
+        .debuggable(false)
+        .version(BuildConfig.VERSION_CODE)
+
+    internal class Bound(val binder: IBinder, private val release: suspend () -> Unit) {
+        suspend fun unbind() = release()
+    }
+
+    private suspend fun bind(args: Shizuku.UserServiceArgs): Bound? {
         val connected = CompletableDeferred<IBinder?>()
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -87,16 +133,18 @@ class ShizukuAccess(private val context: Context) {
                 connected.complete(null)
             }
         }
-        withContext(Dispatchers.Main) { Shizuku.bindUserService(args, connection) }
-        try {
-            val binder = withTimeoutOrNull(BIND_TIMEOUT_MS) { connected.await() } ?: return null
-            val text = withContext(Dispatchers.IO) { DeepCheckProtocol.call(binder, target) } ?: return null
-            return DeepCheckReading.decode(text).copy(lookupNetwork = network.first, privateDnsActive = network.second)
-        } finally {
+        val release: suspend () -> Unit = {
             withContext(NonCancellable + Dispatchers.Main) {
                 runCatching { Shizuku.unbindUserService(args, connection, true) }
             }
         }
+        withContext(Dispatchers.Main) { Shizuku.bindUserService(args, connection) }
+        val binder = withTimeoutOrNull(BIND_TIMEOUT_MS) { connected.await() }
+        if (binder == null) {
+            release()
+            return null
+        }
+        return Bound(binder, release)
     }
 
     /** The default network's kind and whether Private DNS is active on it, with ACCESS_NETWORK_STATE only. */

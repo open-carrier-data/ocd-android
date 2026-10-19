@@ -8,12 +8,18 @@ import io.github.open_carrier_data.check.core.DataConnection
 import io.github.open_carrier_data.check.core.DeepCheckReading
 import io.github.open_carrier_data.check.core.DeviceInfo
 import io.github.open_carrier_data.check.core.EpdgName
+import io.github.open_carrier_data.check.core.EpdgPhoneLookup
 import io.github.open_carrier_data.check.core.Gid1Status
+import io.github.open_carrier_data.check.core.ImsDisconnect
 import io.github.open_carrier_data.check.core.ImsReading
 import io.github.open_carrier_data.check.core.ImsService
 import io.github.open_carrier_data.check.core.ImsSource
 import io.github.open_carrier_data.check.core.ImsTransport
+import io.github.open_carrier_data.check.core.IwlanHold
+import io.github.open_carrier_data.check.core.IwlanReading
 import io.github.open_carrier_data.check.core.LookupNetwork
+import io.github.open_carrier_data.check.core.LteVops
+import io.github.open_carrier_data.check.core.NetworkOffer
 import io.github.open_carrier_data.check.core.NetworkReading
 import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.PhoneReadings
@@ -21,6 +27,7 @@ import io.github.open_carrier_data.check.core.Radio
 import io.github.open_carrier_data.check.core.RomFamily
 import io.github.open_carrier_data.check.core.SimReading
 import io.github.open_carrier_data.check.core.WifiCallingSwitch
+import io.github.open_carrier_data.check.core.WifiResolver
 import java.time.LocalDate
 
 /**
@@ -151,5 +158,50 @@ object Fixtures {
         apnList = apns,
         lookupNetwork = lookup,
         privateDnsActive = privateDns,
+    )
+
+    val s20Lineage = DeviceInfo("samsung", "SM-G981B", "x1s", 16, RomFamily.LINEAGEOS)
+
+    /**
+     * The S20 on LineageOS with the LIDL SIM, as the live dumps read on
+     * 2026-10-19 at 13:39: Android's IMS signed in, the IMS data connection on
+     * LTE while the registration log still says Wi-Fi, Wi-Fi calling switched
+     * on, the phone's own ePDG lookup empty 39 minutes before, and Android's
+     * one-hour retry wait with 21 minutes left. The home router is the resolver.
+     */
+    fun s20Deep(
+        registered: Boolean = true,
+        transport: ImsTransport? = ImsTransport.LTE,
+        logTransport: ImsTransport? = ImsTransport.IWLAN,
+        vops: LteVops? = LteVops.SUPPORTED,
+        lookupResolved: Boolean = false,
+        heldBack: IwlanHold? = IwlanHold.DATA_SERVICE_RETRY,
+        ping: EpdgName = EpdgName.DOES_NOT_RESOLVE,
+    ) = DeepCheckReading(
+        ims = ImsReading(
+            source = ImsSource.AOSP,
+            registered = registered,
+            state = if (registered) "registered" else "not_registered",
+            transport = transport.takeIf { registered },
+            services = if (registered) listOf(ImsService.MMTEL, ImsService.SMSIP) else emptyList(),
+            imsPdn = transport,
+            registrationLogTransport = logTransport.takeIf { registered },
+            lastDisconnect = ImsDisconnect(0, "CODE_UNSPECIFIED"),
+        ),
+        wifiCallingSwitch = WifiCallingSwitch.ON,
+        epdgName = ping,
+        apnList = a50Apns,
+        lookupNetwork = LookupNetwork.WIFI,
+        privateDnsActive = false,
+        networkOffer = NetworkOffer(vops, null),
+        iwlan = IwlanReading(
+            phoneLookup = EpdgPhoneLookup(resolved = lookupResolved, standardName = true, ageMinutes = 39),
+            tunnelUp = false,
+            lastRefusal = "IWLAN_EPDG_SELECTOR_SERVER_SELECTION_FAILED",
+            selectionFailed = true,
+            heldBackBy = heldBack,
+            heldBackMinutes = heldBack?.let { 21L },
+        ),
+        wifiResolver = WifiResolver.LOCAL,
     )
 }

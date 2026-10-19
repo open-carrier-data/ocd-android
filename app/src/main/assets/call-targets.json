@@ -1,0 +1,18 @@
+{
+  "description": "Free mailbox short codes for guided outgoing test calls. The user dials, unless --auto-call mailbox: then the lab calls the inserted SIM's own entry here and no other number (lab_calls.check_auto_call also refuses emergency, 0-prefixed and 11x/19x service numbers even if they were listed here). Source: S20_Project/research_notes/IMS retry backoff and test calls/test_calls.md (2026-10-18), Key Question 2. A code marked unverified rests on one secondary source.",
+  "by_spn": [
+    {"spn": "LIDL Connect", "mccmnc": ["26202"], "brand": "LIDL Connect (Vodafone network)", "mailbox": "5500", "verification": "handyhase 2023, netzwelt"},
+    {"spn": "congstar", "mccmnc": ["26201"], "brand": "congstar (Telekom network)", "mailbox": "3311", "verification": "unverified: handyhase gives 3311 postpaid, 4712 prepaid"}
+  ],
+  "by_mccmnc": {
+    "26201": {"brand": "Telekom", "mailbox": "3311", "verification": "Samsung DE, teltarif, GIGA agree"},
+    "26206": {"brand": "Telekom", "mailbox": "3311", "verification": "Samsung DE, teltarif, GIGA agree"},
+    "26202": {"brand": "Vodafone", "mailbox": "5500", "verification": "Samsung DE, teltarif, GIGA agree"},
+    "26204": {"brand": "Vodafone", "mailbox": "5500", "verification": "Samsung DE, teltarif, GIGA agree"},
+    "26209": {"brand": "Vodafone", "mailbox": "5500", "verification": "Samsung DE, teltarif, GIGA agree"},
+    "26203": {"brand": "O2", "mailbox": "333", "verification": "o2 help community; teltarif lists the legacy 9911"},
+    "26207": {"brand": "O2", "mailbox": "333", "verification": "o2 help community; teltarif lists the legacy 9911"},
+    "26208": {"brand": "O2", "mailbox": "333", "verification": "o2 help community; teltarif lists the legacy 9911"},
+    "26223": {"brand": "1&1", "mailbox": "333", "verification": "Samsung DE, handyhase: 333 on 1&1's own network, 5500 while on Vodafone national roaming"}
+  }
+}

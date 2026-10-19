@@ -89,6 +89,37 @@ class ReportTest {
     }
 
     @Test
+    fun `a report from Android's IMS on the S20 holds the new typed fields and passes the scan`() {
+        val result = report(readings(device = Fixtures.s20Lineage, deep = Fixtures.s20Deep()))
+        assertEquals(emptyList<Any>(), result.hits)
+        assertEquals(emptyList<String>(), Report.unexpectedKeys(result.json))
+        val ims = result.json["ims_registration"]!!.jsonObject
+        assertEquals("aosp_telephony", ims["source"]!!.jsonPrimitive.content)
+        assertEquals("lte", ims["transport"]!!.jsonPrimitive.content)
+        assertEquals("lte", ims["ims_pdn"]!!.jsonPrimitive.content)
+        assertEquals("iwlan", ims["registration_log_transport"]!!.jsonPrimitive.content)
+        assertEquals("0", ims["last_disconnect_code"]!!.jsonPrimitive.content)
+        assertEquals("CODE_UNSPECIFIED", ims["last_disconnect_reason"]!!.jsonPrimitive.content)
+        assertNull(ims["mno"])
+        val offer = result.json["network_offer"]!!.jsonObject
+        assertEquals("supported", offer["lte_vops"]!!.jsonPrimitive.content)
+        assertEquals("not_reported", offer["nr_vops"]!!.jsonPrimitive.content)
+        val wifi = result.json["wifi_calling"]!!.jsonObject
+        assertEquals("on", wifi["switch"]!!.jsonPrimitive.content)
+        assertEquals("no_address", wifi["phone_lookup"]!!.jsonPrimitive.content)
+        assertEquals("under_1h", wifi["phone_lookup_age"]!!.jsonPrimitive.content)
+        assertEquals("down", wifi["tunnel"]!!.jsonPrimitive.content)
+        assertEquals("IWLAN_EPDG_SELECTOR_SERVER_SELECTION_FAILED", wifi["last_refusal"]!!.jsonPrimitive.content)
+        assertEquals("data_service_retry", wifi["held_back_by"]!!.jsonPrimitive.content)
+        assertEquals("21", wifi["held_back_minutes"]!!.jsonPrimitive.content)
+        assertEquals("local_network", wifi["wifi_resolver"]!!.jsonPrimitive.content)
+        val findings = result.json["findings"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertTrue(findings.toString(), "volte_signed_in" in findings && "wifi_calling_held_back" in findings)
+        // Call tests stay on the phone: the report has no key for them.
+        assertFalse(Report.allowedPaths.any { "call" in it && "calling" !in it })
+    }
+
+    @Test
     fun `a Shizuku report built from dumps full of identifiers holds none of them`() {
         val dump = """
   SIM slot: [0] state: [REGISTERED] IMS Profile: [Name : Telekom DE IMS, enabled : 2, pdn : ims]
