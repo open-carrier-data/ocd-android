@@ -51,17 +51,18 @@ import androidx.compose.ui.unit.sp
 import io.github.open_carrier_data.check.BuildConfig
 import io.github.open_carrier_data.check.core.ApnEdited
 import io.github.open_carrier_data.check.core.ApnListParser
+import io.github.open_carrier_data.check.core.AudioAnswer
 import io.github.open_carrier_data.check.core.CallDirection
 import io.github.open_carrier_data.check.core.CallWatchSummary
 import io.github.open_carrier_data.check.core.Capabilities
 import io.github.open_carrier_data.check.core.CapabilityValue
 import io.github.open_carrier_data.check.core.CarrierKeys
 import io.github.open_carrier_data.check.core.DeepCheckReading
+import io.github.open_carrier_data.check.core.DeviceInfo
 import io.github.open_carrier_data.check.core.EpdgName
 import io.github.open_carrier_data.check.core.Findings
 import io.github.open_carrier_data.check.core.FiveG
 import io.github.open_carrier_data.check.core.Gid1Status
-import io.github.open_carrier_data.check.core.HeardMailbox
 import io.github.open_carrier_data.check.core.ImsSource
 import io.github.open_carrier_data.check.core.LabelHints
 import io.github.open_carrier_data.check.core.LookupNetwork
@@ -69,6 +70,13 @@ import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.Radio
 import io.github.open_carrier_data.check.core.ReportResult
 import io.github.open_carrier_data.check.core.ShellCommand
+import io.github.open_carrier_data.check.core.SwitchStep
+import io.github.open_carrier_data.check.core.SwitchSteps
+import io.github.open_carrier_data.check.core.T2Feature
+import io.github.open_carrier_data.check.core.T2Status
+import io.github.open_carrier_data.check.core.ToggleAnswer
+import io.github.open_carrier_data.check.core.UserToggleRecord
+import io.github.open_carrier_data.check.phone.SettingsScreens
 import io.github.open_carrier_data.check.phone.ShizukuStatus
 
 @Composable
@@ -109,6 +117,7 @@ fun CheckScreen(viewModel: CheckViewModel) {
                     CarrierSettingsSection(state, bundle)
                     ConnectionsSection(state)
                     DeepCheckSection(state, viewModel)
+                    SwitchSection(state, viewModel)
                     CallTestSection(state, viewModel)
                     OcdSection(state, bundle)
                 }
@@ -519,9 +528,100 @@ private fun DeepResults(deep: DeepCheckReading) {
 }
 
 /**
- * The guided call test (OCD round 19): the person dials the SIM's own
- * mailbox; the app only watches the call state and the call's network type
- * through the deep check, then asks whether they heard the mailbox.
+ * VoLTE and Wi-Fi calling on this phone: what the app may say about each
+ * (round 23 LB4: "registered" from the deep check, "works on this phone"
+ * only after T2), and the guided switch step (AP3) where OCD's value for this
+ * phone is on and the phone has the feature off. The app opens Settings; the
+ * person flips their own switch.
+ */
+@Composable
+private fun SwitchSection(state: UiState, viewModel: CheckViewModel) {
+    val readings = state.readings ?: return
+    val switches = state.switches
+    val context = LocalContext.current
+    val device = readings.device
+    Section("VoLTE and Wi-Fi calling on this phone") {
+        T2Feature.entries.forEach { feature ->
+            Field(feature.label, T2Status.line(feature, state.call.log, readings), emphasize = true)
+        }
+        Note(
+            "\"Registered\" is what the deep check reads with the phone's current settings. \"Works on this phone\" " +
+                "needs T2: an outgoing and an incoming call over the feature's network, with the audio confirmed (the " +
+                "guided call test below).",
+        )
+        val toggle = switches.toggle
+        when {
+            toggle != null -> ToggleProgress(toggle, device, viewModel)
+            switches.offered.isEmpty() -> Note(
+                "No switch step to offer: the app offers one only where OCD's value for this phone is on and the " +
+                    "phone has the feature off, in its carrier settings or in your own switch where the deep check reads it.",
+            )
+            else -> switches.offered.forEach { step ->
+                HorizontalDivider()
+                Label("Turn ${step.feature.label} on yourself (optional)")
+                Field("OCD's value", step.ocd.sourceLine, step.ocd.stackNote(device), emphasize = true)
+                Field("This phone", step.phoneLine(device))
+                Text(step.todo, style = MaterialTheme.typography.bodyMedium)
+                Note(SwitchSteps.where(step.feature, device))
+                EmergencyNote()
+                OutlinedButton(onClick = {
+                    val opened = SettingsScreens.open(context, SwitchSteps.screens(step.feature, device), state.selectedSubId)
+                    viewModel.wentToSettings(step, opened)
+                }) { Text("Open Settings") }
+            }
+        }
+        switches.problem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+        switches.last?.let { last ->
+            HorizontalDivider()
+            Note("Kept on this phone: ${last.plain}")
+            if (last.answer == ToggleAnswer.TURNED_ON) {
+                Text(
+                    "Next: the guided call test below, for ${last.feature.label}: an outgoing call to your mailbox and an " +
+                        "incoming call from your second line.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ToggleProgress(toggle: ToggleUi, device: DeviceInfo, viewModel: CheckViewModel) {
+    val step = toggle.step
+    HorizontalDivider()
+    Label("${step.feature.label}: back from Settings")
+    when (toggle.phase) {
+        TogglePhase.IN_SETTINGS -> {
+            Note("Settings is open at ${UserToggleRecord.screenPlain(toggle.screen.wire)}. The app reads the phone again when you come back.")
+            OutlinedButton(onClick = viewModel::cancelToggle) { Text("Cancel") }
+        }
+        TogglePhase.REREADING -> LoadingRow("Reading the phone again")
+        TogglePhase.ASK -> {
+            Field("Before", step.phoneLine(device))
+            Field("Now", toggle.after?.let { SwitchStep(step.feature, step.ocd, it).phoneLine(device) } ?: "could not be read")
+            EmergencyNote()
+            Text("Did you turn ${step.feature.label} on?", style = MaterialTheme.typography.bodyLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { viewModel.answerToggle(ToggleAnswer.TURNED_ON) }) { Text("Yes, I turned it on") }
+                OutlinedButton(onClick = { viewModel.answerToggle(ToggleAnswer.NOT_CHANGED) }) { Text("No") }
+                OutlinedButton(onClick = { viewModel.answerToggle(ToggleAnswer.NO_SWITCH) }) { Text("There was no switch") }
+            }
+        }
+    }
+}
+
+/** Round 10's note, next to every voice switch the app points to. */
+@Composable
+private fun EmergencyNote() {
+    Text(SwitchSteps.EMERGENCY_NOTE, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+}
+
+/**
+ * The guided call test (OCD round 19, T2): the person dials the SIM's own
+ * mailbox and has their second line call this phone; the app only watches
+ * the call state and the call's network type through the deep check, then
+ * asks about the audio and, for the incoming call, the second line.
  */
 @Composable
 private fun CallTestSection(state: UiState, viewModel: CheckViewModel) {
@@ -529,10 +629,11 @@ private fun CallTestSection(state: UiState, viewModel: CheckViewModel) {
     val call = state.call
     Section("Guided call test") {
         Text(
-            "You call your SIM's own mailbox from the phone app; this app never places, answers or ends a call. " +
-                "While the call runs, the app reads through Shizuku once a second which network the call uses " +
-                "(4G, 5G or Wi-Fi), and afterwards asks whether you heard the mailbox. Results stay in this app on " +
-                "this phone; they are not in the report.",
+            "Two calls for one feature: you call your SIM's own mailbox, and you call this phone from your second " +
+                "line (another phone or SIM of yours) and answer it here yourself. This app never places, answers or " +
+                "ends a call. While a call runs, the app reads through Shizuku once a second which network it uses " +
+                "(4G, 5G or Wi-Fi). Afterwards it asks about the audio. Results stay in this app on this phone; they " +
+                "are not in the report.",
             style = MaterialTheme.typography.bodyMedium,
         )
         val mailbox = call.mailbox
@@ -543,6 +644,7 @@ private fun CallTestSection(state: UiState, viewModel: CheckViewModel) {
             )
             return@Section
         }
+        val ready = status.ready && state.deepTarget != null
         when {
             !status.ready -> Note("The call test needs the deep check's Shizuku access (see above) to read the call's network.")
             state.deepTarget == null -> Note("The SIM's slot is not known, so the call test cannot run.")
@@ -553,21 +655,15 @@ private fun CallTestSection(state: UiState, viewModel: CheckViewModel) {
             "${mailbox.brand}, from the app's mailbox list" + if (mailbox.unverified) " (${mailbox.verification})." else ".",
             emphasize = true,
         )
-        if (!status.ready || state.deepTarget == null) return@Section
         when (call.phase) {
-            CallPhase.READY, CallPhase.STARTING -> {
-                Bullet("1. Tap Start. The app starts watching the call state.")
-                Bullet("2. Open your phone app and dial ${mailbox.number} yourself. Listen until the mailbox answers, then hang up.")
-                Bullet("3. Come back here, tap Stop, and say whether you heard the mailbox.")
-                Note(
-                    "For Wi-Fi calling, OCD's rules count a test only with airplane mode on and Wi-Fi on. Set that " +
-                        "yourself before you start; this app changes no setting.",
-                )
-                Button(onClick = viewModel::startCallWatch, enabled = call.phase == CallPhase.READY) { Text("Start") }
-            }
+            CallPhase.READY, CallPhase.STARTING -> T2Plan(call, mailbox.number, ready, viewModel)
             CallPhase.WATCHING, CallPhase.STOPPING -> {
                 Text(
-                    "Watching. Dial ${mailbox.number} in your phone app now, listen, hang up, then come back.",
+                    if (call.intended == CallDirection.INCOMING) {
+                        "Watching. Call this phone now from your second line, answer it here yourself, talk briefly, hang up, then come back."
+                    } else {
+                        "Watching. Dial ${mailbox.number} in your phone app now, listen, hang up, then come back."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -576,13 +672,28 @@ private fun CallTestSection(state: UiState, viewModel: CheckViewModel) {
             }
             CallPhase.ASK -> {
                 val result = call.result ?: return@Section
-                WatchResult(result)
+                WatchResult(result, call.intended)
                 if (result.connected) {
-                    Text("Did you hear the mailbox?", style = MaterialTheme.typography.bodyLarge)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { viewModel.answerCallTest(HeardMailbox.YES) }) { Text("Yes") }
-                        OutlinedButton(onClick = { viewModel.answerCallTest(HeardMailbox.NO) }) { Text("No") }
-                        OutlinedButton(onClick = { viewModel.answerCallTest(HeardMailbox.NOT_SURE) }) { Text("Not sure") }
+                    val pending = call.pendingAudio
+                    if (call.intended == CallDirection.INCOMING && pending != null) {
+                        Text(
+                            "Did the call come from your second line (not a mailbox, voicemail or service number)?",
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { viewModel.answerSecondLine(true) }) { Text("Yes") }
+                            OutlinedButton(onClick = { viewModel.answerSecondLine(false) }) { Text("No") }
+                        }
+                    } else {
+                        Text(
+                            if (call.intended == CallDirection.INCOMING) "Could both of you hear each other?" else "Did you hear the mailbox?",
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { viewModel.answerAudio(AudioAnswer.YES) }) { Text("Yes") }
+                            OutlinedButton(onClick = { viewModel.answerAudio(AudioAnswer.NO) }) { Text("No") }
+                            OutlinedButton(onClick = { viewModel.answerAudio(AudioAnswer.NOT_SURE) }) { Text("Not sure") }
+                        }
                     }
                 }
                 OutlinedButton(onClick = viewModel::discardCallTest) { Text("Discard") }
@@ -600,23 +711,106 @@ private fun CallTestSection(state: UiState, viewModel: CheckViewModel) {
         Label("Command it runs, once a second while watching")
         Text("dumpsys telephony.registry", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
         Note(
-            "Only this SIM's call state, the call's network type and whether an emergency call started are taken " +
-                "from it. Numbers and cell details are dropped where they are read.",
+            "Only this SIM's call state, the call's network type, whether an emergency call started and whether an " +
+                "incoming number is one of the mailbox short codes are taken from it. The incoming number is compared " +
+                "where it is read and never kept or shown; numbers and cell details are dropped there.",
         )
-        val tests = call.log.tests
-        if (tests.isNotEmpty()) {
-            HorizontalDivider()
-            Label("Call tests on this phone")
-            tests.asReversed().forEach { test ->
-                Field("${test.date} · ${test.brand} ${test.mailbox}", test.plain, "${test.model} · ${test.romFamily} · Android ${test.androidMajor} · ${test.imsStack.replace('_', ' ')}")
-            }
-            Note(
-                "Observed on this phone, one call each. A call that went over 4G or Wi-Fi does not show that a feature " +
-                    "works in general; OCD's tested layer also needs incoming calls and repeats.",
+        CallTestHistory(call, viewModel)
+    }
+}
+
+/** The T2 test: which feature, the two calls, and how far it is. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun T2Plan(call: CallTestUi, mailbox: String, ready: Boolean, viewModel: CheckViewModel) {
+    Label("Feature to test")
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        T2Feature.entries.forEach { feature ->
+            FilterChip(
+                selected = call.feature == feature,
+                onClick = { viewModel.selectCallFeature(feature) },
+                label = { Text("${feature.label} (${feature.bearerCode})") },
             )
-            OutlinedButton(onClick = viewModel::deleteCallTests) { Text("Delete these results") }
         }
     }
+    val feature = call.feature
+    Note(
+        "Both calls count only over ${feature.bearerPlain}, call network type ${feature.bearerCode}. " +
+            if (feature == T2Feature.VOWIFI) {
+                "For Wi-Fi calling, OCD's rules count a call only with airplane mode on and Wi-Fi on. Set that yourself " +
+                    "before each call; this app changes no setting."
+            } else {
+                "A call the phone places over Wi-Fi shows type 18 and counts for Wi-Fi calling, not VoLTE."
+            },
+    )
+    if (feature in call.toggled) Note("You turned ${feature.label} on in the switch step above; these calls are kept as user_toggle.")
+    call.concluded?.let { done ->
+        Text(
+            done.plain,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = if (done.passed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+        )
+        OutlinedButton(onClick = viewModel::newT2Test) { Text("Start a new T2 test") }
+        return
+    }
+    val assessment = call.session?.assessment
+    assessment?.let { Note(it.plain) }
+    Label("1. Outgoing call")
+    Bullet("Tap Start, then open your phone app and dial $mailbox yourself. Listen until the mailbox answers, hang up, come back and tap Stop.")
+    Button(
+        onClick = { viewModel.startCallWatch(CallDirection.OUTGOING) },
+        enabled = ready && call.phase == CallPhase.READY,
+    ) { Text("Start: outgoing call") }
+    Label("2. Incoming call")
+    Bullet(
+        "Tap Start, then call this phone from your second line. Answer it here yourself, check that both of you hear " +
+            "each other, hang up, come back and tap Stop. A call from a mailbox or voicemail does not count.",
+    )
+    Button(
+        onClick = { viewModel.startCallWatch(CallDirection.INCOMING) },
+        enabled = ready && call.phase == CallPhase.READY,
+    ) { Text("Start: incoming call") }
+    if (call.session != null) OutlinedButton(onClick = viewModel::newT2Test) { Text("Start over") }
+}
+
+@Composable
+private fun CallTestHistory(call: CallTestUi, viewModel: CheckViewModel) {
+    val log = call.log
+    if (log.tests.isEmpty() && log.t2.isEmpty() && log.toggles.isEmpty()) return
+    HorizontalDivider()
+    if (log.t2.isNotEmpty()) {
+        Label("T2 passed on this phone")
+        log.t2.asReversed().forEach { pass ->
+            Field(
+                "${pass.date} · ${pass.feature.label}",
+                pass.plain,
+                "${pass.spn ?: pass.homeMccMnc} · ${pass.model} · ${pass.romFamily} · Android ${pass.androidMajor} · ${pass.imsStack.replace('_', ' ')}",
+            )
+        }
+    }
+    if (log.tests.isNotEmpty()) {
+        Label("Calls on this phone")
+        log.tests.asReversed().forEach { test ->
+            val title = listOfNotNull(
+                test.date,
+                test.feature?.let { "T2 ${test.session} ${it.label}" },
+                if (test.intended == CallDirection.INCOMING) "incoming" else "${test.brand} ${test.mailbox}",
+            ).joinToString(" · ")
+            Field(title, test.plain, "${test.model} · ${test.romFamily} · Android ${test.androidMajor} · ${test.imsStack.replace('_', ' ')}")
+        }
+    }
+    if (log.toggles.isNotEmpty()) {
+        Label("Switch steps on this phone")
+        log.toggles.asReversed().forEach { toggle ->
+            Field("${toggle.date} · ${toggle.configOrigin.wire}", toggle.plain)
+        }
+    }
+    Note(
+        "Observed on this phone. T2 on one phone does not show that a feature works in general; OCD's tested layer " +
+            "also needs repeats and other people's reports, and a result never changes an OCD value.",
+    )
+    OutlinedButton(onClick = viewModel::deleteCallTests) { Text("Delete these results") }
 }
 
 @Composable
@@ -629,12 +823,25 @@ private fun LiveWatch(live: CallWatchSummary) {
 }
 
 @Composable
-private fun WatchResult(result: CallWatchSummary) {
+private fun WatchResult(result: CallWatchSummary, intended: CallDirection) {
     if (!result.connected) {
-        Note("No call was seen while the app watched (${result.samples} readings). Nothing to keep.")
+        val rang = if (result.ringingSeen) " The phone rang, but the call was not answered." else ""
+        Note("No call went off-hook while the app watched (${result.samples} readings).$rang Nothing to keep.")
         return
     }
-    Field("Direction", result.direction.plain + if (result.direction == CallDirection.INCOMING) " (not the mailbox test)" else "")
+    val mismatch = result.direction != CallDirection.UNKNOWN && result.direction != intended
+    Field("Direction", result.direction.plain + if (mismatch) " (not the call this step asked for)" else "")
+    if (intended == CallDirection.INCOMING) {
+        Field(
+            "The phone rang",
+            if (result.ringingSeen) "yes" else "no",
+            when (result.incomingIsMailbox) {
+                true -> "The incoming number was a mailbox short code, so this does not count as the incoming call."
+                false -> "The incoming number was not a mailbox short code. The number itself is never kept or shown."
+                null -> "The registry showed no incoming number to compare."
+            },
+        )
+    }
     Field(
         "Call network type",
         result.callNetworkType?.let { "$it, ${Radio.plain(it)}" } ?: "not reported by the phone",

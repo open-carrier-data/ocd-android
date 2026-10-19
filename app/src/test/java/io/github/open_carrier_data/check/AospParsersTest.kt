@@ -117,6 +117,12 @@ class AospParsersTest {
         assertEquals(ImsTransport.IWLAN, wifi.logTransport)
         assertEquals(listOf(ImsService.MMTEL, ImsService.SMSIP), wifi.services)
         assertEquals(true, wifi.wifiCallingByUser)
+        // The VoLTE switch (isEnhanced4gLteModeSettingEnabledByUser) is on for both phones in the lab's dump.
+        assertEquals(true, idle.volteByUser)
+        assertEquals(true, wifi.volteByUser)
+        val volteOff = phone.replaceFirst("isEnhanced4gLteModeSettingEnabledByUser = true", "isEnhanced4gLteModeSettingEnabledByUser = false")
+        assertEquals(false, AospImsParser.parse(lines(volteOff), slot0)!!.volteByUser)
+        assertNull(AospImsParser.parse(lines(phone.replace("isEnhanced4gLteModeSettingEnabledByUser", "somethingElse")), slot0)!!.volteByUser)
 
         assertNull(AospImsParser.parse(lines(phone), SimSlot.of(2)!!))
     }
@@ -323,6 +329,7 @@ class AospParsersTest {
         assertEquals(ImsTransport.IWLAN, ims.registrationLogTransport)
         assertEquals(listOf(ImsService.MMTEL, ImsService.SMSIP), ims.services)
         assertEquals(WifiCallingSwitch.ON, reading.wifiCallingSwitch)
+        assertEquals(true, reading.volteByUser)
         assertEquals(LteVops.SUPPORTED, reading.networkOffer!!.lteVops)
         assertEquals(EpdgName.DOES_NOT_RESOLVE, reading.epdgName)
         assertEquals(WifiResolver.LOCAL, reading.wifiResolver)

@@ -29,6 +29,8 @@ data class AospImsState(
     val lastDisconnect: ImsDisconnect?,
     /** The phone's own Wi-Fi calling switch (ImsManager isWfcEnabledByUser). */
     val wifiCallingByUser: Boolean?,
+    /** The phone's own VoLTE switch for this SIM (ImsManager isEnhanced4gLteModeSettingEnabledByUser). */
+    val volteByUser: Boolean? = null,
 )
 
 object AospImsParser {
@@ -44,6 +46,7 @@ object AospImsParser {
     private val CAPS = Regex("mMmTelCapabilities=MmTel Capabilities - \\[([^\\]]*)\\]")
     private val CAP = Regex("(\\w+): (true|false)")
     private val WFC_USER = Regex("\\bisWfcEnabledByUser = (true|false)\\b")
+    private val VOLTE_USER = Regex("\\bisEnhanced4gLteModeSettingEnabledByUser = (true|false)\\b")
     private val STATES = mapOf("0" to "not_registered", "1" to "registering", "2" to "registered")
 
     /**
@@ -64,6 +67,7 @@ object AospImsParser {
         var lastReason: ImsDisconnect? = null
         var caps: Map<String, Boolean>? = null
         var wfcUser: Boolean? = null
+        var volteUser: Boolean? = null
         for (line in lines) {
             if (HEADER.matches(line)) {
                 if (found) done = true
@@ -89,6 +93,7 @@ object AospImsParser {
                 }
             }
             if (wfcUser == null) WFC_USER.find(line)?.let { wfcUser = it.groupValues[1] == "true" }
+            if (volteUser == null) VOLTE_USER.find(line)?.let { volteUser = it.groupValues[1] == "true" }
             EVENT.find(line)?.let { lastEvent = it.groupValues[1] to it.groupValues[2] }
             REASON.find(line)?.let { match ->
                 lastReason = match.groupValues[1].toIntOrNull()?.takeIf(ImsDisconnect::validCode)?.let { code ->
@@ -127,6 +132,7 @@ object AospImsParser {
             services = services,
             lastDisconnect = lastReason,
             wifiCallingByUser = wfcUser,
+            volteByUser = volteUser,
         )
     }
 
@@ -182,14 +188,21 @@ object RegistryParser {
     private val CALL_NETWORK_TYPE = Regex("mCallNetworkType=(\\d+)")
     private val FOREGROUND = Regex("Foreground call state: (-?\\d+)")
     private val EMERGENCY_CALL = Regex("^\\s*mOutgoingCallEmergencyNumber=(.*)$")
+    private val INCOMING_NUMBER = Regex("mCallIncomingNumber=([^\\s,]*)")
+    private val NOT_DIGIT = Regex("\\D")
     private val ANY_PHONE = Regex("^\\s*Phone Id=\\d+\\s*$")
 
     /**
      * The `Phone Id=N` block of the "last known state" section: from that line
      * to the next Phone Id line or the next line that starts without a space.
      * Fields take their last value in the block. Null when there is no block.
+     *
+     * With [mailboxes] (short codes, digits only), the call sample says
+     * whether the registry's incoming number is one of them (lab
+     * `incoming_number_is`): digits compared, null when the registry shows
+     * none. The number itself never leaves this function.
      */
-    fun parse(lines: Sequence<String>, slot: SimSlot): RegistryPhone? {
+    fun parse(lines: Sequence<String>, slot: SimSlot, mailboxes: Set<String> = emptySet()): RegistryPhone? {
         val start = Regex("^\\s*Phone Id=${slot.index}\\s*$")
         var found = false
         var lte: String? = null
@@ -199,6 +212,8 @@ object RegistryParser {
         var callType: String? = null
         var foreground: String? = null
         var emergency: Int? = null
+        var incomingIsMailbox: Boolean? = null
+        val codes = mailboxes.map { NOT_DIGIT.replace(it, "") }.filter { it.isNotEmpty() }.toSet()
         for (line in lines) {
             if (!found) {
                 found = start.matches(line)
@@ -218,6 +233,13 @@ object RegistryParser {
             EMERGENCY_CALL.find(line)?.let { match ->
                 emergency = match.groupValues[1].trim().takeIf { it.isNotEmpty() && it != "null" }?.hashCode()
             }
+            // Compared here and dropped: only whether it is a mailbox short code is kept.
+            if (codes.isNotEmpty()) {
+                INCOMING_NUMBER.findAll(line).lastOrNull()?.let { match ->
+                    val digits = NOT_DIGIT.replace(match.groupValues[1], "")
+                    incomingIsMailbox = if (digits.isEmpty()) null else digits in codes
+                }
+            }
         }
         if (!found) return null
         return RegistryPhone(
@@ -230,6 +252,7 @@ object RegistryParser {
                 foreground = PreciseCallState.fromCode(foreground),
                 networkType = callType?.toIntOrNull(),
                 emergencyMark = emergency,
+                incomingIsMailbox = incomingIsMailbox,
             ),
         )
     }

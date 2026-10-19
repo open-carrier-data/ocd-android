@@ -33,6 +33,8 @@ class MainActivity : ComponentActivity() {
         // Coming back from the app's settings page with the permission changed, or from starting Shizuku.
         viewModel.refreshIfPermissionChanged()
         viewModel.refreshShizuku()
+        // Coming back from the guided switch step's Settings screen: read the phone again.
+        viewModel.backFromSettings()
     }
 }
 

@@ -195,6 +195,29 @@ class AllowlistTest {
     }
 
     @Test
+    fun `the call watch takes only mailbox short codes from the app, never other text`() {
+        assertEquals(setOf("5500", "333"), DeepCheckProtocol.mailboxCodes(listOf("5500", "333", "5500")))
+        for (bad in listOf("12", "1234567", "55 00", "5500;reboot", "+495500", "*100#", "", "５５００")) {
+            assertEquals(bad, emptySet<String>(), DeepCheckProtocol.mailboxCodes(listOf(bad)))
+        }
+        assertEquals(emptySet<String>(), DeepCheckProtocol.mailboxCodes(null))
+        assertEquals(32, DeepCheckProtocol.mailboxCodes((100..199).map { it.toString() }).size)
+    }
+
+    @Test
+    fun `the app never places, answers or ends a call, and opens no dial pad`() {
+        val banned = Regex(
+            "ACTION_CALL\\b|ACTION_DIAL|ACTION_CALL_PRIVILEGED|CALL_EMERGENCY|\"tel:|placeCall|acceptRingingCall|endCall|" +
+                "silenceRinger|KEYCODE_ENDCALL|KEYCODE_CALL|ACTION_ANSWER|setVoNrEnabled|setAdvancedCallingSettingEnabled|" +
+                "setVoWiFiSettingEnabled|Settings\\.(Global|System|Secure)\\.put",
+        )
+        for (file in mainSources) {
+            val hit = banned.find(file.readText())
+            assertNull("${file.name}: ${hit?.value}", hit)
+        }
+    }
+
+    @Test
     fun `the app uses only Shizuku's read and permission calls, never its binder or process paths`() {
         val allowed = setOf(
             "pingBinder", "getUid", "getVersion", "isPreV11", "checkSelfPermission", "requestPermission",
