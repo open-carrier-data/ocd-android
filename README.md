@@ -2,7 +2,7 @@
 
 OCD Check is an Android app that reads a phone's SIM, network and carrier settings and compares them with [Open Carrier Data](https://github.com/open-carrier-data/open-carrier-data) (OCD). It is read-only. It changes nothing on the phone, and it has no internet permission, so it cannot send anything.
 
-**Status: early and unpublished.** This is version 0.1.0: stage 2 of the plan (view only, normal app) plus stage 2b (the optional read-only Shizuku deep check). It first ran on a phone on 2026-10-13 (Galaxy A50, Android 14, LIDL Connect SIM), and it is not on any store. The JVM tests pass and the debug build assembles.
+**Status: early and unpublished.** This is version 0.1.0: stage 2 of the plan (view only, normal app) plus stage 2b (the optional read-only Shizuku deep check), and since OCD's round 17 the device records. It first ran on a phone on 2026-10-13 (Galaxy A50, Android 14, LIDL Connect SIM), and it is not on any store. The JVM tests pass and the debug build assembles. Only the owner's builds use it. That makes it a named consumer of OCD's data, not a public release. Its first public release fires OCD's trigger T1, and so does a public ROM that bundles it.
 
 ## What it does
 
@@ -61,6 +61,22 @@ The app never reads, stores, shows or reports the following. Most of them are al
 - anything emergency-related
 
 An emergency data connection is skipped, and the app never dials.
+
+## What it never does
+
+OCD's rule decisions of 2026-10-18 (round 18) allow passive checks only: with the phone's current settings, when you open the app or tap a check, shown on the phone. So the app never does the following:
+- write a setting, a CarrierConfig override or an APN row;
+- force or reset IMS;
+- try another setting to see whether it works;
+- switch the radio, Wi-Fi or airplane mode;
+- place a call, or bring up an MMS connection;
+- talk to the carrier's Wi-Fi calling server (ePDG). The deep check only looks up the server's name, and that lookup may send one ping;
+- send anything by itself, or run a check in the background. There is no telemetry and no server, and it opens no issue for you;
+- download data. OCD's data changes only with a new app release.
+
+Its results never become, withhold or rank an OCD value. A report can only start a review of OCD's sources. A ROM may bundle the app read-only; such a build may add only `READ_PRECISE_PHONE_STATE`.
+
+The owner's OCD Lab is a separate tool on a PC, in OCD's private repository (`tools/ocd_lab/`). It applies temporary CarrierConfig test overrides over ADB as root. It is not part of this app, and this app does none of it.
 
 ## What a normal app cannot see
 
@@ -210,6 +226,8 @@ The app does not open an issue on GitHub for you. Round 9 allows a prefilled `wr
 
 The bundle also records the source commit and its date. The app shows the data date and warns after `stale_after`.
 
+OCD's planned monthly releases, `data-YYYY.MM`, will support `lookup.json`, `metadata.json` and `carrier-variants.json` for apps (OCD's `docs/releases.md`). No release exists yet; the first is planned as `data-2026.11`. Until then the bundle comes from a `main` commit, which it records.
+
 The app shows the Limits text exactly as the data snapshot ships it. Nothing about an operator's services is hard-coded.
 
 To refresh the asset or check it:
@@ -240,7 +258,17 @@ Two differences from the resolver:
 
 The app writes nothing from a record into the phone. The findings codes are `device_record_<state>:<capability>` and `device_record_other_stack_<state>:<capability>`.
 
+OCD's round 22 lets a VoLTE, Wi-Fi calling or video calling summary read `supported` where its single-family off and at least one on are device records. Before the bundle is rebuilt from a publish with such labels, the finding for a `supported` value gets one more sentence when this model or other models have an `off` record: one maker's or maintainer's own files turn it off on some phone models. That change is planned, not built.
+
 The bundled data is OCD's. The OCD contributors waive their own rights in it under CC0 1.0; see OCD's `DATA-LICENSE.md`.
+
+## Planned
+
+These steps follow OCD's rule decisions. Each stays read-only and adds no permission.
+- **IMS state on other phones** (round 18). A reader for AOSP IMS stacks such as LineageOS, after the owner captures one redacted `dumpsys activity service com.android.phone` sample on the S20 with an active SIM. It keeps only the registration and its newest transport.
+- **A guided call test** (round 19). You place one outgoing call and receive one, never to or from an emergency number. The app never dials. It watches the call state, and in the deep check the call's network type from `dumpsys telephony.registry`; the parser drops numbers and cell fields at once. It discards a session in which an emergency call shows. Then it asks whether both sides heard each other. A measured outgoing and incoming call with confirmed audio is the evidence OCD's tested layer would count. Debug builds turn it into a ledger draft for the owner.
+
+Active verification, trying other settings on the phone, was rejected in round 18. Round 23, being judged on 2026-10-19, reconsiders it for the app. Until it rules, the app stays as described here.
 
 ## Build
 
