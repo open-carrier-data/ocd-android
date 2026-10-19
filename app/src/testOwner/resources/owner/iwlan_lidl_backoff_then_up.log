@@ -1,0 +1,15 @@
+  1783054055.933 12777 12952 D EpdgTunnelManager[0]: Backoff Timer: 14400
+  1783054055.937 12777 12952 E EpdgTunnelManager[0]: Closing tunnel: error: TYPE: IWLAN_IKE_PROTOCOL_EXCEPTION ERR: 10500
+  1783054055.997 12777 12952 D EpdgTunnelManager[0]: Tunnel Closed: TYPE: IWLAN_IKE_PROTOCOL_EXCEPTION ERR: 10500
+  1783054055.998 12777 12952 D IwlanDataService[0]: Tunnel closed! APN: ims, Error: TYPE: IWLAN_IKE_PROTOCOL_EXCEPTION ERR: 10500
+  1783054055.999 12777 12818 D IwlanDataService[0]: Delivering callbackType:1 result:0 rsp:DataCallResponse: { cause=IWLAN_NETWORK_FAILURE(0x2904) retry=14399998 cid=104399 linkStatus=0 protocolType=2 ifname= addresses=<cut>
+  1783054056.007 12919 12919 D QnsTelephonyListener_0: onPreciseDataConnectionStateChanged state: state: DISCONNECTED, transport: WLAN, id: -1, netId: 115, network type: IWLAN, APN Setting: [ApnSetting] DEFAULT IMS, 0, null, ims, null, null, null, null, null, 0, ims, IPV4V6, IPV4V6, true, 0, false, 0, 0, 0, 0, 0, null, null, false, UNKNOWN, UNKNOWN, -1, -1, -1, false, 3, 961, false, UNEDITED, link properties: <cut>
+  1783054068.479 12777 12952 D EpdgTunnelManager[0]: Cannot bring up tunnel as retry time has not passed
+  1783054068.479 12777 12952 D IwlanDataService[0]: Tunnel closed! APN: ims, Error: TYPE: IWLAN_IKE_PROTOCOL_EXCEPTION ERR: 10500
+  1783054068.480 12777 12818 D IwlanDataService[0]: Delivering callbackType:1 result:0 rsp:DataCallResponse: { cause=IWLAN_NETWORK_FAILURE(0x2904) retry=14387517 cid=104399 linkStatus=0 protocolType=2 ifname= addresses=<cut>
+  1783054068.525 12919 12919 D QnsTelephonyListener_0: onPreciseDataConnectionStateChanged state: state: DISCONNECTED, transport: WLAN, id: -1, netId: 116, network type: IWLAN, APN Setting: [ApnSetting] DEFAULT IMS, 0, null, ims, null, null, null, null, null, 0, ims, IPV4V6, IPV4V6, true, 0, false, 0, 0, 0, 0, 0, null, null, false, UNKNOWN, UNKNOWN, -1, -1, -1, false, 3, 961, false, UNEDITED, link properties: <cut>
+  1783054129.522 12777 12952 D EpdgTunnelManager[0]: Cannot bring up tunnel as retry time has not passed
+  1783054129.522 12777 12952 D IwlanDataService[0]: Tunnel closed! APN: ims, Error: TYPE: IWLAN_IKE_PROTOCOL_EXCEPTION ERR: 10500
+  1783054129.523 12777 12818 D IwlanDataService[0]: Delivering callbackType:1 result:0 rsp:DataCallResponse: { cause=IWLAN_NETWORK_FAILURE(0x2904) retry=14326475 cid=104399 linkStatus=0 protocolType=2 ifname= addresses=<cut>
+  1783054129.543 12919 12919 D QnsTelephonyListener_0: onPreciseDataConnectionStateChanged state: state: CONNECTED, transport: WWAN, id: 1, netId: 118, network type: LTE, APN Setting: [ApnSetting] DEFAULT IMS, 0, null, ims, null, null, null, null, null, 0, ims, IPV4V6, IPV4V6, true, 0, false, 0, 0, 0, 0, 0, null, null, false, UNKNOWN, UNKNOWN, -1, -1, -1, false, 3, 961, false, UNEDITED, link properties: <cut>
+  1783083477.639 17844 17861 D IwlanDataService[0]: Tunnel opened! APN: ims, linkProperties: <cut>

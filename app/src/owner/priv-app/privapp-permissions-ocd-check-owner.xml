@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    OCD Check owner build as a privileged system app (the owner's target form, 2026-10-19).
+    Install to /system/etc/permissions/ (or /product/etc/permissions/ for a /product/priv-app
+    install), next to the APK in /system/priv-app/OcdCheckOwner/ (or /product/priv-app/).
+    Only for the owner's own ROM; never for a ROM anyone else runs (round 25 OB1, AV2).
+
+    MODIFY_PHONE_STATE: CarrierConfigManager.overrideConfig(subId, bundle), never persistent.
+    READ_PRIVILEGED_PHONE_STATE: subscription and carrier state for the refusals.
+    WRITE_APN_SETTINGS: the APN trials and their revert.
+    DUMP: dumpsys carrier_config, telephony.registry and the phone service, read for the
+          refusals, the evidence and the revert proof.
+    READ_LOGS: the IWLAN tags of logcat, dumped and never cleared (Wi-Fi calling back-off).
+-->
+<permissions>
+    <privapp-permissions package="io.github.open_carrier_data.check.owner">
+        <permission name="android.permission.MODIFY_PHONE_STATE" />
+        <permission name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
+        <permission name="android.permission.WRITE_APN_SETTINGS" />
+        <permission name="android.permission.DUMP" />
+        <permission name="android.permission.READ_LOGS" />
+    </privapp-permissions>
+</permissions>
