@@ -9,6 +9,8 @@ import io.github.open_carrier_data.check.core.CallTargets
 import io.github.open_carrier_data.check.core.CallTargetsFile
 import io.github.open_carrier_data.check.core.CallTestLog
 import io.github.open_carrier_data.check.core.CallTestRecord
+import io.github.open_carrier_data.check.core.T2Record
+import io.github.open_carrier_data.check.core.UserToggleRecord
 import java.io.File
 
 /**
@@ -42,17 +44,24 @@ class CallTestPhone(private val context: Context) {
 }
 
 /**
- * Finished call tests, in the app's private files on this phone. The app
- * has no backup (allowBackup is false) and no internet permission, so the
- * file never leaves the phone; deleting the app or tapping Delete removes it.
+ * Finished call tests, T2 passes and guided switch steps, in the app's
+ * private files on this phone. The app has no backup (allowBackup is false)
+ * and no internet permission, so the file never leaves the phone; deleting
+ * the app or tapping Delete removes it.
  */
 class CallTestStore(context: Context) {
     private val file = File(context.filesDir, "call-tests.json")
 
     fun load(): CallTestLog = runCatching { CallTestLog.decode(file.readText()) }.getOrDefault(CallTestLog())
 
-    fun add(record: CallTestRecord): CallTestLog {
-        val log = load().plus(record)
+    fun add(record: CallTestRecord): CallTestLog = update { it.plus(record) }
+
+    fun add(record: T2Record): CallTestLog = update { it.plus(record) }
+
+    fun add(record: UserToggleRecord): CallTestLog = update { it.plus(record) }
+
+    private fun update(change: (CallTestLog) -> CallTestLog): CallTestLog {
+        val log = change(load())
         write(log)
         return log
     }

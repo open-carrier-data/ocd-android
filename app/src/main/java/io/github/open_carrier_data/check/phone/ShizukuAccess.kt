@@ -86,12 +86,16 @@ class ShizukuAccess(private val context: Context) {
     /**
      * Starts the guided call test's watch for [slot] in a service process of
      * its own, so a deep check cannot stop it. The watch runs until
-     * [CallWatchSession.stop]; it only reads the registry and never touches a call.
+     * [CallWatchSession.stop]; it only reads the registry and never touches a
+     * call. [mailboxes] are the short codes an incoming number is compared
+     * with inside the service; the number itself never comes back.
      */
-    suspend fun startCallWatch(slot: SimSlot): CallWatchSession? {
+    suspend fun startCallWatch(slot: SimSlot, mailboxes: List<String>): CallWatchSession? {
         if (!status().ready) return null
         val bound = bind(args("callwatch")) ?: return null
-        val started = runCatching { withContext(Dispatchers.IO) { DeepCheckProtocol.watchStart(bound.binder, slot) } }.getOrDefault(false)
+        val started = runCatching {
+            withContext(Dispatchers.IO) { DeepCheckProtocol.watchStart(bound.binder, slot, mailboxes) }
+        }.getOrDefault(false)
         if (!started) {
             bound.unbind()
             return null

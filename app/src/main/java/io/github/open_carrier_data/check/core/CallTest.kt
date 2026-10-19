@@ -7,13 +7,16 @@ import kotlinx.serialization.json.Json
 /*
  * The guided call test (OCD round 19, first steps, item 3): read-only and
  * allowlisted. The app shows the SIM's own mailbox number from a bundled
- * copy of OCD Lab's call_targets.json and asks the person to dial it. The
- * app never places, answers or ends a call. While the call runs, the deep
- * check's process reads the call state and the call network type
- * (mCallNetworkType: 18 IWLAN, 13 LTE, 20 NR) from the registry once a
- * second. The person then says whether they heard the mailbox. Results stay
- * on the phone, apart from the report: round 19 keeps such results as a
- * separate observed status, and nothing here uploads.
+ * copy of OCD Lab's call_targets.json and asks the person to dial it, and
+ * asks them to call this phone from their second line. The app never
+ * places, answers or ends a call. While a call runs, the deep check's
+ * process reads the call state and the call network type (mCallNetworkType:
+ * 18 IWLAN, 13 LTE, 20 NR) from the registry once a second; for an incoming
+ * call it also notes whether the incoming number is a mailbox short code,
+ * compared inside the parser. The person then says whether the audio
+ * worked and, for the incoming call, whether it came from their second
+ * line. Results stay on the phone, apart from the report: round 19 keeps
+ * such results as a separate observed status, and nothing here uploads.
  */
 
 /** OCD Lab's call_targets.json, bundled as assets/call-targets.json. */
@@ -70,6 +73,13 @@ object CallTargets {
     private val json = Json { ignoreUnknownKeys = false }
 
     fun parse(text: String): CallTargetsFile = json.decodeFromString(CallTargetsFile.serializer(), text)
+
+    /**
+     * Every mailbox short code in the table (lab `allowed_mailboxes`): an
+     * incoming call from one of them never counts as the incoming call.
+     */
+    fun allMailboxes(file: CallTargetsFile): List<String> =
+        (file.bySpn.map { it.mailbox } + file.byMccMnc.values.map { it.mailbox }).distinct().sorted()
 
     /** True when [number] may be shown as a mailbox: shape, no emergency or service number. */
     fun safe(number: String, isEmergency: (String) -> Boolean): Boolean =
@@ -159,6 +169,12 @@ data class CallSample(
      * call was placed, and the watch is then discarded.
      */
     val emergencyMark: Int? = null,
+    /**
+     * Whether the registry's incoming number is one of the mailbox short codes
+     * the watch was given; null when it shows none. The number itself is
+     * compared in [RegistryParser] and never kept (lab `incoming_number_is`).
+     */
+    val incomingIsMailbox: Boolean? = null,
 )
 
 /** The call bearer a call network type stands for (lab CALL_BEARERS); 2G and 3G types are a circuit-switched call. */
@@ -201,6 +217,10 @@ data class CallWatchSummary(
     /** How many times the phone went from idle to a call. */
     val callsSeen: Int = 0,
     val direction: CallDirection = CallDirection.UNKNOWN,
+    /** mCallState showed RINGING: an incoming call (lab `ringing_seen`). An outgoing call goes from idle straight to off-hook. */
+    val ringingSeen: Boolean = false,
+    /** The incoming number was a mailbox short code at some reading (lab `incoming_is_mailbox`); null when no incoming number showed. */
+    val incomingIsMailbox: Boolean? = null,
     /** The call went off-hook (lab "connected"). */
     val connected: Boolean = false,
     val wentActive: Boolean = false,
@@ -242,6 +262,8 @@ class CallWatch {
     private var emergencyAtStart: Int? = null
     private var emergencyRead = false
     private var emergencySeen = false
+    private var mailboxReadings = 0
+    private var mailboxSeen = false
 
     @Synchronized
     fun add(sample: CallSample?) {
@@ -259,6 +281,10 @@ class CallWatch {
         }
         if (first == null) first = state
         states += state
+        sample.incomingIsMailbox?.let {
+            mailboxReadings++
+            if (it) mailboxSeen = true
+        }
         sample.foreground?.let { foreground += it }
         if (state != CallState.IDLE && (previous == null || previous == CallState.IDLE)) calls++
         previous = state
@@ -299,6 +325,8 @@ class CallWatch {
             startedIdle = startedIdle,
             callsSeen = calls,
             direction = direction,
+            ringingSeen = CallState.RINGING in states,
+            incomingIsMailbox = if (mailboxReadings > 0) mailboxSeen else null,
             connected = connected,
             wentActive = PreciseCallState.ACTIVE in foreground,
             callNetworkTypes = types.toList(),
@@ -310,12 +338,32 @@ class CallWatch {
     }
 }
 
-/** The person's answer after the call. */
+/**
+ * The person's answer on audio after the call: for the outgoing call
+ * whether they heard the mailbox, for the incoming call whether both sides
+ * heard each other (lab `audio_ok`).
+ */
 @Serializable
-enum class HeardMailbox(val wire: String, val plain: String) {
-    YES("yes", "you heard the mailbox"),
-    NO("no", "you did not hear the mailbox"),
-    NOT_SURE("not_sure", "you were not sure"),
+enum class AudioAnswer(val wire: String, private val outgoing: String, private val incoming: String) {
+    YES("yes", "you heard the mailbox", "both of you heard each other"),
+    NO("no", "you did not hear the mailbox", "you did not both hear each other"),
+    NOT_SURE("not_sure", "you were not sure", "you were not sure about the audio");
+
+    fun plain(intended: CallDirection?): String = if (intended == CallDirection.INCOMING) incoming else outgoing
+}
+
+/**
+ * Where the phone's settings came from during a call test: as the app found
+ * them, or turned on by the person in the guided switch step (round 23 AP3).
+ * Stored as OCD's ledger names it (`config_origin.origin: user_toggle`).
+ */
+@Serializable
+enum class ConfigOrigin(val wire: String) {
+    @SerialName("as_found")
+    AS_FOUND("as_found"),
+
+    @SerialName("user_toggle")
+    USER_TOGGLE("user_toggle"),
 }
 
 /**
@@ -336,12 +384,23 @@ data class CallTestRecord(
     val homeMccMnc: String?,
     val spn: String?,
     val ocdProfile: String?,
+    /** The SIM's mailbox brand and short code: the number of the outgoing call, never an incoming one. */
     val brand: String,
     val mailbox: String,
     val watch: CallWatchSummary,
     val airplaneModeAtStart: Boolean?,
     val wifiAtStart: Boolean?,
-    val heard: HeardMailbox,
+    /** The audio answer; for the outgoing call whether the mailbox was heard. */
+    val heard: AudioAnswer,
+    /** The call the person was asked to make: outgoing to the mailbox, or incoming from their second line. Null in tests kept before T2. */
+    val intended: CallDirection? = null,
+    /** The feature a T2 test was for (round 23 LB3, round 19 T2); null in tests kept before T2. */
+    val feature: T2Feature? = null,
+    /** The T2 test this call belongs to, counted per phone. */
+    val session: Int? = null,
+    /** Incoming call only: the person confirmed it came from their second line (not a mailbox, voicemail or service number). */
+    val secondLine: Boolean? = null,
+    val configOrigin: ConfigOrigin = ConfigOrigin.AS_FOUND,
 ) {
     /** What was measured, in plain words; never "works". */
     val plain: String
@@ -350,6 +409,7 @@ data class CallTestRecord(
                 when {
                     !watch.connected -> "No call was seen while the app watched"
                     watch.direction == CallDirection.OUTGOING -> "An outgoing call"
+                    watch.direction == CallDirection.INCOMING && intended == CallDirection.INCOMING -> "An incoming call"
                     watch.direction == CallDirection.INCOMING -> "An incoming call (not the mailbox test)"
                     else -> "A call of unknown direction"
                 },
@@ -365,7 +425,20 @@ data class CallTestRecord(
                 )
                 append(if (watch.wentActive) ", went active" else ", did not go active")
             }
-            append("; ").append(heard.plain).append('.')
+            append("; ").append(heard.plain(intended))
+            if (intended == CallDirection.INCOMING) {
+                append(
+                    when (secondLine) {
+                        true -> "; you said it came from your second line"
+                        false -> "; you said it did not come from your second line"
+                        null -> ""
+                    },
+                )
+            }
+            append('.')
+            if (intended == CallDirection.INCOMING && watch.incomingIsMailbox == true) {
+                append(" The incoming number was a mailbox short code, so it does not count as the incoming call.")
+            }
             if (watch.callsSeen > 1) append(" ${watch.callsSeen} calls were seen during the watch.")
             if (watch.bearer == CallBearer.VOWIFI && airplaneModeAtStart != true) {
                 append(" Airplane mode was off, so for Wi-Fi calling this is not the airplane-mode test round 19 asks for.")
@@ -375,23 +448,45 @@ data class CallTestRecord(
     /** The test round 19's evidence needs: an outgoing call with a measured IMS call type and the person's yes. */
     val measuredOutgoing: Boolean
         get() = watch.direction == CallDirection.OUTGOING && watch.wentActive &&
-            watch.bearer?.capability != null && heard == HeardMailbox.YES
+            watch.bearer?.capability != null && heard == AudioAnswer.YES
 }
 
-/** The stored call tests, newest last. */
+/**
+ * The stored call tests, T2 results and switch steps, newest last. Version 2
+ * adds the incoming call, T2 and the guided switch step; a version 1 file
+ * reads as version 2 with those empty.
+ */
 @Serializable
-data class CallTestLog(val schema: String = SCHEMA, val tests: List<CallTestRecord> = emptyList()) {
+data class CallTestLog(
+    val schema: String = SCHEMA,
+    val tests: List<CallTestRecord> = emptyList(),
+    /** Features that passed T2 on this phone (round 23 LB3); only passes are kept. */
+    val t2: List<T2Record> = emptyList(),
+    /** Guided switch steps (round 23 AP3): what the person did in Settings, and the readings before and after. */
+    val toggles: List<UserToggleRecord> = emptyList(),
+) {
     fun plus(record: CallTestRecord): CallTestLog = copy(tests = (tests + record).takeLast(MAX))
+
+    fun plus(record: T2Record): CallTestLog = copy(t2 = (t2 + record).takeLast(MAX))
+
+    fun plus(record: UserToggleRecord): CallTestLog = copy(toggles = (toggles + record).takeLast(MAX))
+
+    /** A number for the next T2 test, one above any kept. */
+    fun nextSession(): Int = (tests.mapNotNull { it.session } + t2.map { it.session }).maxOrNull()?.plus(1) ?: 1
 
     fun encode(): String = wire.encodeToString(serializer(), this)
 
     companion object {
-        const val SCHEMA = "ocd-check-call-tests.v1"
+        const val SCHEMA = "ocd-check-call-tests.v2"
+        private const val SCHEMA_V1 = "ocd-check-call-tests.v1"
         const val MAX = 50
         private val wire = Json { encodeDefaults = true }
 
         /** An unreadable or foreign file gives an empty log, never a crash. */
         fun decode(text: String): CallTestLog =
-            runCatching { wire.decodeFromString(serializer(), text) }.getOrNull()?.takeIf { it.schema == SCHEMA } ?: CallTestLog()
+            runCatching { wire.decodeFromString(serializer(), text) }.getOrNull()
+                ?.takeIf { it.schema == SCHEMA || it.schema == SCHEMA_V1 }
+                ?.copy(schema = SCHEMA)
+                ?: CallTestLog()
     }
 }

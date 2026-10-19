@@ -27,7 +27,7 @@ internal object DeepCheckProtocol {
     const val DESCRIPTOR = "io.github.open_carrier_data.check.DeepCheck"
     const val RUN = IBinder.FIRST_CALL_TRANSACTION
 
-    /** Start watching one slot's call state (the guided call test). */
+    /** Start watching one slot's call state (the guided call test), with the mailbox short codes an incoming number is compared with. */
     const val WATCH_START = IBinder.FIRST_CALL_TRANSACTION + 1
 
     /** The watch so far, without stopping it. */
@@ -46,8 +46,18 @@ internal object DeepCheckProtocol {
             writeString(target.home?.mccmnc)
         }) { readString() }
 
-    fun watchStart(binder: IBinder, slot: SimSlot): Boolean =
-        transact(binder, WATCH_START, { writeInt(slot.index) }) { readInt() == 1 }
+    fun watchStart(binder: IBinder, slot: SimSlot, mailboxes: List<String>): Boolean =
+        transact(binder, WATCH_START, {
+            writeInt(slot.index)
+            writeStringList(mailboxes)
+        }) { readInt() == 1 }
+
+    /** Mailbox short codes: 3 to 6 ASCII digits each, at most [MAX_MAILBOXES]. Anything else is dropped. */
+    fun mailboxCodes(codes: List<String>?): Set<String> =
+        codes.orEmpty().filter(MAILBOX_SHAPE::matches).take(MAX_MAILBOXES).toSet()
+
+    private val MAILBOX_SHAPE = Regex("[0-9]{3,6}")
+    private const val MAX_MAILBOXES = 32
 
     fun watchRead(binder: IBinder): CallWatchSummary? =
         transact(binder, WATCH_READ, {}) { readString() }?.let(CallWatchSummary::decode)
@@ -89,7 +99,9 @@ class DeepCheckService : Binder() {
         }
         DeepCheckProtocol.WATCH_START -> {
             data.enforceInterface(DeepCheckProtocol.DESCRIPTOR)
-            val started = SimSlot.of(data.readInt())?.let(CallWatcher::start) ?: false
+            val slot = SimSlot.of(data.readInt())
+            val mailboxes = DeepCheckProtocol.mailboxCodes(data.createStringArrayList())
+            val started = slot?.let { CallWatcher.start(it, mailboxes) } ?: false
             reply?.writeNoException()
             reply?.writeInt(if (started) 1 else 0)
             true
@@ -111,6 +123,8 @@ class DeepCheckService : Binder() {
  * registry once a second for one slot and keeps only [CallWatch]'s counts.
  * It runs here, not in the app, so it keeps going while the person is in the
  * phone app and this app sits in the background. It never touches a call.
+ * The incoming number is compared with the mailbox short codes inside
+ * [RegistryParser]; only whether it is one of them reaches [CallWatch].
  */
 internal object CallWatcher {
     private const val INTERVAL_MS = 1_000L
@@ -123,7 +137,7 @@ internal object CallWatcher {
     private var stopping = false
 
     @Synchronized
-    fun start(slot: SimSlot): Boolean {
+    fun start(slot: SimSlot, mailboxes: Set<String>): Boolean {
         if (thread?.isAlive == true) return false
         val current = CallWatch()
         val target = DeepCheckTarget(slot, null)
@@ -136,7 +150,7 @@ internal object CallWatcher {
                     current.markStoppedByLimit()
                     break
                 }
-                current.add(ProcessRunner.run(ShellCommand.TELEPHONY_REGISTRY, target) { RegistryParser.parse(it, slot)?.call })
+                current.add(ProcessRunner.run(ShellCommand.TELEPHONY_REGISTRY, target) { RegistryParser.parse(it, slot, mailboxes)?.call })
                 try {
                     Thread.sleep(INTERVAL_MS)
                 } catch (_: InterruptedException) {

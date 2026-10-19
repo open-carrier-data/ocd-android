@@ -344,6 +344,12 @@ data class DeepCheckReading(
     val iwlan: IwlanReading? = null,
     /** The class of the Wi-Fi's DNS resolver; null when not checked. */
     val wifiResolver: WifiResolver? = null,
+    /**
+     * Android's IMS only: the phone's own VoLTE switch for this SIM
+     * (isEnhanced4gLteModeSettingEnabledByUser); null on Samsung's IMS or when
+     * the dump does not print it. Used by the guided switch step, not in the report.
+     */
+    val volteByUser: Boolean? = null,
 ) {
     fun encode(): String = wire.encodeToString(serializer(), this)
 
@@ -369,6 +375,7 @@ object DeepCheck {
         val registry = runner.run(ShellCommand.TELEPHONY_REGISTRY, target) { lines -> Optional(RegistryParser.parse(lines, target.slot)) }
         var ims = samsung
         var iwlan: IwlanReading? = null
+        var volteByUser: Boolean? = null
         val switch = when (samsung.source) {
             ImsSource.SAMSUNG -> runner.run(ShellCommand.WIFI_CALLING_SWITCH, target, WifiCallingSwitchParser::parse)
                 ?: WifiCallingSwitch.UNREADABLE
@@ -377,6 +384,7 @@ object DeepCheck {
                 val aosp = runner.run(ShellCommand.AOSP_IMS, target) { lines -> Optional(AospImsParser.parse(lines, target.slot)) }
                 ims = AospImsParser.reading(aosp?.value, registry?.value, dumpRead = aosp != null)
                 iwlan = runner.run(ShellCommand.IWLAN_LOG, target) { IwlanLogParser.parse(it, target.home?.epdgFqdn, now()) }
+                volteByUser = aosp?.value?.volteByUser
                 when (aosp?.value?.wifiCallingByUser) {
                     true -> WifiCallingSwitch.ON
                     false -> WifiCallingSwitch.OFF
@@ -400,6 +408,7 @@ object DeepCheck {
             networkOffer = registry?.value?.let { NetworkOffer(it.lteVops, it.nrVops) },
             iwlan = iwlan,
             wifiResolver = resolver,
+            volteByUser = volteByUser,
         )
     }
 

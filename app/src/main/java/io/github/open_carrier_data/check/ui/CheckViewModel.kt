@@ -4,24 +4,36 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.open_carrier_data.check.BuildConfig
+import io.github.open_carrier_data.check.core.AudioAnswer
+import io.github.open_carrier_data.check.core.CallDirection
 import io.github.open_carrier_data.check.core.CallTargets
 import io.github.open_carrier_data.check.core.CallTestLog
 import io.github.open_carrier_data.check.core.CallTestRecord
 import io.github.open_carrier_data.check.core.CallWatchSummary
+import io.github.open_carrier_data.check.core.ConfigOrigin
 import io.github.open_carrier_data.check.core.DeepCheckTarget
 import io.github.open_carrier_data.check.core.Finding
 import io.github.open_carrier_data.check.core.Findings
-import io.github.open_carrier_data.check.core.HeardMailbox
 import io.github.open_carrier_data.check.core.HomeNetwork
 import io.github.open_carrier_data.check.core.ImsSource
 import io.github.open_carrier_data.check.core.Mailbox
 import io.github.open_carrier_data.check.core.Matcher
 import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.PhoneReadings
+import io.github.open_carrier_data.check.core.PhoneSwitches
 import io.github.open_carrier_data.check.core.Report
 import io.github.open_carrier_data.check.core.ReportResult
 import io.github.open_carrier_data.check.core.Resolution
+import io.github.open_carrier_data.check.core.SettingsScreen
 import io.github.open_carrier_data.check.core.SimSlot
+import io.github.open_carrier_data.check.core.SwitchStep
+import io.github.open_carrier_data.check.core.SwitchSteps
+import io.github.open_carrier_data.check.core.T2
+import io.github.open_carrier_data.check.core.T2Assessment
+import io.github.open_carrier_data.check.core.T2Feature
+import io.github.open_carrier_data.check.core.T2Record
+import io.github.open_carrier_data.check.core.ToggleAnswer
+import io.github.open_carrier_data.check.core.UserToggleRecord
 import io.github.open_carrier_data.check.phone.CallTestPhone
 import io.github.open_carrier_data.check.phone.CallTestStore
 import io.github.open_carrier_data.check.phone.PhoneReader
@@ -58,6 +70,7 @@ data class UiState(
     val deepRunning: Boolean = false,
     val deepProblem: String? = null,
     val call: CallTestUi = CallTestUi(),
+    val switches: SwitchUi = SwitchUi(),
 ) {
     /** What the deep check would run for: the selected SIM's slot and home network. */
     val deepTarget: DeepCheckTarget?
@@ -71,18 +84,55 @@ data class UiState(
 /** Where the guided call test stands. */
 enum class CallPhase { READY, STARTING, WATCHING, STOPPING, ASK, DISCARDED }
 
+/** One T2 test under way: its number, the feature, where the settings came from, and its calls so far. */
+data class T2Session(val number: Int, val feature: T2Feature, val configOrigin: ConfigOrigin, val calls: List<CallTestRecord> = emptyList()) {
+    val assessment: T2Assessment get() = T2.assess(feature, calls)
+}
+
 data class CallTestUi(
     /** This SIM's mailbox from the bundled table, or null: then no test is offered. */
     val mailbox: Mailbox? = null,
+    /** The feature the T2 test is for (round 23 LB3: 13 LTE for VoLTE, 18 IWLAN for Wi-Fi calling). */
+    val feature: T2Feature = T2Feature.VOLTE,
+    /** Features the person turned on in the guided switch step for this SIM; their tests record `user_toggle`. */
+    val toggled: Set<T2Feature> = emptySet(),
+    val session: T2Session? = null,
+    /** The last T2 test that passed or failed, shown until a new one starts. */
+    val concluded: T2Assessment? = null,
+    /** The call the person was asked to make: outgoing to the mailbox or incoming from their second line. */
+    val intended: CallDirection = CallDirection.OUTGOING,
     val phase: CallPhase = CallPhase.READY,
     /** The watch so far, read once a second while the app is in front. */
     val live: CallWatchSummary? = null,
     /** What the stopped watch saw, until the person answers. */
     val result: CallWatchSummary? = null,
+    /** The incoming call's audio answer, until the second-line question is answered. */
+    val pendingAudio: AudioAnswer? = null,
     val airplaneAtStart: Boolean? = null,
     val wifiAtStart: Boolean? = null,
     val problem: String? = null,
     val log: CallTestLog = CallTestLog(),
+)
+
+/** Where the guided switch step stands (round 23 AP3). */
+enum class TogglePhase { IN_SETTINGS, REREADING, ASK }
+
+data class ToggleUi(
+    val step: SwitchStep,
+    val screen: SettingsScreen,
+    /** The deep check had results before Settings, so the re-read runs it again. */
+    val deepBefore: Boolean,
+    val phase: TogglePhase = TogglePhase.IN_SETTINGS,
+    val after: PhoneSwitches? = null,
+)
+
+data class SwitchUi(
+    /** VoLTE and Wi-Fi calling where OCD's value for this phone is on and the phone has them off. */
+    val offered: List<SwitchStep> = emptyList(),
+    val toggle: ToggleUi? = null,
+    /** The last kept step, shown until the next one. */
+    val last: UserToggleRecord? = null,
+    val problem: String? = null,
 )
 
 class CheckViewModel(application: Application) : AndroidViewModel(application) {
@@ -127,72 +177,76 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Runs the deep check for the readings on screen and adds its results to them. */
     fun runDeepCheck() {
+        viewModelScope.launch { deepCheck() }
+    }
+
+    private suspend fun deepCheck() {
         val start = _state.value
         val readings = start.readings ?: return
         val bundle = start.bundle ?: return
         val target = start.deepTarget ?: return
         if (start.deepRunning) return
-        viewModelScope.launch {
-            _state.update { it.copy(deepRunning = true, deepProblem = null) }
-            val deep = try {
-                shizuku.run(target)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                null
-            }
-            val status = if (deep == null) shizuku.status() else null
-            _state.update { current ->
-                when {
-                    // A new check replaced the readings meanwhile; this result belongs to the old ones.
-                    current.readings !== readings -> current.copy(deepRunning = false)
-                    deep == null -> current.copy(
+        _state.update { it.copy(deepRunning = true, deepProblem = null) }
+        val deep = try {
+            shizuku.run(target)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+        val status = if (deep == null) shizuku.status() else null
+        _state.update { current ->
+            when {
+                // A new check replaced the readings meanwhile; this result belongs to the old ones.
+                current.readings !== readings -> current.copy(deepRunning = false)
+                deep == null -> current.copy(
+                    deepRunning = false,
+                    deepProblem = "The deep check gave no answer. Check that Shizuku is running and try again.",
+                    shizuku = status,
+                )
+                else -> {
+                    val updated = readings.copy(deep = deep)
+                    current.copy(
                         deepRunning = false,
-                        deepProblem = "The deep check gave no answer. Check that Shizuku is running and try again.",
-                        shizuku = status,
-                    )
-                    else -> {
-                        val updated = readings.copy(deep = deep)
-                        current.copy(
-                            deepRunning = false,
-                            readings = updated,
-                            findings = Findings.compare(updated, current.resolution, bundle),
-                        ).withReport()
-                    }
+                        readings = updated,
+                        findings = Findings.compare(updated, current.resolution, bundle),
+                    ).withReport().withSwitchSteps()
                 }
             }
         }
     }
 
     fun refresh() {
-        viewModelScope.launch {
-            _state.update { it.copy(loading = true, permissionGranted = reader.hasPhonePermission(), deepProblem = null) }
-            val bundle = _state.value.bundle ?: loadBundle() ?: return@launch
-            val sims = reader.simChoices()
-            val selected = _state.value.selectedSubId?.takeIf { id -> sims.any { it.subId == id } }
-                ?: sims.firstOrNull()?.subId
-            val readings = reader.read(selected)
-            val resolution = withContext(Dispatchers.Default) {
-                readings.sim?.identity()?.let { Matcher.resolve(bundle, it) }
-            }
-            val findings = Findings.compare(readings, resolution, bundle)
-            val mailbox = withContext(Dispatchers.IO) {
-                val sim = readings.sim
-                callTargets?.takeIf { sim != null }?.let { CallTargets.mailboxFor(it, sim!!.homeMccMnc, sim.spn, callPhone::isEmergency) }
-            }
-            _state.update {
-                it.copy(
-                    call = it.call.copy(mailbox = mailbox),
-                    loading = false,
-                    bundle = bundle,
-                    permissionGranted = readings.permissionGranted,
-                    sims = sims,
-                    selectedSubId = selected,
-                    readings = readings,
-                    resolution = resolution,
-                    findings = findings,
-                ).withReport()
-            }
+        viewModelScope.launch { reload() }
+    }
+
+    private suspend fun reload() {
+        _state.update { it.copy(loading = true, permissionGranted = reader.hasPhonePermission(), deepProblem = null) }
+        val bundle = _state.value.bundle ?: loadBundle() ?: return
+        val sims = reader.simChoices()
+        val selected = _state.value.selectedSubId?.takeIf { id -> sims.any { it.subId == id } }
+            ?: sims.firstOrNull()?.subId
+        val readings = reader.read(selected)
+        val resolution = withContext(Dispatchers.Default) {
+            readings.sim?.identity()?.let { Matcher.resolve(bundle, it) }
+        }
+        val findings = Findings.compare(readings, resolution, bundle)
+        val mailbox = withContext(Dispatchers.IO) {
+            val sim = readings.sim
+            callTargets?.takeIf { sim != null }?.let { CallTargets.mailboxFor(it, sim!!.homeMccMnc, sim.spn, callPhone::isEmergency) }
+        }
+        _state.update {
+            it.copy(
+                call = it.call.copy(mailbox = mailbox),
+                loading = false,
+                bundle = bundle,
+                permissionGranted = readings.permissionGranted,
+                sims = sims,
+                selectedSubId = selected,
+                readings = readings,
+                resolution = resolution,
+                findings = findings,
+            ).withReport().withSwitchSteps()
         }
     }
 
@@ -203,7 +257,15 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectSim(subId: Int) {
         if (subId == _state.value.selectedSubId) return
-        _state.update { it.copy(selectedSubId = subId) }
+        if (_state.value.call.phase != CallPhase.READY) return
+        // Another SIM is another T2 cell: the test under way and the switch step start over.
+        _state.update {
+            it.copy(
+                selectedSubId = subId,
+                call = it.call.copy(session = null, concluded = null, toggled = emptySet()),
+                switches = SwitchUi(),
+            )
+        }
         refresh()
     }
 
@@ -211,17 +273,115 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setShowReport(show: Boolean) = _state.update { it.copy(showReport = show) }
 
-    /** Starts watching the call state. The person dials; the app never does. */
-    fun startCallWatch() {
+    // --- the guided switch step (round 23 AP3) ---
+
+    /**
+     * The person tapped Open Settings and [screen] opened. The app changed
+     * nothing; it remembers what it read before, to read again on return.
+     */
+    fun wentToSettings(step: SwitchStep, screen: SettingsScreen?) {
+        if (screen == null) {
+            _state.update { it.copy(switches = it.switches.copy(problem = "No Settings screen could be opened on this phone.")) }
+            return
+        }
+        val deepBefore = _state.value.readings?.deep != null
+        _state.update { it.copy(switches = it.switches.copy(toggle = ToggleUi(step, screen, deepBefore), problem = null, last = null)) }
+    }
+
+    /** Back from Settings: read the phone again, passively, as when the app opens, then ask what the person did. */
+    fun backFromSettings() {
+        val toggle = _state.value.switches.toggle ?: return
+        if (toggle.phase != TogglePhase.IN_SETTINGS) return
+        _state.update { it.copy(switches = it.switches.copy(toggle = toggle.copy(phase = TogglePhase.REREADING))) }
+        viewModelScope.launch {
+            reload()
+            if (toggle.deepBefore && shizuku.status().ready) deepCheck()
+            val readings = _state.value.readings
+            val after = readings?.let { PhoneSwitches.of(toggle.step.feature, it) }
+            _state.update { it.copy(switches = it.switches.copy(toggle = toggle.copy(phase = TogglePhase.ASK, after = after))) }
+        }
+    }
+
+    /** Keeps the step with the person's answer, on this phone only (`user_toggle` when they turned it on). */
+    fun answerToggle(answer: ToggleAnswer) {
+        val current = _state.value
+        val toggle = current.switches.toggle ?: return
+        if (toggle.phase != TogglePhase.ASK) return
+        val readings = current.readings ?: return
+        val step = toggle.step
+        val device = readings.device
+        val origin = if (answer == ToggleAnswer.TURNED_ON) ConfigOrigin.USER_TOGGLE else ConfigOrigin.AS_FOUND
+        val record = UserToggleRecord(
+            date = readings.checkedOn.toString(),
+            model = device.model,
+            codename = device.codename,
+            romFamily = device.romFamily.wire,
+            androidMajor = device.androidMajor,
+            homeMccMnc = readings.sim?.homeMccMnc,
+            spn = readings.sim?.spn,
+            ocdProfile = step.ocd.profile?.profileId,
+            feature = step.feature,
+            ocdValue = "on",
+            ocdBasis = step.ocd.basis,
+            ocdSource = step.ocd.record?.record?.source,
+            ocdStack = step.ocd.record?.record?.stack,
+            sameStack = step.ocd.sameStack,
+            screen = toggle.screen.wire,
+            before = step.phone,
+            after = toggle.after,
+            answer = answer,
+            configOrigin = origin,
+        )
+        _state.update {
+            val call = it.call
+            it.copy(
+                switches = it.switches.copy(toggle = null, last = record),
+                // After a switch the person turned on, the call test is offered for that feature as a new T2 test.
+                call = if (answer == ToggleAnswer.TURNED_ON && call.phase == CallPhase.READY) {
+                    call.copy(feature = step.feature, toggled = call.toggled + step.feature, session = null, concluded = null)
+                } else {
+                    call
+                },
+            )
+        }
+        viewModelScope.launch {
+            val log = withContext(Dispatchers.IO) { callStore.add(record) }
+            _state.update { it.copy(call = it.call.copy(log = log)) }
+        }
+    }
+
+    fun cancelToggle() = _state.update { it.copy(switches = it.switches.copy(toggle = null)) }
+
+    // --- the guided call test (round 19 T2) ---
+
+    /** The feature the next T2 test is for; a change starts a new test. */
+    fun selectCallFeature(feature: T2Feature) {
+        val call = _state.value.call
+        if (call.phase != CallPhase.READY || feature == call.feature) return
+        _state.update { it.copy(call = it.call.copy(feature = feature, session = null, concluded = null)) }
+    }
+
+    /** Ends the T2 test under way; its calls stay in the list. */
+    fun newT2Test() {
+        if (_state.value.call.phase != CallPhase.READY) return
+        _state.update { it.copy(call = it.call.copy(session = null, concluded = null)) }
+    }
+
+    /** Starts watching the call state for [intended]. The person dials or answers; the app never does. */
+    fun startCallWatch(intended: CallDirection) {
         val start = _state.value
         val slot = start.deepTarget?.slot ?: return
         if (start.call.mailbox == null || start.call.phase != CallPhase.READY) return
-        _state.update { it.copy(call = it.call.copy(phase = CallPhase.STARTING, problem = null, live = null, result = null)) }
+        if (intended != CallDirection.OUTGOING && intended != CallDirection.INCOMING) return
+        val mailboxes = callTargets?.let(CallTargets::allMailboxes).orEmpty()
+        _state.update {
+            it.copy(call = it.call.copy(phase = CallPhase.STARTING, intended = intended, problem = null, live = null, result = null, pendingAudio = null))
+        }
         viewModelScope.launch {
             val airplane = callPhone.airplaneMode()
             val wifi = callPhone.onWifi()
             val session = try {
-                shizuku.startCallWatch(slot)
+                shizuku.startCallWatch(slot, mailboxes)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -270,15 +430,38 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Keeps the test with the person's answer, on this phone only. */
-    fun answerCallTest(heard: HeardMailbox) {
+    /** The audio answer. For the incoming call the second-line question follows; for the outgoing call the test is kept. */
+    fun answerAudio(answer: AudioAnswer) {
+        val call = _state.value.call
+        if (call.phase != CallPhase.ASK || call.result?.connected != true) return
+        if (call.intended == CallDirection.INCOMING) {
+            _state.update { it.copy(call = it.call.copy(pendingAudio = answer)) }
+        } else {
+            keepCall(answer, secondLine = null)
+        }
+    }
+
+    /** The incoming call: whether it came from the person's second line. */
+    fun answerSecondLine(fromSecondLine: Boolean) {
+        val call = _state.value.call
+        val audio = call.pendingAudio ?: return
+        if (call.phase != CallPhase.ASK || call.intended != CallDirection.INCOMING) return
+        keepCall(audio, fromSecondLine)
+    }
+
+    /** Keeps the call with the person's answers, on this phone only, and assesses the T2 test it belongs to. */
+    private fun keepCall(audio: AudioAnswer, secondLine: Boolean?) {
         val current = _state.value
         val call = current.call
         val result = call.result ?: return
         val mailbox = call.mailbox ?: return
         val readings = current.readings ?: return
-        if (call.phase != CallPhase.ASK || !result.connected) return
         val device = readings.device
+        val session = call.session ?: T2Session(
+            number = call.log.nextSession(),
+            feature = call.feature,
+            configOrigin = if (call.feature in call.toggled) ConfigOrigin.USER_TOGGLE else ConfigOrigin.AS_FOUND,
+        )
         val record = CallTestRecord(
             date = readings.checkedOn.toString(),
             model = device.model,
@@ -298,21 +481,60 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
             watch = result,
             airplaneModeAtStart = call.airplaneAtStart,
             wifiAtStart = call.wifiAtStart,
-            heard = heard,
+            heard = audio,
+            intended = call.intended,
+            feature = session.feature,
+            session = session.number,
+            secondLine = secondLine,
+            configOrigin = session.configOrigin,
         )
-        _state.update { it.copy(call = it.call.copy(phase = CallPhase.READY, result = null)) }
+        val updated = session.copy(calls = session.calls + record)
+        val assessment = updated.assessment
+        val pass = if (assessment.passed) {
+            T2Record(
+                date = record.date,
+                model = record.model,
+                codename = record.codename,
+                romFamily = record.romFamily,
+                androidMajor = record.androidMajor,
+                imsStack = record.imsStack,
+                homeMccMnc = record.homeMccMnc,
+                spn = record.spn,
+                ocdProfile = record.ocdProfile,
+                feature = session.feature,
+                bearerCode = session.feature.bearerCode,
+                session = session.number,
+                configOrigin = session.configOrigin,
+            )
+        } else {
+            null
+        }
+        _state.update {
+            it.copy(
+                call = it.call.copy(
+                    phase = CallPhase.READY,
+                    result = null,
+                    pendingAudio = null,
+                    session = if (assessment.concluded) null else updated,
+                    concluded = if (assessment.concluded) assessment else null,
+                ),
+            )
+        }
         viewModelScope.launch {
-            val log = withContext(Dispatchers.IO) { callStore.add(record) }
+            val log = withContext(Dispatchers.IO) {
+                val kept = callStore.add(record)
+                if (pass != null) callStore.add(pass) else kept
+            }
             _state.update { it.copy(call = it.call.copy(log = log)) }
         }
     }
 
-    fun discardCallTest() = _state.update { it.copy(call = it.call.copy(phase = CallPhase.READY, result = null)) }
+    fun discardCallTest() = _state.update { it.copy(call = it.call.copy(phase = CallPhase.READY, result = null, pendingAudio = null)) }
 
     fun deleteCallTests() {
         viewModelScope.launch {
             val log = withContext(Dispatchers.IO) { callStore.clear() }
-            _state.update { it.copy(call = it.call.copy(log = log)) }
+            _state.update { it.copy(call = it.call.copy(log = log, session = null, concluded = null), switches = it.switches.copy(last = null)) }
         }
     }
 
@@ -329,5 +551,11 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
         val bundle = bundle ?: return this
         val readings = readings ?: return this
         return copy(report = Report.build(readings, resolution, findings, bundle, BuildConfig.VERSION_NAME, includeGid1))
+    }
+
+    private fun UiState.withSwitchSteps(): UiState {
+        val bundle = bundle ?: return this
+        val readings = readings ?: return this
+        return copy(switches = switches.copy(offered = SwitchSteps.offered(readings, resolution, bundle)))
     }
 }
