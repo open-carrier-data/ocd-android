@@ -1,0 +1,1397 @@
+{
+ "capability_keys": [
+  "esim",
+  "ims_conference",
+  "mms",
+  "rcs",
+  "sms_over_ims",
+  "video_calling",
+  "volte",
+  "vonr",
+  "vowifi",
+  "wifi_calling_roaming"
+ ],
+ "device_records": {
+  "based_on_data_digest": "sha256:3f4a56bf0f5d14aa3f6832cb3c886bd800096528292863849f9a072e572eab43",
+  "capabilities": [
+   "video_calling",
+   "volte",
+   "vonr",
+   "vowifi"
+  ],
+  "devices": {
+   "android:00883861f03586dd15af": {
+    "device_names": [
+     "iceland"
+    ]
+   },
+   "android:01a73bc5296a8f5f7c78": {
+    "device_names": [
+     "blazer"
+    ],
+    "models": [
+     "Pixel 10 Pro"
+    ]
+   },
+   "android:032e3f47caede050a14b": {
+    "device_names": [
+     "oscarc"
+    ]
+   },
+   "android:057d98104c89454abbd1": {
+    "device_names": [
+     "waffle"
+    ]
+   },
+   "android:079cdeea430fc1bf27cb": {
+    "device_names": [
+     "erhai"
+    ]
+   },
+   "android:09549e42161e069aacf8": {
+    "device_names": [
+     "unicorn"
+    ],
+    "models": [
+     "2206122SC"
+    ]
+   },
+   "android:0b2231ab3e3ebbd9f39a": {
+    "device_names": [
+     "cas"
+    ],
+    "models": [
+     "M2007J1SC"
+    ]
+   },
+   "android:0ca6e0b1c586e98f67d5": {
+    "device_names": [
+     "timelm"
+    ],
+    "models": [
+     "A001LG",
+     "LM-V600",
+     "LM-V600N"
+    ]
+   },
+   "android:0ce1e2bcac3afb4019db": {
+    "device_names": [
+     "umi"
+    ],
+    "models": [
+     "Mi 10",
+     "Umi"
+    ]
+   },
+   "android:0d2c6d0baebadce07476": {
+    "device_names": [
+     "lancelot"
+    ],
+    "models": [
+     "M2004J19G",
+     "M2004J19I"
+    ]
+   },
+   "android:1192bfbca4d82a04def2": {
+    "models": [
+     "Pixel 8a"
+    ]
+   },
+   "android:1402b9bec1d26f5758ac": {
+    "device_names": [
+     "lamu"
+    ],
+    "models": [
+     "moto g15"
+    ]
+   },
+   "android:1583e29413eb7f0f3fcd": {
+    "device_names": [
+     "pdx224"
+    ]
+   },
+   "android:16138c45299086f03592": {
+    "device_names": [
+     "tokay"
+    ],
+    "models": [
+     "Pixel 9"
+    ]
+   },
+   "android:16a182f9527429fdfaef": {
+    "device_names": [
+     "oscaro"
+    ]
+   },
+   "android:179ea27201f6e854d855": {
+    "models": [
+     "Pixel 7"
+    ]
+   },
+   "android:17cbb00c32e6796d0cd6": {
+    "device_names": [
+     "pdx225"
+    ]
+   },
+   "android:186161bdf3bd50312f5c": {
+    "device_names": [
+     "pdx245"
+    ]
+   },
+   "android:21eb7e667247caea0d99": {
+    "models": [
+     "SHIFTphone 8"
+    ]
+   },
+   "android:2495b6fd01399c2e8c04": {
+    "device_names": [
+     "trident"
+    ]
+   },
+   "android:25d0f02d03055b1635cf": {
+    "device_names": [
+     "cubs"
+    ],
+    "models": [
+     "Pixel 11"
+    ]
+   },
+   "android:25f593dc5dfa757326ca": {
+    "device_names": [
+     "cmi"
+    ],
+    "models": [
+     "Cmi",
+     "Mi 10 Pro"
+    ]
+   },
+   "android:26df409c9acc85856c39": {
+    "device_names": [
+     "pipa"
+    ],
+    "models": [
+     "23043RP34C",
+     "23043RP34G",
+     "23043RP34I"
+    ]
+   },
+   "android:2b7c4d8a10f410f0478e": {
+    "device_names": [
+     "caiman"
+    ],
+    "models": [
+     "Pixel 9 Pro"
+    ]
+   },
+   "android:2e9eb840c40f27e820b2": {
+    "models": [
+     "Pixel 9 Pro XL"
+    ]
+   },
+   "android:2fd3ab0609fe11cf9ad2": {
+    "device_names": [
+     "zizhan"
+    ],
+    "models": [
+     "22061218C"
+    ]
+   },
+   "android:2ff71c4a1ec6bc15fa67": {},
+   "android:30646849828e218404a4": {
+    "device_names": [
+     "kodiak"
+    ],
+    "models": [
+     "Pixel 11 Pro XL"
+    ]
+   },
+   "android:34eb6057b43d4e018a45": {
+    "device_names": [
+     "pdx223"
+    ]
+   },
+   "android:3620e0fd470efb3fc2d0": {
+    "device_names": [
+     "tegu"
+    ],
+    "models": [
+     "Pixel 9a"
+    ]
+   },
+   "android:36583539c1190792fc66": {
+    "models": [
+     "Pixel 9 Pro Fold"
+    ]
+   },
+   "android:37dac11e264812c3e535": {
+    "device_names": [
+     "gunnar"
+    ]
+   },
+   "android:38e2f5f65cf028c08272": {
+    "device_names": [
+     "Z01R"
+    ]
+   },
+   "android:4150d3274f506f30767f": {
+    "device_names": [
+     "corvette"
+    ]
+   },
+   "android:41b11a5d44954242bf33": {
+    "device_names": [
+     "fairlady"
+    ]
+   },
+   "android:41dfd60feddf77cce0c1": {
+    "device_names": [
+     "nuwa"
+    ],
+    "models": [
+     "2210132C",
+     "2210132G"
+    ]
+   },
+   "android:4388a2ce17aacf01c00e": {
+    "device_names": [
+     "sagit"
+    ],
+    "models": [
+     "MI 6"
+    ]
+   },
+   "android:4476b21f2d7b8b4788c5": {
+    "device_names": [
+     "infiniti"
+    ]
+   },
+   "android:46f1653457cb1655fee8": {
+    "device_names": [
+     "pdx206"
+    ]
+   },
+   "android:47e5ecc120ac124f1377": {
+    "device_names": [
+     "nx616j"
+    ]
+   },
+   "android:48c3a83e1730c1a23194": {
+    "device_names": [
+     "pdx215"
+    ]
+   },
+   "android:48cd4c41dbbaa9a03e23": {
+    "device_names": [
+     "mustang"
+    ],
+    "models": [
+     "Pixel 10 Pro XL"
+    ]
+   },
+   "android:49922f10de8cc7613127": {
+    "device_names": [
+     "piloti"
+    ]
+   },
+   "android:4bd8d5fc1ecac8a4e711": {
+    "models": [
+     "2201122C",
+     "2201122G"
+    ]
+   },
+   "android:4c214b03f7f7442ef621": {
+    "device_names": [
+     "larry"
+    ]
+   },
+   "android:4fb55d266dd1d1168e40": {
+    "models": [
+     "2203121C"
+    ]
+   },
+   "android:50e5430e669da7163f84": {
+    "device_names": [
+     "apollon"
+    ]
+   },
+   "android:52867a04e2267ddfe70b": {
+    "device_names": [
+     "caihong"
+    ]
+   },
+   "android:52d70e4f653455b26f17": {
+    "device_names": [
+     "pista"
+    ]
+   },
+   "android:5372a936a22bd462db74": {
+    "device_names": [
+     "frankel"
+    ],
+    "models": [
+     "Pixel 10"
+    ]
+   },
+   "android:5dc7d78b2a6c8708a7a7": {
+    "device_names": [
+     "pdx257"
+    ]
+   },
+   "android:5f994c7141037f5d5216": {},
+   "android:6007615ebf778dd2b84e": {
+    "device_names": [
+     "FP5"
+    ],
+    "models": [
+     "FP5"
+    ]
+   },
+   "android:61cb3531680dfe2452e1": {
+    "models": [
+     "M2002J9G",
+     "M2002J9S",
+     "XIG01"
+    ]
+   },
+   "android:66616a8134c4a87387f1": {
+    "device_names": [
+     "giuliac"
+    ]
+   },
+   "android:67d7f9677642d0ef09a4": {
+    "device_names": [
+     "mayfly"
+    ],
+    "models": [
+     "2206123SC"
+    ]
+   },
+   "android:687c9186b23f9b287fc7": {
+    "models": [
+     "Pixel 7 Pro"
+    ]
+   },
+   "android:6a91d1585a4a8198f6cd": {
+    "device_names": [
+     "salami"
+    ]
+   },
+   "android:6d4aa623475eaf16b5a0": {
+    "device_names": [
+     "dodge"
+    ]
+   },
+   "android:6f0a8b0ddfa141b22a75": {
+    "device_names": [
+     "Pong"
+    ],
+    "models": [
+     "AIN065"
+    ]
+   },
+   "android:72fc7580b885a5e513f0": {
+    "device_names": [
+     "oscarru"
+    ]
+   },
+   "android:7314b4116f18d54330cc": {
+    "device_names": [
+     "FP4"
+    ],
+    "models": [
+     "FP4"
+    ]
+   },
+   "android:74b1f92d9ead16050c85": {},
+   "android:776178933a9ac5d2062a": {
+    "device_names": [
+     "merlinx"
+    ]
+   },
+   "android:77a047c64c68732144cf": {
+    "device_names": [
+     "ingot"
+    ]
+   },
+   "android:797738ad4ff8a5d1036b": {
+    "device_names": [
+     "casuarina"
+    ],
+    "models": [
+     "Joy 3"
+    ]
+   },
+   "android:7dda23f9e3c607f272c3": {
+    "device_names": [
+     "lexus"
+    ]
+   },
+   "android:80b7e1a829dd7c0a6259": {
+    "device_names": [
+     "luigi"
+    ]
+   },
+   "android:829d6100cb8ef6544584": {
+    "models": [
+     "Pixel 10 Pro Fold"
+    ]
+   },
+   "android:8430666d04369bb342a7": {
+    "device_names": [
+     "felix"
+    ],
+    "models": [
+     "Pixel Fold"
+    ]
+   },
+   "android:84e777e7c6354b1fc232": {},
+   "android:87957921758ce03b860e": {
+    "device_names": [
+     "pdx203"
+    ]
+   },
+   "android:91b46e4d987e2b18b145": {
+    "device_names": [
+     "pdx214"
+    ]
+   },
+   "android:92f75ef0659eea6918a8": {
+    "device_names": [
+     "socrates"
+    ],
+    "models": [
+     "22127RK46C"
+    ]
+   },
+   "android:96b874fcd06282dade7b": {
+    "device_names": [
+     "stallion"
+    ],
+    "models": [
+     "Pixel 10a"
+    ]
+   },
+   "android:9a0741b63e3b5325dc07": {},
+   "android:9ab3cd1248630ac692e8": {
+    "device_names": [
+     "nicole"
+    ]
+   },
+   "android:9dfa9ccf187948df75ca": {
+    "device_names": [
+     "ktm"
+    ]
+   },
+   "android:9f021eedab405388734f": {
+    "device_names": [
+     "oriole"
+    ],
+    "models": [
+     "Pixel 6"
+    ]
+   },
+   "android:a035be9bce840fd4ed98": {
+    "device_names": [
+     "giulia"
+    ]
+   },
+   "android:a077e033af7e6792c877": {
+    "device_names": [
+     "raven"
+    ],
+    "models": [
+     "Pixel 6 Pro"
+    ]
+   },
+   "android:a24368375a67d5a28995": {
+    "device_names": [
+     "dm3q"
+    ],
+    "models": [
+     "SM-S9180",
+     "SM-S918B",
+     "SM-S918N",
+     "SM-S918Q",
+     "SM-S918U",
+     "SM-S918U1",
+     "SM-S918W"
+    ]
+   },
+   "android:a454b5e325c7ef814194": {
+    "device_names": [
+     "grizzly"
+    ],
+    "models": [
+     "Pixel 11 Pro"
+    ]
+   },
+   "android:a925f527b22a0bcda199": {
+    "device_names": [
+     "aston"
+    ]
+   },
+   "android:aa7e4f072541d9b12225": {
+    "device_names": [
+     "shiba"
+    ],
+    "models": [
+     "Pixel 8"
+    ]
+   },
+   "android:aec6c02463cd658e9bf5": {
+    "device_names": [
+     "bluejay"
+    ],
+    "models": [
+     "Pixel 6a"
+    ]
+   },
+   "android:aedae69ac11c97154c32": {
+    "device_names": [
+     "astonc"
+    ]
+   },
+   "android:af56e78fe66aae643835": {
+    "device_names": [
+     "pdx237"
+    ]
+   },
+   "android:b0d6ea61708319e02000": {
+    "device_names": [
+     "pyrite"
+    ]
+   },
+   "android:b4426dcb77af87a9d710": {
+    "device_names": [
+     "xueying"
+    ]
+   },
+   "android:b469a64be91278ae4dc6": {
+    "device_names": [
+     "pdx235"
+    ]
+   },
+   "android:bada8041f7ba52cfbb43": {
+    "device_names": [
+     "akershus"
+    ]
+   },
+   "android:bd0c96aaf95b2e98da5f": {
+    "device_names": [
+     "gauguin"
+    ],
+    "models": [
+     "M2007J17G"
+    ]
+   },
+   "android:c73acb36bc9bafdc042e": {
+    "device_names": [
+     "bale"
+    ]
+   },
+   "android:c87ad0da6d11e0b736cd": {},
+   "android:d270c453689189f90b6a": {
+    "device_names": [
+     "diting"
+    ],
+    "models": [
+     "22081212C",
+     "22081212R",
+     "22081212UG",
+     "22200414R",
+     "A201XM"
+    ]
+   },
+   "android:d3c3c48789c8cff1efbf": {},
+   "android:d78c0e86d45837772a09": {
+    "device_names": [
+     "husky"
+    ],
+    "models": [
+     "Pixel 8 Pro"
+    ]
+   },
+   "android:d968c104933896f5c0e2": {
+    "device_names": [
+     "pdx234"
+    ]
+   },
+   "android:d989a15c6692c1a7cf1f": {
+    "device_names": [
+     "dm1q"
+    ],
+    "models": [
+     "SM-S9110",
+     "SM-S911B",
+     "SM-S911C",
+     "SM-S911N",
+     "SM-S911U",
+     "SM-S911U1",
+     "SM-S911W"
+    ]
+   },
+   "android:da37b893dcde69326887": {
+    "device_names": [
+     "chiron"
+    ],
+    "models": [
+     "Mi MIX 2"
+    ]
+   },
+   "android:e7d802de941932b1996f": {
+    "models": [
+     "Pixel 7a"
+    ]
+   },
+   "android:e831c6d52ad9b30ddd67": {
+    "models": [
+     "M2102J2SC"
+    ]
+   },
+   "android:e8d4a6a984d3085bbad1": {
+    "device_names": [
+     "cupid"
+    ],
+    "models": [
+     "2201123C",
+     "2201123G"
+    ]
+   },
+   "android:ec370a474e69789a519f": {
+    "device_names": [
+     "fuxi"
+    ],
+    "models": [
+     "2211133C",
+     "2211133G"
+    ]
+   },
+   "android:eee0b39f4fd4d9c325d1": {
+    "device_names": [
+     "yogi"
+    ],
+    "models": [
+     "Pixel 11 Pro Fold"
+    ]
+   },
+   "android:ef607c111f731c157833": {},
+   "android:f1fb1e5e38dcde4af465": {},
+   "android:ffdb73f3ab73d0f17466": {
+    "device_names": [
+     "mondrian"
+    ],
+    "models": [
+     "23013RK75C"
+    ]
+   }
+  },
+  "profiles": {
+   "open.26203.dbb2be7109a6": {
+    "video_calling": [
+     {
+      "devices": [
+       "android:2495b6fd01399c2e8c04",
+       "android:38e2f5f65cf028c08272",
+       "android:4388a2ce17aacf01c00e",
+       "android:47e5ecc120ac124f1377",
+       "android:5f994c7141037f5d5216",
+       "android:84e777e7c6354b1fc232",
+       "android:bada8041f7ba52cfbb43",
+       "android:bd0c96aaf95b2e98da5f",
+       "android:d3c3c48789c8cff1efbf",
+       "android:da37b893dcde69326887"
+      ],
+      "newest_entry": "2023-01",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "off"
+     },
+     {
+      "devices": [
+       "android:797738ad4ff8a5d1036b"
+      ],
+      "newest_entry": "2025-08",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "off"
+     },
+     {
+      "devices": [
+       "android:09549e42161e069aacf8",
+       "android:0b2231ab3e3ebbd9f39a",
+       "android:0ce1e2bcac3afb4019db",
+       "android:21eb7e667247caea0d99",
+       "android:25f593dc5dfa757326ca",
+       "android:26df409c9acc85856c39",
+       "android:2fd3ab0609fe11cf9ad2",
+       "android:41dfd60feddf77cce0c1",
+       "android:4bd8d5fc1ecac8a4e711",
+       "android:4fb55d266dd1d1168e40",
+       "android:50e5430e669da7163f84",
+       "android:61cb3531680dfe2452e1",
+       "android:67d7f9677642d0ef09a4",
+       "android:77a047c64c68732144cf",
+       "android:92f75ef0659eea6918a8",
+       "android:9ab3cd1248630ac692e8",
+       "android:a24368375a67d5a28995",
+       "android:b0d6ea61708319e02000",
+       "android:d270c453689189f90b6a",
+       "android:d989a15c6692c1a7cf1f",
+       "android:e831c6d52ad9b30ddd67",
+       "android:e8d4a6a984d3085bbad1",
+       "android:ec370a474e69789a519f",
+       "android:ffdb73f3ab73d0f17466"
+      ],
+      "newest_entry": "2024-01",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:6007615ebf778dd2b84e",
+       "android:7314b4116f18d54330cc"
+      ],
+      "newest_entry": "2024-05",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:0ca6e0b1c586e98f67d5"
+      ],
+      "newest_entry": "2024-06",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:032e3f47caede050a14b",
+       "android:16a182f9527429fdfaef",
+       "android:37dac11e264812c3e535",
+       "android:4c214b03f7f7442ef621",
+       "android:72fc7580b885a5e513f0",
+       "android:80b7e1a829dd7c0a6259",
+       "android:ef607c111f731c157833"
+      ],
+      "newest_entry": "2025-05",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:00883861f03586dd15af",
+       "android:057d98104c89454abbd1",
+       "android:079cdeea430fc1bf27cb",
+       "android:4150d3274f506f30767f",
+       "android:41b11a5d44954242bf33",
+       "android:4476b21f2d7b8b4788c5",
+       "android:49922f10de8cc7613127",
+       "android:52867a04e2267ddfe70b",
+       "android:52d70e4f653455b26f17",
+       "android:66616a8134c4a87387f1",
+       "android:6a91d1585a4a8198f6cd",
+       "android:6d4aa623475eaf16b5a0",
+       "android:6f0a8b0ddfa141b22a75",
+       "android:74b1f92d9ead16050c85",
+       "android:7dda23f9e3c607f272c3",
+       "android:9a0741b63e3b5325dc07",
+       "android:9dfa9ccf187948df75ca",
+       "android:a035be9bce840fd4ed98",
+       "android:a925f527b22a0bcda199",
+       "android:aedae69ac11c97154c32",
+       "android:b4426dcb77af87a9d710",
+       "android:c73acb36bc9bafdc042e",
+       "android:c87ad0da6d11e0b736cd",
+       "android:f1fb1e5e38dcde4af465"
+      ],
+      "newest_entry": "2025-11",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     }
+    ],
+    "volte": [
+     {
+      "devices": [
+       "android:25d0f02d03055b1635cf",
+       "android:30646849828e218404a4",
+       "android:a454b5e325c7ef814194",
+       "android:eee0b39f4fd4d9c325d1"
+      ],
+      "newest_entry": "2026-08",
+      "source": "google_carriersettings",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:01a73bc5296a8f5f7c78",
+       "android:1192bfbca4d82a04def2",
+       "android:16138c45299086f03592",
+       "android:179ea27201f6e854d855",
+       "android:2b7c4d8a10f410f0478e",
+       "android:2e9eb840c40f27e820b2",
+       "android:3620e0fd470efb3fc2d0",
+       "android:36583539c1190792fc66",
+       "android:48cd4c41dbbaa9a03e23",
+       "android:5372a936a22bd462db74",
+       "android:687c9186b23f9b287fc7",
+       "android:829d6100cb8ef6544584",
+       "android:8430666d04369bb342a7",
+       "android:96b874fcd06282dade7b",
+       "android:9f021eedab405388734f",
+       "android:a077e033af7e6792c877",
+       "android:aa7e4f072541d9b12225",
+       "android:aec6c02463cd658e9bf5",
+       "android:d78c0e86d45837772a09",
+       "android:e7d802de941932b1996f"
+      ],
+      "newest_entry": "2026-09",
+      "source": "google_carriersettings",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:2495b6fd01399c2e8c04",
+       "android:38e2f5f65cf028c08272",
+       "android:4388a2ce17aacf01c00e",
+       "android:46f1653457cb1655fee8",
+       "android:47e5ecc120ac124f1377",
+       "android:5f994c7141037f5d5216",
+       "android:84e777e7c6354b1fc232",
+       "android:87957921758ce03b860e",
+       "android:bada8041f7ba52cfbb43",
+       "android:bd0c96aaf95b2e98da5f",
+       "android:d3c3c48789c8cff1efbf",
+       "android:da37b893dcde69326887"
+      ],
+      "newest_entry": "2023-01",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:48c3a83e1730c1a23194",
+       "android:91b46e4d987e2b18b145"
+      ],
+      "newest_entry": "2023-02",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:186161bdf3bd50312f5c",
+       "android:af56e78fe66aae643835",
+       "android:d968c104933896f5c0e2"
+      ],
+      "newest_entry": "2023-08",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:09549e42161e069aacf8",
+       "android:0b2231ab3e3ebbd9f39a",
+       "android:0ce1e2bcac3afb4019db",
+       "android:21eb7e667247caea0d99",
+       "android:25f593dc5dfa757326ca",
+       "android:26df409c9acc85856c39",
+       "android:2fd3ab0609fe11cf9ad2",
+       "android:41dfd60feddf77cce0c1",
+       "android:4bd8d5fc1ecac8a4e711",
+       "android:4fb55d266dd1d1168e40",
+       "android:50e5430e669da7163f84",
+       "android:61cb3531680dfe2452e1",
+       "android:67d7f9677642d0ef09a4",
+       "android:77a047c64c68732144cf",
+       "android:92f75ef0659eea6918a8",
+       "android:9ab3cd1248630ac692e8",
+       "android:a24368375a67d5a28995",
+       "android:b0d6ea61708319e02000",
+       "android:d270c453689189f90b6a",
+       "android:d989a15c6692c1a7cf1f",
+       "android:e831c6d52ad9b30ddd67",
+       "android:e8d4a6a984d3085bbad1",
+       "android:ec370a474e69789a519f",
+       "android:ffdb73f3ab73d0f17466"
+      ],
+      "newest_entry": "2024-01",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:6007615ebf778dd2b84e",
+       "android:7314b4116f18d54330cc"
+      ],
+      "newest_entry": "2024-05",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:0ca6e0b1c586e98f67d5"
+      ],
+      "newest_entry": "2024-06",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:1583e29413eb7f0f3fcd",
+       "android:17cbb00c32e6796d0cd6",
+       "android:34eb6057b43d4e018a45",
+       "android:5dc7d78b2a6c8708a7a7",
+       "android:b469a64be91278ae4dc6"
+      ],
+      "newest_entry": "2025-01",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:032e3f47caede050a14b",
+       "android:16a182f9527429fdfaef",
+       "android:37dac11e264812c3e535",
+       "android:4c214b03f7f7442ef621",
+       "android:72fc7580b885a5e513f0",
+       "android:80b7e1a829dd7c0a6259",
+       "android:ef607c111f731c157833"
+      ],
+      "newest_entry": "2025-05",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:797738ad4ff8a5d1036b"
+      ],
+      "newest_entry": "2025-08",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:00883861f03586dd15af",
+       "android:057d98104c89454abbd1",
+       "android:079cdeea430fc1bf27cb",
+       "android:4150d3274f506f30767f",
+       "android:41b11a5d44954242bf33",
+       "android:4476b21f2d7b8b4788c5",
+       "android:49922f10de8cc7613127",
+       "android:52867a04e2267ddfe70b",
+       "android:52d70e4f653455b26f17",
+       "android:66616a8134c4a87387f1",
+       "android:6a91d1585a4a8198f6cd",
+       "android:6d4aa623475eaf16b5a0",
+       "android:6f0a8b0ddfa141b22a75",
+       "android:74b1f92d9ead16050c85",
+       "android:7dda23f9e3c607f272c3",
+       "android:9a0741b63e3b5325dc07",
+       "android:9dfa9ccf187948df75ca",
+       "android:a035be9bce840fd4ed98",
+       "android:a925f527b22a0bcda199",
+       "android:aedae69ac11c97154c32",
+       "android:b4426dcb77af87a9d710",
+       "android:c73acb36bc9bafdc042e",
+       "android:c87ad0da6d11e0b736cd",
+       "android:f1fb1e5e38dcde4af465"
+      ],
+      "newest_entry": "2025-11",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "android:0d2c6d0baebadce07476",
+       "android:1402b9bec1d26f5758ac",
+       "android:2ff71c4a1ec6bc15fa67",
+       "android:776178933a9ac5d2062a"
+      ],
+      "newest_entry": "2026-05",
+      "source": "lineageos_device_overlays",
+      "stack": "lineageos",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A515F"
+      ],
+      "newest_entry": "2023-09",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-M115F"
+      ],
+      "newest_entry": "2023-11",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-F700F"
+      ],
+      "newest_entry": "2023-12",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A715F"
+      ],
+      "newest_entry": "2024-02",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A217F"
+      ],
+      "newest_entry": "2024-05",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-F707B"
+      ],
+      "newest_entry": "2024-07",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-F916B"
+      ],
+      "newest_entry": "2024-08",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A025G",
+       "samsung:SM-A125F",
+       "samsung:SM-A127F",
+       "samsung:SM-A315G",
+       "samsung:SM-A415F",
+       "samsung:SM-A426B",
+       "samsung:SM-M127F",
+       "samsung:SM-M215F",
+       "samsung:SM-M315F",
+       "samsung:SM-M317F",
+       "samsung:SM-M515F"
+      ],
+      "newest_entry": "2024-10",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A326B",
+       "samsung:SM-G980F",
+       "samsung:SM-G981B",
+       "samsung:SM-G985F",
+       "samsung:SM-G986B",
+       "samsung:SM-G988B"
+      ],
+      "newest_entry": "2025-02",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A526B",
+       "samsung:SM-A725F"
+      ],
+      "newest_entry": "2025-03",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-M325FV"
+      ],
+      "newest_entry": "2025-04",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A037G",
+       "samsung:SM-A225F",
+       "samsung:SM-M225FV"
+      ],
+      "newest_entry": "2025-05",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A525F"
+      ],
+      "newest_entry": "2025-06",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A035G",
+       "samsung:SM-X205"
+      ],
+      "newest_entry": "2025-07",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A528B"
+      ],
+      "newest_entry": "2025-09",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A135F",
+       "samsung:SM-A137F",
+       "samsung:SM-M236B",
+       "samsung:SM-M336B"
+      ],
+      "newest_entry": "2026-02",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A136B",
+       "samsung:SM-A226B",
+       "samsung:SM-G991B",
+       "samsung:SM-G996B",
+       "samsung:SM-G998B"
+      ],
+      "newest_entry": "2026-03",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-F721B",
+       "samsung:SM-F731B",
+       "samsung:SM-F741B",
+       "samsung:SM-F936B",
+       "samsung:SM-F946B",
+       "samsung:SM-F956B",
+       "samsung:SM-M135F",
+       "samsung:SM-M536B"
+      ],
+      "newest_entry": "2026-05",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-R935F",
+       "samsung:SM-R945F",
+       "samsung:SM-R955F",
+       "samsung:SM-R965F"
+      ],
+      "newest_entry": "2026-06",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A156B",
+       "samsung:SM-A346B",
+       "samsung:SM-R865F",
+       "samsung:SM-R875F",
+       "samsung:SM-R885F",
+       "samsung:SM-R895F",
+       "samsung:SM-R905F",
+       "samsung:SM-R915F",
+       "samsung:SM-R925F",
+       "samsung:SM-X216B",
+       "samsung:SM-X216R"
+      ],
+      "newest_entry": "2026-07",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A047F",
+       "samsung:SM-A057G",
+       "samsung:SM-A145R",
+       "samsung:SM-A146P",
+       "samsung:SM-A155F",
+       "samsung:SM-A165F",
+       "samsung:SM-A166B",
+       "samsung:SM-A256B",
+       "samsung:SM-A266B",
+       "samsung:SM-A356B",
+       "samsung:SM-A366B",
+       "samsung:SM-A376B",
+       "samsung:SM-F711B",
+       "samsung:SM-F761B",
+       "samsung:SM-F766B",
+       "samsung:SM-F926B",
+       "samsung:SM-F966B",
+       "samsung:SM-G990B",
+       "samsung:SM-G990B2",
+       "samsung:SM-S731B",
+       "samsung:SM-S901B",
+       "samsung:SM-S906B",
+       "samsung:SM-S908B",
+       "samsung:SM-S942B",
+       "samsung:SM-S947B",
+       "samsung:SM-S948B",
+       "samsung:SM-X115",
+       "samsung:SM-X706B",
+       "samsung:SM-X806B",
+       "samsung:SM-X806E",
+       "samsung:SM-X906B"
+      ],
+      "newest_entry": "2026-08",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     },
+     {
+      "devices": [
+       "samsung:SM-A175F",
+       "samsung:SM-A176B",
+       "samsung:SM-A236B",
+       "samsung:SM-A336B",
+       "samsung:SM-A536B",
+       "samsung:SM-A546B",
+       "samsung:SM-A556B",
+       "samsung:SM-A566B",
+       "samsung:SM-A576B",
+       "samsung:SM-S711B",
+       "samsung:SM-S721B",
+       "samsung:SM-S911B",
+       "samsung:SM-S916B",
+       "samsung:SM-S918B",
+       "samsung:SM-S921B",
+       "samsung:SM-S926B",
+       "samsung:SM-S928B",
+       "samsung:SM-S931B",
+       "samsung:SM-S936B",
+       "samsung:SM-S937B",
+       "samsung:SM-S938B",
+       "samsung:SM-X135F",
+       "samsung:SM-X236B",
+       "samsung:SM-X306B",
+       "samsung:SM-X356B",
+       "samsung:SM-X406B",
+       "samsung:SM-X516B",
+       "samsung:SM-X526B",
+       "samsung:SM-X526E",
+       "samsung:SM-X616B",
+       "samsung:SM-X626B",
+       "samsung:SM-X716B",
+       "samsung:SM-X736B",
+       "samsung:SM-X816B",
+       "samsung:SM-X826B",
+       "samsung:SM-X916B",
+       "samsung:SM-X926B",
+       "samsung:SM-X936B"
+      ],
+      "newest_entry": "2026-09",
+      "source": "samsung_omc",
+      "stack": "stock",
+      "state": "on"
+     }
+    ]
+   }
+  }
+ },
+ "format": "ocd-check-bundle.v1",
+ "limits": {
+  "device_records": "For VoLTE, Wi-Fi calling, video calling and VoNR, a profile's value is a summary over every source and every phone model's table, made by the family rule above. It is not a vote or a count over phone models. generated/devices/carrier-variants.json holds the device records: what one phone model's own carrier file sets for the SIM, every device value OCD publishes, including those that agree with the profile value. A device record is configuration from one vendor or ROM file, not confirmed by a second source and not a test result. It holds for one software stack (stock firmware, a LineageOS tree, or Sony's AOSP tree), says nothing about the operator's offer or emergency calls, and is not an export: never write an off from it into a phone's settings. A phone model without a record for a profile and switch has no file OCD reads that sets a value there, or its value is older than five years, or its codename or model does not bind to one catalog device. It never means off, and it never means the device agrees with the profile value. docs/data-model.md describes the file.",
+  "gates": "A carrier can still block a feature that its settings turn on. The usual gates are a list of approved phone models (common in the US, Australia and Sweden), an option you must book in your plan (LIDL Connect's Wi-Fi calling, for example), a carrier server that must approve the phone first (in the US, often with a registered emergency address for Wi-Fi calling), a service the operator has ended (MMS in Germany), roaming limits, and the Wi-Fi network you use (its DNS or firewall can keep Wi-Fi calling from reaching the carrier). None of these shows in carrier settings, so no source tells OCD about them; only a test with your SIM, plan and phone does. Some keys hint at a gate: carrier_volte_provisioning_required_bool and the REG09 Wi-Fi calling error mapping.",
+  "missing_switch": "A switch that carrier-config-list.xml leaves out is not neutral: your phone keeps what its ROM already says, which for VoLTE, Wi-Fi calling and video calling is usually off, and for MMS, SMS over IMS and conference calls usually on.",
+  "mvno_merge": "An MVNO without its own SPN, GID, or IMSI prefix in any source merges into the host network's profile. LIDL Connect runs on Vodafone Germany, and no profile names it, so its SIM resolves the 26202 profiles.",
+  "not_verified": "No profile has been verified on a phone. Every value comes from a maintained source, not from a test call. No value has been tested for emergency calls; docs/consume.md says which keys a ROM should keep.",
+  "readme_section": "Limits to read before you ship",
+  "tables_not_tests": "A capability value says what carrier tables configure, not what works. It does not say the operator still offers the service: tables often keep a service for months or years after an operator ends it.",
+  "value_meanings": {
+   "conditional": "the sources disagree, often between phone models. Often one phone model's own table turns it off while others turn it on; generated/devices/carrier-variants.json shows which.",
+   "supported": "at least one phone maker's or OS settings for this SIM turn the feature on, and no source whose off counts turns it off. It does not tell you that the carrier still offers it, that your plan includes it, or that your phone model is allowed.",
+   "unknown": "no reliable source. It does not mean \"no\".",
+   "unsupported": "the carrier's own settings, or two independent sources, turn it off."
+  }
+ },
+ "profiles": [
+  {
+   "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "supported",
+    "mms": "supported",
+    "rcs": "supported",
+    "sms_over_ims": "supported",
+    "video_calling": "supported",
+    "volte": "supported",
+    "vonr": "supported",
+    "vowifi": "supported",
+    "wifi_calling_roaming": "supported"
+   },
+   "display_name": "O2 DE",
+   "match": {
+    "mccmnc": [
+     "26203"
+    ]
+   },
+   "newest_entry": "2026-09",
+   "profile_id": "open.26203.dbb2be7109a6"
+  }
+ ],
+ "source": {
+  "checks_through": "2026-07-14",
+  "commit": "885c0ba3d104ae6aa83b5ccc859f7b096115ff54",
+  "commit_date": "2026-10-17",
+  "data_digest": "sha256:3f4a56bf0f5d14aa3f6832cb3c886bd800096528292863849f9a072e572eab43",
+  "lookup_schema_version": 1,
+  "match_semantics": "OR within a match list; AND between match dimensions",
+  "repository": "https://github.com/open-carrier-data/open-carrier-data",
+  "resolution_order": "generic_to_specific",
+  "stale_after": "2027-01-10"
+ }
+}

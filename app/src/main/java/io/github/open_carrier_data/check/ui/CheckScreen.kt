@@ -51,6 +51,8 @@ import androidx.compose.ui.unit.sp
 import io.github.open_carrier_data.check.BuildConfig
 import io.github.open_carrier_data.check.core.ApnEdited
 import io.github.open_carrier_data.check.core.ApnListParser
+import io.github.open_carrier_data.check.core.CallDirection
+import io.github.open_carrier_data.check.core.CallWatchSummary
 import io.github.open_carrier_data.check.core.Capabilities
 import io.github.open_carrier_data.check.core.CapabilityValue
 import io.github.open_carrier_data.check.core.CarrierKeys
@@ -59,7 +61,9 @@ import io.github.open_carrier_data.check.core.EpdgName
 import io.github.open_carrier_data.check.core.Findings
 import io.github.open_carrier_data.check.core.FiveG
 import io.github.open_carrier_data.check.core.Gid1Status
+import io.github.open_carrier_data.check.core.HeardMailbox
 import io.github.open_carrier_data.check.core.ImsSource
+import io.github.open_carrier_data.check.core.LabelHints
 import io.github.open_carrier_data.check.core.LookupNetwork
 import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.Radio
@@ -105,6 +109,7 @@ fun CheckScreen(viewModel: CheckViewModel) {
                     CarrierSettingsSection(state, bundle)
                     ConnectionsSection(state)
                     DeepCheckSection(state, viewModel)
+                    CallTestSection(state, viewModel)
                     OcdSection(state, bundle)
                 }
             }
@@ -172,7 +177,9 @@ private fun PermissionCard(onResult: () -> Unit) {
         Text(
             "With this permission the app can read the SIM's group ID (GID1), this phone's carrier settings " +
                 "and the network type. Android names the permission \"make and manage phone calls\". The app " +
-                "makes no calls, sees no calls and reads no phone number, IMSI, ICCID or IMEI.",
+                "makes no calls and reads no phone number, IMSI, ICCID or IMEI. It sees no calls through this " +
+                "permission; only the optional guided call test reads, through Shizuku, the state and network of " +
+                "a call you place yourself.",
             style = MaterialTheme.typography.bodyMedium,
         )
         Note("Without it, the app still shows the SIM's network code, name and carrier IDs, and OCD's values.")
@@ -336,10 +343,11 @@ private fun DeepCheckSection(state: UiState, viewModel: CheckViewModel) {
     Section("Deep check (Shizuku)") {
         Text(
             "Optional. Through Shizuku, the app reads what Android hides from normal apps: whether the phone is " +
-                "signed in for VoLTE or Wi-Fi calling (Samsung's IMS), Samsung's Wi-Fi calling switch, whether the " +
-                "carrier's Wi-Fi calling server name resolves, and the phone's APN list. It runs the fixed read-only " +
-                "commands below and nothing else, and it changes nothing. Their output is reduced to the fields " +
-                "shown here inside the check; the raw text is never kept.",
+                "signed in for VoLTE or Wi-Fi calling (Samsung's IMS, or Android's own IMS on LineageOS and similar " +
+                "builds), whether the network offers voice over IMS here, the Wi-Fi calling switch, whether the " +
+                "carrier's Wi-Fi calling server name resolves (also in the phone's own lookup), and the phone's APN " +
+                "list. It runs the fixed read-only commands below and nothing else, and it changes nothing. Their " +
+                "output is reduced to the fields shown here inside the check; the raw text is never kept.",
             style = MaterialTheme.typography.bodyMedium,
         )
         ShizukuFields(status)
@@ -365,7 +373,8 @@ private fun DeepCheckSection(state: UiState, viewModel: CheckViewModel) {
             }
             Note(
                 "The ePDG lookup sends one DNS query and, if the name resolves, one ping to the carrier's server; " +
-                    "only the first line of its output is read. The Wi-Fi calling switch is read only on Samsung's IMS.",
+                    "only the first line of its output is read. Samsung's Wi-Fi calling switch is read only on Samsung's " +
+                    "IMS; Android's IMS, the registry, the IWLAN log lines and the Wi-Fi's DNS servers only where they apply.",
             )
         }
         state.readings?.deep?.let {
@@ -398,9 +407,10 @@ private fun DeepResults(deep: DeepCheckReading) {
     val ims = deep.ims
     Label("IMS (calls over 4G, 5G and Wi-Fi)")
     when (ims.source) {
-        ImsSource.NOT_FOUND -> Note("No Samsung IMS service on this phone. Other IMS stacks are not read yet.")
-        ImsSource.UNREADABLE -> Note("Samsung's IMS state could not be read.")
-        ImsSource.SAMSUNG -> {
+        ImsSource.NOT_FOUND -> Note("Neither Samsung's IMS nor Android's own IMS state was found for this SIM's slot.")
+        ImsSource.UNREADABLE -> Note("The IMS state could not be read.")
+        ImsSource.SAMSUNG, ImsSource.AOSP -> {
+            val samsung = ims.source == ImsSource.SAMSUNG
             Field(
                 "Signed in",
                 when (ims.registered) {
@@ -408,17 +418,35 @@ private fun DeepResults(deep: DeepCheckReading) {
                     false -> "no"
                     null -> "not known (no entry for this SIM's slot)"
                 },
-                ims.state?.let { "Samsung's state: ${it.replace('_', ' ')}" },
+                listOfNotNull(
+                    if (samsung) "Samsung's IMS" else "Android's IMS",
+                    ims.state?.let { "state: ${it.replace('_', ' ')}" },
+                ).joinToString(" · "),
                 emphasize = true,
             )
             if (ims.registered == true) {
                 Field("Services", ims.services.joinToString(", ") { it.plain }.ifEmpty { "none this app can name" })
             }
+            ims.imsPdn?.let { Field("IMS data connection", "on ${it.plain}") }
+            ims.registrationLogTransport?.let {
+                Note(
+                    "The IMS registration log still names ${it.plain}. The app takes the network from where the IMS " +
+                        "data connection is, because the log can stay behind after a fallback.",
+                )
+            }
+            ims.lastDisconnect?.let { Field("Last sign-out reason", "${it.code}${it.name?.let { name -> " ($name)" }.orEmpty()}") }
             ims.mno?.let { Field("Samsung's carrier table", it) }
         }
     }
+    deep.networkOffer?.let { offer ->
+        Field(
+            "Voice over IMS offered by the network (VoPS)",
+            "LTE: ${offer.lteVops?.plain ?: "not reported"} · 5G: ${offer.nrVops?.plain ?: "not reported"}",
+            "What the serving cell says it offers. It says nothing about your plan.",
+        )
+    }
     Label("Wi-Fi calling")
-    Field("Switch", deep.wifiCallingSwitch.plain)
+    Field("Switch", deep.wifiCallingSwitch.plain, if (ims.source == ImsSource.AOSP) "The phone's own Wi-Fi calling setting" else null)
     Field(
         "Server name (ePDG)",
         deep.epdgName.plain,
@@ -435,6 +463,30 @@ private fun DeepResults(deep: DeepCheckReading) {
                 }
         },
     )
+    deep.wifiResolver?.let { Field("This Wi-Fi's DNS resolver", it.plain) }
+    deep.iwlan?.let { iwlan ->
+        val lookup = iwlan.phoneLookup
+        Field(
+            "The phone's own lookup of the server",
+            when {
+                lookup == null -> "not in the log"
+                !lookup.standardName -> "for another name"
+                lookup.resolved -> "got an address"
+                else -> "got no address"
+            },
+            lookup?.let { "${it.ageMinutes} minutes ago, by Android's Wi-Fi calling service (IWLAN)" },
+        )
+        Field(
+            "Wi-Fi calling tunnel",
+            when (iwlan.tunnelUp) {
+                true -> "up"
+                false -> "down"
+                null -> "not in the log"
+            },
+            iwlan.lastRefusal?.let { "Last refusal: $it${iwlan.lastRefusalCode?.let { code -> " ($code)" }.orEmpty()}" },
+        )
+        iwlan.heldBackBy?.let { Field("Held back", "by ${it.plain}", iwlan.heldBackMinutes?.let { m -> "about $m more minutes" }) }
+    }
     val apns = deep.apnList ?: return
     Label("APN list for this network")
     if (!apns.readable) {
@@ -464,6 +516,134 @@ private fun DeepResults(deep: DeepCheckReading) {
         Note("${apns.leftOut} row(s) left out: unusual shape, emergency, deleted, or past the limit of ${ApnListParser.MAX_ROWS} rows.")
     }
     Note("Rows for every SIM on this network code, including other MVNOs. User names, passwords, servers and proxies are never read.")
+}
+
+/**
+ * The guided call test (OCD round 19): the person dials the SIM's own
+ * mailbox; the app only watches the call state and the call's network type
+ * through the deep check, then asks whether they heard the mailbox.
+ */
+@Composable
+private fun CallTestSection(state: UiState, viewModel: CheckViewModel) {
+    val status = state.shizuku ?: return
+    val call = state.call
+    Section("Guided call test") {
+        Text(
+            "You call your SIM's own mailbox from the phone app; this app never places, answers or ends a call. " +
+                "While the call runs, the app reads through Shizuku once a second which network the call uses " +
+                "(4G, 5G or Wi-Fi), and afterwards asks whether you heard the mailbox. Results stay in this app on " +
+                "this phone; they are not in the report.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        val mailbox = call.mailbox
+        if (mailbox == null) {
+            Note(
+                "The app's mailbox list has no number for this SIM, so it offers no call test. It shows only a " +
+                    "SIM's own mailbox number from that list, never an emergency or service number.",
+            )
+            return@Section
+        }
+        when {
+            !status.ready -> Note("The call test needs the deep check's Shizuku access (see above) to read the call's network.")
+            state.deepTarget == null -> Note("The SIM's slot is not known, so the call test cannot run.")
+        }
+        Field(
+            "Your mailbox",
+            mailbox.number,
+            "${mailbox.brand}, from the app's mailbox list" + if (mailbox.unverified) " (${mailbox.verification})." else ".",
+            emphasize = true,
+        )
+        if (!status.ready || state.deepTarget == null) return@Section
+        when (call.phase) {
+            CallPhase.READY, CallPhase.STARTING -> {
+                Bullet("1. Tap Start. The app starts watching the call state.")
+                Bullet("2. Open your phone app and dial ${mailbox.number} yourself. Listen until the mailbox answers, then hang up.")
+                Bullet("3. Come back here, tap Stop, and say whether you heard the mailbox.")
+                Note(
+                    "For Wi-Fi calling, OCD's rules count a test only with airplane mode on and Wi-Fi on. Set that " +
+                        "yourself before you start; this app changes no setting.",
+                )
+                Button(onClick = viewModel::startCallWatch, enabled = call.phase == CallPhase.READY) { Text("Start") }
+            }
+            CallPhase.WATCHING, CallPhase.STOPPING -> {
+                Text(
+                    "Watching. Dial ${mailbox.number} in your phone app now, listen, hang up, then come back.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                call.live?.let { LiveWatch(it) }
+                Button(onClick = viewModel::stopCallWatch, enabled = call.phase == CallPhase.WATCHING) { Text("Stop") }
+            }
+            CallPhase.ASK -> {
+                val result = call.result ?: return@Section
+                WatchResult(result)
+                if (result.connected) {
+                    Text("Did you hear the mailbox?", style = MaterialTheme.typography.bodyLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { viewModel.answerCallTest(HeardMailbox.YES) }) { Text("Yes") }
+                        OutlinedButton(onClick = { viewModel.answerCallTest(HeardMailbox.NO) }) { Text("No") }
+                        OutlinedButton(onClick = { viewModel.answerCallTest(HeardMailbox.NOT_SURE) }) { Text("Not sure") }
+                    }
+                }
+                OutlinedButton(onClick = viewModel::discardCallTest) { Text("Discard") }
+            }
+            CallPhase.DISCARDED -> {
+                Text(
+                    "An emergency call showed during the watch, so the app kept nothing from it.",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedButton(onClick = viewModel::discardCallTest) { Text("OK") }
+            }
+        }
+        call.problem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+        Label("Command it runs, once a second while watching")
+        Text("dumpsys telephony.registry", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+        Note(
+            "Only this SIM's call state, the call's network type and whether an emergency call started are taken " +
+                "from it. Numbers and cell details are dropped where they are read.",
+        )
+        val tests = call.log.tests
+        if (tests.isNotEmpty()) {
+            HorizontalDivider()
+            Label("Call tests on this phone")
+            tests.asReversed().forEach { test ->
+                Field("${test.date} · ${test.brand} ${test.mailbox}", test.plain, "${test.model} · ${test.romFamily} · Android ${test.androidMajor} · ${test.imsStack.replace('_', ' ')}")
+            }
+            Note(
+                "Observed on this phone, one call each. A call that went over 4G or Wi-Fi does not show that a feature " +
+                    "works in general; OCD's tested layer also needs incoming calls and repeats.",
+            )
+            OutlinedButton(onClick = viewModel::deleteCallTests) { Text("Delete these results") }
+        }
+    }
+}
+
+@Composable
+private fun LiveWatch(live: CallWatchSummary) {
+    Note(
+        "Seen so far: " + live.statesSeen.joinToString(", ") { it.wire }.ifEmpty { "nothing yet" } +
+            (live.callNetworkType?.let { " · call network type $it (${Radio.plain(it)})" } ?: "") +
+            " · ${live.samples} readings",
+    )
+}
+
+@Composable
+private fun WatchResult(result: CallWatchSummary) {
+    if (!result.connected) {
+        Note("No call was seen while the app watched (${result.samples} readings). Nothing to keep.")
+        return
+    }
+    Field("Direction", result.direction.plain + if (result.direction == CallDirection.INCOMING) " (not the mailbox test)" else "")
+    Field(
+        "Call network type",
+        result.callNetworkType?.let { "$it, ${Radio.plain(it)}" } ?: "not reported by the phone",
+        result.bearer?.plain,
+        emphasize = true,
+    )
+    Field("Went active", if (result.wentActive) "yes" else "no")
+    if (result.callsSeen > 1) Note("${result.callsSeen} calls were seen during the watch.")
+    if (result.stoppedByLimit) Note("The watch stopped by itself after 15 minutes.")
 }
 
 @Composable
@@ -530,11 +710,14 @@ private fun DeviceRecordLine(state: UiState, bundle: OcdBundle, profileId: Strin
     if (capability !in Findings.deviceRecordCapabilities) return
     val device = state.readings?.device ?: return
     val match = records.recordsFor(profileId, capability, device).firstOrNull()
+    // Round 22: a supported summary next to off records says so, with or without this model's record.
+    val hint = LabelHints.offRecords(bundle, state.resolution, device, capability)
     if (match == null) {
         Note(
             "OCD publishes no file of this phone model for this SIM (none read, older than five years, " +
                 "or not bound to one model). The value above is the carrier summary.",
         )
+        hint?.let { Note(it.text) }
         return
     }
     val value = when (match.record.state) {
@@ -548,6 +731,7 @@ private fun DeviceRecordLine(state: UiState, bundle: OcdBundle, profileId: Strin
         "${match.sourceLine.replaceFirstChar(Char::uppercase)}. Configuration, not a test." +
             if (match.sameStack) "" else " This phone runs ${device.romFamily.plain}.",
     )
+    hint?.let { Note(it.text) }
 }
 
 private fun dimensionPlain(name: String): String = when (name) {

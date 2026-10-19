@@ -1,0 +1,50 @@
+name: Test
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up the JDK
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # The build pins build-tools 34.0.0 and compileSdk 36, and gradle.properties
+      # turns off AGP's own SDK download; install them only when the image lacks them.
+      - name: Check the Android SDK
+        run: |
+          missing=()
+          [ -d "$ANDROID_HOME/platforms/android-36" ] || missing+=("platforms;android-36")
+          [ -d "$ANDROID_HOME/build-tools/34.0.0" ] || missing+=("build-tools;34.0.0")
+          if [ ${#missing[@]} -gt 0 ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "${missing[@]}" > /dev/null
+          fi
+
+      - name: Unit tests, lint and the debug APK
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+
+      - name: Bundle script tests
+        run: python3 -m unittest discover -s tools -p 'test_*.py'

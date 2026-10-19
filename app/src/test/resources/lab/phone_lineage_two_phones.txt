@@ -1,0 +1,75 @@
+  Client:
+    PhoneFactory:
+      GsmCdmaPhone extends:
+       mPhoneId=0
+       mPhoneId=0
+       mImsRegistered=false
+      ImsPhoneCallTracker extends:
+       mForegroundCall=[ImsPhoneCall FG state: IDLE ]
+       mMmTelCapabilities=MmTel Capabilities - [Voice: false Video: false UT: false SMS: false CALL_COMPOSER: false BUSINESS_COMPOSER_ONLY: false]
+      ImsManager:
+        isVolteEnabledByPlatform = false
+        isVolteProvisionedOnDevice = true
+        isEnhanced4gLteModeSettingEnabledByUser = true
+        isVtEnabledByPlatform = false
+        isVtEnabledByUser = true
+        isWfcEnabledByPlatform = false
+        isWfcEnabledByUser = false
+        isWfcRoamingEnabledByUser = false
+        isVtProvisionedOnDevice = true
+        isWfcProvisionedOnDevice = true
+        isImsOverNrEnabledByPlatform = true
+      ImsPhone:
+        mImsMmTelRegistrationState = 0
+       Registration Log:
+        2026-07-13T15:49:11.359269 - handleImsRegistering: onImsMmTelProgressing imsRadioTech=WLAN
+        2026-07-13T15:49:47.441968 - handleImsRegistered: onImsMmTelConnected imsTransportType=WLAN
+        2026-07-13T15:59:01.180819 - handleImsRegistered: onImsMmTelConnected imsTransportType=WWAN
+        2026-07-13T15:59:37.470539 - handleImsRegistered: onImsMmTelConnected imsTransportType=WLAN
+        IMS features registration state: MMTEL=not registered, RCS=not registered
+       mImsRegistered=false
+       mForegroundCall=IDLE
+      AccessNetworksManager-0:
+        preferred transports=
+          default: WWAN
+          mms: WWAN
+          ims: WWAN
+          emergency: WWAN
+         mImsRegistered=false
+      GsmCdmaPhone extends:
+       mPhoneId=1
+       mPhoneId=1
+       mImsRegistered=true
+      ImsPhoneCallTracker extends:
+       mForegroundCall=[ImsPhoneCall FG state: IDLE ]
+       mMmTelCapabilities=MmTel Capabilities - [Voice: true Video: false UT: true SMS: true CALL_COMPOSER: false BUSINESS_COMPOSER_ONLY: false]
+      ImsManager:
+        isVolteEnabledByPlatform = true
+        isVolteProvisionedOnDevice = true
+        isEnhanced4gLteModeSettingEnabledByUser = true
+        isVtEnabledByPlatform = false
+        isVtEnabledByUser = true
+        isWfcEnabledByPlatform = true
+        isWfcEnabledByUser = true
+        isWfcRoamingEnabledByUser = false
+        isVtProvisionedOnDevice = true
+        isWfcProvisionedOnDevice = true
+        isImsOverNrEnabledByPlatform = true
+      ImsPhone:
+        mImsMmTelRegistrationState = 2
+       Registration Log:
+        2026-07-13T15:49:11.359269 - handleImsRegistering: onImsMmTelProgressing imsRadioTech=WLAN
+        2026-07-13T15:49:47.441968 - handleImsRegistered: onImsMmTelConnected imsTransportType=WLAN
+        2026-07-13T15:59:01.180819 - handleImsRegistered: onImsMmTelConnected imsTransportType=WWAN
+        2026-07-13T15:59:37.470539 - handleImsRegistered: onImsMmTelConnected imsTransportType=WLAN
+        IMS features registration state: MMTEL=registered, RCS=not registered
+       mImsRegistered=true
+       mForegroundCall=IDLE
+      AccessNetworksManager-1:
+        preferred transports=
+          default: WWAN
+          mms: WWAN
+          ims: WLAN
+          emergency: WWAN
+         mImsRegistered=true
+        2026-10-18T20:00:00.000000 - handleImsRegistered: onImsMmTelConnected imsTransportType=WLAN

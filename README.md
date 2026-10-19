@@ -2,7 +2,7 @@
 
 OCD Check is an Android app that reads a phone's SIM, network and carrier settings and compares them with [Open Carrier Data](https://github.com/open-carrier-data/open-carrier-data) (OCD). It is read-only. It changes nothing on the phone, and it has no internet permission, so it cannot send anything.
 
-**Status: early and unpublished.** This is version 0.1.0: stage 2 of the plan (view only, normal app) plus stage 2b (the optional read-only Shizuku deep check), and since OCD's round 17 the device records. It first ran on a phone on 2026-10-13 (Galaxy A50, Android 14, LIDL Connect SIM), and it is not on any store. The JVM tests pass and the debug build assembles. Only the owner's builds use it. That makes it a named consumer of OCD's data, not a public release. Its first public release fires OCD's trigger T1, and so does a public ROM that bundles it.
+**Status: early and unpublished.** This is version 0.2.0: stage 2 of the plan (view only, normal app) plus stage 2b (the optional read-only Shizuku deep check), since OCD's round 17 the device records, and since rounds 18, 19 and 22 the IMS reader for Android's own IMS (stage 2c), the guided call test (stage 2d, outgoing call) and the hint for a `supported` summary next to `off` device records. It first ran on a phone on 2026-10-13 (Galaxy A50, Android 14, LIDL Connect SIM), and it is not on any store. The JVM tests pass and the debug build assembles. Only the owner's builds use it. That makes it a named consumer of OCD's data, not a public release. Its first public release fires OCD's trigger T1, and so does a public ROM that bundles it.
 
 ## What it does
 
@@ -14,13 +14,14 @@ OCD Check is an Android app that reads a phone's SIM, network and carrier settin
 2. **Looks the SIM up in OCD's data**, which ships inside the app. It shows the matching profiles, general to specific, and the most specific profile's value for every capability. Each value comes with OCD's own plain meaning from its README, "Limits to read before you ship". For VoLTE, Wi-Fi calling, VoNR and video calling, OCD's value is a summary over every phone model's carrier table; where OCD has a device record for this phone model, the app shows it next to that summary: "this phone model's own file says on" (see "Device records" below).
 3. **Writes findings in plain language.** A finding compares a phone reading with an OCD value, for example "OCD's answer is supported; this phone's carrier settings have it off". A finding never says a feature works, that OCD is wrong, or that a carrier does not support something. Whether the phone is signed in for VoLTE or Wi-Fi calling is hidden from normal apps. The app says this needs the deep check and does not guess.
 4. **Builds a report** you can read, then copy or share through Android's share sheet. The full text is on screen before Copy and Share appear.
-5. **Optionally runs a deep check through Shizuku** (see below): whether the phone is signed in for VoLTE or Wi-Fi calling on Samsung's IMS, Samsung's Wi-Fi calling switch, whether the carrier's Wi-Fi calling server name resolves, and the phone's APN list. Without Shizuku the app works exactly as above.
+5. **Optionally runs a deep check through Shizuku** (see below): whether the phone is signed in for VoLTE or Wi-Fi calling, on Samsung's IMS or on Android's own IMS (LineageOS and other AOSP-based builds), over which network, for which services, and the last sign-out reason; whether the network offers voice over IMS (VoPS); the Wi-Fi calling switch; whether the carrier's Wi-Fi calling server name resolves, in a lookup by the shell and in the phone's own lookup; whether Wi-Fi calling is held back after a failed attempt; and the phone's APN list. Without Shizuku the app works exactly as above.
+6. **Offers a guided call test** with the deep check (see below): you call your SIM's own mailbox yourself, and the app records which network the call used (4G, 5G or Wi-Fi) and whether you heard the mailbox. The results stay in the app on this phone.
 
 ## Permissions, and why
 
 | Permission | Kind | Used for |
 |---|---|---|
-| `READ_PHONE_STATE` | asked at run time, with an explanation first | GID1, the carrier settings, the data and voice network type, and the list of active SIMs. Android's dialog calls this "make and manage phone calls". The app makes no calls and sees no calls. |
+| `READ_PHONE_STATE` | asked at run time, with an explanation first | GID1, the carrier settings, the data and voice network type, and the list of active SIMs. Android's dialog calls this "make and manage phone calls". The app makes no calls, and this permission shows it none; only the optional guided call test reads, through Shizuku, the state and network type of a call you place yourself. |
 | `ACCESS_NETWORK_STATE` | normal | The APN name and types of the mobile data connections |
 
 That is the whole list:
@@ -58,9 +59,9 @@ The app never reads, stores, shows or reports the following. Most of them are al
 - the build fingerprint, build user or build host, or the baseband string
 - APN usernames or passwords
 - raw dumps or logs
-- anything emergency-related
+- anything emergency-related, apart from two yes-or-no checks of the guided call test: whether Android calls the mailbox number an emergency number, and whether an emergency call started during the watch
 
-An emergency data connection is skipped, and the app never dials.
+An emergency data connection is skipped, and the app never dials. The guided call test shows only a short mailbox code from the app's own list, never an emergency or service number.
 
 ## What it never does
 
@@ -71,7 +72,7 @@ OCD's rule decisions of 2026-10-18 (round 18) allow passive checks only: with th
 - switch the radio, Wi-Fi or airplane mode;
 - place a call, or bring up an MMS connection;
 - talk to the carrier's Wi-Fi calling server (ePDG). The deep check only looks up the server's name, and that lookup may send one ping;
-- send anything by itself, or run a check in the background. There is no telemetry and no server, and it opens no issue for you;
+- send anything by itself, or run a check in the background. There is no telemetry and no server, and it opens no issue for you. The one check that goes on while the app is not in front is the guided call test's watch: you start it, it reads the call state while you are in the phone app, and it ends when you tap Stop, after 15 minutes, or when the app closes;
 - download data. OCD's data changes only with a new app release.
 
 Its results never become, withhold or rank an OCD value. A report can only start a review of OCD's sources. A ROM may bundle the app read-only; such a build may add only `READ_PRECISE_PHONE_STATE`.
@@ -87,7 +88,7 @@ Android hides these from normal apps:
 - the network a call actually uses;
 - GID2, and OCD profiles that match on ICCID or IMSI. The app lists these as "profiles this app cannot check".
 
-The deep check below reads the IMS registration (on Samsung), the APN list and the ePDG name. IMS errors, the call network, GID2 and the ICCID or IMSI matches stay out of reach.
+The deep check below reads the IMS registration (on Samsung's IMS and on Android's own), the last sign-out reason on Android's IMS, the APN list and the ePDG name; the guided call test reads the network a call uses. Samsung's IMS errors, GID2 and the ICCID or IMSI matches stay out of reach.
 
 ## The deep check (Shizuku)
 
@@ -95,7 +96,7 @@ The deep check below reads the IMS registration (on Samsung), the APN list and t
 
 **It is optional.** Without Shizuku, or without your OK in Shizuku's dialog, nothing in it runs, and the report says `"access_tier": "normal"`. The app asks Shizuku for access only when you tap "Allow in Shizuku", and runs the check only when you tap "Run deep check". With results, the report says `"access_tier": "shizuku"`.
 
-**It is read-only.** The whole allowlist is four commands, a closed Kotlin type (`core/DeepCheck.kt`, `ShellCommand`). Each builds its arguments from constants and two validated values: the SIM slot (0 to 3) and the home network code (5 or 6 ASCII digits). Nothing else can reach a process. For a 26202 SIM in the second slot (index 1), the commands are:
+**It is read-only.** The whole allowlist is eight commands, a closed Kotlin type (`core/DeepCheck.kt`, `ShellCommand`). Each builds its arguments from constants and two validated values: the SIM slot (0 to 3) and the home network code (5 or 6 ASCII digits). Nothing else can reach a process. For a 26202 SIM in the second slot (index 1), the commands are:
 
 | Command | What it reads | What the app keeps |
 |---|---|---|
@@ -103,24 +104,50 @@ The deep check below reads the IMS registration (on Samsung), the APN list and t
 | `settings get system wifi_call_enable2` | Samsung's Wi-Fi calling switch for the slot (run only when Samsung's IMS was found) | on, off or not set |
 | `ping -c1 -W2 epdg.epc.mnc002.mcc262.pub.3gppnetwork.org` | whether the carrier's standard ePDG name resolves | resolves, does not resolve or not known. Only the first output line is read |
 | `content query --uri content://telephony/carriers --projection apn:type:protocol:roaming_protocol:carrier_enabled:mvno_type:edited --where numeric='26202'` | the APN rows for the home network | the listed columns, up to 40 rows |
+| `dumpsys activity service com.android.phone` | Android telephony's own IMS state (run only when Samsung's IMS is not found) | for this slot's phone: signed in or not, Android's state word (`mImsMmTelRegistrationState`), the transport of the registration log's last sign-in, the services (calls, video calls, SMS), the code and name of the last sign-out reason (`ImsReasonInfo`, never its message), and the phone's own Wi-Fi calling switch (`isWfcEnabledByUser`) |
+| `dumpsys telephony.registry` | the registry's last known state of this slot's phone | voice over IMS offered on LTE and on 5G (VoPS), and the transports on which the IMS data connection is connected, with LTE or 5G told apart. The guided call test reads the call state, the foreground call state, `mCallNetworkType` and whether `mOutgoingCallEmergencyNumber` changed |
+| `logcat -d -v epoch -b main -b radio -s EpdgSelector:V IwlanDataService[1]:V EpdgTunnelManager[1]:V` | the lines of Android's IWLAN service in the log, every other tag silenced; `-d` only dumps (run only on Android's IMS) | the phone's own ePDG lookup (whether it asked for the standard name, whether it got an address, how long ago), whether the Wi-Fi calling tunnel is up, the error type of the last refusal, and whether a network back-off timer or Android's retry wait holds Wi-Fi calling back, and for how long |
+| `dumpsys connectivity` | the connected Wi-Fi's DNS servers | only their class: in the local network (usually the router), outside it, mixed, none, or not on Wi-Fi |
 
 How the output is handled:
 - **Parsed where it is read.** Shizuku starts the app's `DeepCheckService` as the shell user (or root) in a process of its own. That process runs the commands and parses their output line by line. Each line is dropped once it has been looked at.
-- **Only typed fields reach the app.** The result is enums, booleans and short strings checked for shape. IMSI, ICCID, IMEI, phone numbers, SIP URIs and IP addresses have no field to land in; an MNO or APN name with a run of 9 or more digits is dropped. The app decodes the result strictly, so an unknown key or a wrong shape fails.
+- **Only typed fields reach the app.** The result is enums, booleans, numbers and short strings checked for shape. IMSI, ICCID, IMEI, phone numbers, SIP URIs and IP addresses have no field to land in; an MNO or APN name with a run of 9 or more digits is dropped. The registry and the phone dump hold phone numbers, cell identities and the emergency number list, and the log holds server addresses; the parsers read none of them into a field. The app decodes the result strictly, so an unknown key or a wrong shape fails.
 - **The APN query never asks for credentials.** It reads no user name, password, server, proxy, port or MMSC column, and not the MVNO match value (an SPN, GID or IMSI pattern). Emergency and deleted rows are left out.
 - **The ePDG lookup touches the network.** It sends one DNS query through the phone's default network. If the name resolves, the command may send one ping to the carrier's server. The app itself still has no internet permission; the shell user does the lookup. The app records whether the default network was Wi-Fi and whether Private DNS was on, with `ACCESS_NETWORK_STATE`. The lookup is IPv4 only, as in `phone_check.py`, and a carrier may use another server name, so a failure is a strong hint, not proof.
 
 The app never sends a write command. Shizuku's grant could write (`settings put`, `cmd phone`, `content insert`), so tests guard the code (`AllowlistTest`):
-- every command in the allowlist, for every slot, is checked against a list of write verbs and shell characters;
+- every command in the allowlist, for every slot, is checked against a list of write verbs and shell characters; `dumpsys` may name only the four services above, and `logcat` must be exactly the dump above, never with an option that clears, resizes, rotates or writes a file;
 - only `DeepCheckService.kt` may start a process, and only from a `ShellCommand`;
 - the app may call only Shizuku's status, permission and user-service methods, never its binder wrapper, remote process or `exit`.
 
-**Findings.** The deep check adds findings in the same plain style: VoLTE, VoNR or Wi-Fi calling signed in; not signed in for calls over 4G, with possible causes where OCD's tables turn VoLTE on; Wi-Fi calling switched on but not signed in. When the ePDG name also does not resolve, the finding names the A50 fix: Private DNS such as `dns.google`, or fixing the router's DNS. "Signed in" means the phone registered with the carrier's IMS; it never says a call connects.
+**Android's own IMS (round 18).** On a phone without Samsung's IMS, such as the S20 on LineageOS with PHH IMS, the deep check reads Android telephony's state. The parsers are ports of OCD Lab's (`tools/ocd_lab/lab_parsers.py` in OCD's private repository: `parse_aosp_ims`, `ims_with_pdn`, `parse_registry_phone`, `parse_iwlan_log` with `iwlan_summary`, and `wifi_dns_servers`), and the lab's fixtures from the S20 are their test inputs. The transport comes from where the IMS data connection is, not only from the IMS registration log. On 2026-10-19 the lab found the S20's log still saying Wi-Fi while the IMS data connection had moved to LTE half an hour earlier. When the data connection is connected on exactly one transport, that transport counts, and the log's is kept beside it (`registration_log_transport`) when the two differ.
+
+**Findings.** The deep check adds findings in the same plain style: VoLTE, VoNR or Wi-Fi calling signed in, with a note when the registration log names another network; not signed in for calls over 4G, with possible causes where OCD's tables turn VoLTE on, or with the cell's own statement when it does not offer voice over IMS (VoPS); Wi-Fi calling switched on but not signed in. When the ePDG name does not resolve, in the shell's lookup or in the phone's own, the finding names the A50 fix: Private DNS such as `dns.google`, or fixing the router's DNS; with a resolver in the local network it says the router passes the lookup on. When a back-off holds Wi-Fi calling, a finding says by what and for about how long. "Signed in" means the phone registered with the carrier's IMS; it never says a call connects.
 
 **Limits.**
-- **IMS state on Samsung only.** The project's study of Android access (`research/ocd-check-app-20261010/notes/android-access.md`) names `dumpsys phone` for other phones. In the AOSP 16 source, `dumpsys phone` prints which IMS service is bound but not whether it is registered. The registration line is in the DataNetworkController dump, which comes from `dumpsys activity service com.android.phone`. That source is not in the notes and no phone output for it is at hand, so other phones show "no Samsung IMS service" and the app does not guess.
-- **No call network type, IMS error codes or Wi-Fi calling back-off.** These need `dumpsys telephony.registry` or logs, which hold phone numbers and cell IDs.
+- **The log rotates.** The main log buffer on the S20 holds about 256 KiB, a few minutes on a busy phone. The phone's own ePDG lookup shows only when it is still in the buffer; otherwise the app says "not in the log". PHH IMS's own Wi-Fi calling pause is logged under another tag and is not read.
+- **Samsung's IMS errors and back-off stay out of reach.** Samsung's ePDG client does not use AOSP's IWLAN service.
+- **One ePDG name.** The shell's lookup is IPv4 only and asks for the standard name; a carrier may use another.
 - **Shizuku 11 or newer.** On a phone without root, Shizuku must be started again after every reboot.
+
+## The guided call test (round 19)
+
+OCD's round 19 lists "a guided call test in the app: read-only, allowlisted, observing the call type" as its third step. The app has the outgoing half. It needs the deep check, because the network a call uses is hidden from normal apps; `READ_PRECISE_PHONE_STATE`, which would show it, is for system apps only.
+
+**What you do.**
+1. The app shows your SIM's own mailbox number, for example 5500 for LIDL Connect. Tap Start.
+2. Open your phone app and dial that number yourself. Listen until the mailbox answers, then hang up.
+3. Come back, tap Stop, and say whether you heard the mailbox: yes, no, or not sure.
+
+For Wi-Fi calling, round 19 counts a test only in airplane mode with Wi-Fi on. Set that yourself before you start; the app changes no setting. A Wi-Fi call made with airplane mode off is kept with a note saying so.
+
+**Which number.** Only the mailbox numbers in `app/src/main/assets/call-targets.json`, a byte-identical copy of OCD Lab's `tools/ocd_lab/call_targets.json`. The SIM's name rule comes first, then its network code (lab `mailbox_for`). Before a number is shown, it must be a plain 3 to 6 digit short code. It must not be on a fixed list of emergency and public-service numbers (112, 110, 911, 116xxx and others) or start with 11, 19 or 0. Android must also not call it an emergency number (`TelephonyManager.isEmergencyNumber`, exact match, which needs no permission). If any check fails, or Android cannot answer, the app shows no number and offers no test. It never falls back to another number. The app never dials, answers or ends a call, and it opens no dialer.
+
+**What it watches.** Start begins a watch in the deep check's process, separate from the app's. Once a second it runs `dumpsys telephony.registry` and keeps, for this slot, only the call state (idle, ringing, off-hook), the foreground call state (dialing, alerting, active and so on) and `mCallNetworkType`: 13 is LTE (VoLTE), 18 IWLAN (Wi-Fi calling), 20 NR (VoNR), and a 2G or 3G type is a call outside IMS. These are TelephonyManager's network types, as in OCD Lab's `call_type_reading`. The watch also notes whether `mOutgoingCallEmergencyNumber` changed. It runs in Shizuku's process so that it goes on while the app is in the background, and it stops at Stop, after 15 minutes, or when the app closes. It keeps counts and states only, never a sample list, a number or a time.
+
+**What it records.** The direction: an outgoing call shows dialing or alerting, or goes off-hook from idle without ringing. It also records whether the call went active, the call network type (the one read while active, when there is one), how many calls the watch saw, and your answer. If an emergency call shows during the watch, the app keeps nothing from it and says so.
+
+**Where results go.** A kept test goes into the app's private storage on this phone (`call-tests.json`, at most 50; the app has no backup and no internet permission). It holds the date, the phone model, code name, software family, Android version and IMS stack, the SIM's network code and name, the OCD profile that answered, the mailbox brand and short code, and the measurement. It is not in the report. Round 19 keeps such results apart as a tested status that never becomes an OCD value, and nothing here uploads. "Delete these results" removes the file. The screen says what was measured, for example "An outgoing call, call network type 13 (LTE): VoLTE (call over 4G), went active; you heard the mailbox." It never says a feature works: round 19's "seen working" also needs an incoming call, repeats and other people's reports.
 
 ## The report
 
@@ -129,7 +156,11 @@ The report is JSON with a fixed set of keys. `app.access_tier` is `normal`, or `
 - **Findings** go in as codes, not sentences.
 - **Device records** for this phone model go in under `ocd.device_records`, per capability, as `state`, `source`, `stack`, `newest_entry` and `this_stack` (whether the record holds for the software the phone runs).
 - **Carrier settings** go in only as a per-key comparison with OCD's answer (`matches_ocd`), never as values.
-- **Deep check results** go in only as typed fields. `ims_registration` is `needs_deep_check` without them. With them, it holds `source`, `registered`, `state`, `transport`, `services` and `mno`. Two more blocks join it: `wifi_calling` (`switch`, `epdg_name`, `lookup_network`, `private_dns_active`) and `apn_list` (`readable`, `rows` with `apn`, `types`, `protocol`, `roaming_protocol`, `carrier_enabled`, `mvno_type` and `edited`, and `left_out`).
+- **Deep check results** go in only as typed fields. `ims_registration` is `needs_deep_check` without them. With them, it holds `source` (`samsung_ims`, `aosp_telephony`, `not_found` or `unreadable`), `registered`, `state`, `transport`, `services`, and on Samsung `mno`. On Android's IMS it adds `ims_pdn`, `registration_log_transport` (only when the log differs), `last_disconnect_code` and `last_disconnect_reason`. More blocks join it:
+  - `network_offer`: `lte_vops` and `nr_vops`;
+  - `wifi_calling`: `switch`, `epdg_name`, `lookup_network`, `private_dns_active`, `wifi_resolver`; on Android's IMS also `phone_lookup` (`resolved`, `no_address`, `other_name` or `not_in_log`), `phone_lookup_age` (`under_1h`, `under_1d` or `older`, never a time), `tunnel`, `last_refusal`, `held_back_by` and `held_back_minutes`;
+  - `apn_list`: `readable`, `rows` with `apn`, `types`, `protocol`, `roaming_protocol`, `carrier_enabled`, `mvno_type` and `edited`, and `left_out`.
+- **Guided call tests** are not in the report.
 - **Dates:** the report has the check date, never a time.
 
 Before Copy or Share is offered, every key and string goes through a fail-closed privacy scan (`core/PrivacyScan.kt`). It ports these patterns from OCD's private tools:
@@ -145,7 +176,7 @@ Example, built by the tests from real OCD profiles (a LIDL Connect SIM in a Gala
 ```json
 {
     "schema": "ocd-check-report.v1",
-    "app": { "name": "OCD Check", "version": "0.1.0", "access_tier": "normal" },
+    "app": { "name": "OCD Check", "version": "0.2.0", "access_tier": "normal" },
     "ocd_data": {
         "source_commit": "69c56e1f087073d2fa4c254d47cfacf0d736c4d4",
         "source_commit_date": "2026-10-10",
@@ -192,7 +223,7 @@ With the deep check, the same SIM before the A50's DNS fix gives (abridged):
 
 ```json
 {
-    "app": { "name": "OCD Check", "version": "0.1.0", "access_tier": "shizuku" },
+    "app": { "name": "OCD Check", "version": "0.2.0", "access_tier": "shizuku" },
     "ims_registration": {
         "source": "samsung_ims", "registered": true, "state": "registered",
         "transport": "lte", "services": ["mmtel", "smsip"], "mno": "Vodafone_DE"
@@ -258,15 +289,19 @@ Two differences from the resolver:
 
 The app writes nothing from a record into the phone. The findings codes are `device_record_<state>:<capability>` and `device_record_other_stack_<state>:<capability>`.
 
-OCD's round 22 lets a VoLTE, Wi-Fi calling or video calling summary read `supported` where its single-family off and at least one on are device records. Before the bundle is rebuilt from a publish with such labels, the finding for a `supported` value gets one more sentence when this model or other models have an `off` record: one maker's or maintainer's own files turn it off on some phone models. That change is planned, not built.
+OCD's round 22 lets a VoLTE, Wi-Fi calling or video calling summary read `supported` where its single-family off and at least one on are device records. So a `supported` summary can sit next to `off` records. Where it does on the most specific profile, the app says so with the correctness ruling's sentence and the count, for example "11 phone models' own files turn Video calling off for this SIM (one maker's or maintainer's files; OCD does not count that as proof)." (`core/LabelHints.kt`):
+- under the summary, in the device-records lines, whether this model has a record or not;
+- in the `phone_off_ocd_supported:<capability>` finding; the code stays the same;
+- in this model's own `device_record_*` finding. When this model's own file is one of the `off` records, it adds that the model's file comes before OCD's summary.
+
+Only the three switches step 2 can label count, and only records built from the bundle's own data. `LabelHintTest` checks it on O2 DE (`26203`) video calling, as round 22 orders, with the records the public `carrier-variants.json` holds and the label set to `supported` as step 2 makes it. The bundled asset is still from public `885c0ba3`, before any step-2 label, so on a phone the hint shows only after the bundle is rebuilt from a step-2 publish.
 
 The bundled data is OCD's. The OCD contributors waive their own rights in it under CC0 1.0; see OCD's `DATA-LICENSE.md`.
 
 ## Planned
 
 These steps follow OCD's rule decisions. Each stays read-only and adds no permission.
-- **IMS state on other phones** (round 18). A reader for AOSP IMS stacks such as LineageOS, after the owner captures one redacted `dumpsys activity service com.android.phone` sample on the S20 with an active SIM. It keeps only the registration and its newest transport.
-- **A guided call test** (round 19). You place one outgoing call and receive one, never to or from an emergency number. The app never dials. It watches the call state, and in the deep check the call's network type from `dumpsys telephony.registry`; the parser drops numbers and cell fields at once. It discards a session in which an emergency call shows. Then it asks whether both sides heard each other. A measured outgoing and incoming call with confirmed audio is the evidence OCD's tested layer would count. Debug builds turn it into a ledger draft for the owner.
+- **The rest of the guided call test** (round 19). The outgoing mailbox call is built (see above). Still to come: the incoming call, where someone calls you and both sides confirm they heard each other; the call state on the normal tier, without Shizuku; and, in debug builds, a ledger draft for the owner. A measured outgoing and incoming call with confirmed audio is the evidence OCD's tested layer would count.
 
 Active verification, trying other settings on the phone, was rejected in round 18. Round 23, being judged on 2026-10-19, reconsiders it for the app. Until it rules, the app stays as described here.
 
@@ -286,7 +321,7 @@ echo "sdk.dir=/path/to/android-sdk" > local.properties
 python3 -m unittest discover -s tools -p 'test_*.py'
 ```
 
-The APK is `app/build/outputs/apk/debug/app-debug.apk`.
+The APK is `app/build/outputs/apk/debug/app-debug.apk`. CI (`.github/workflows/test.yml`) runs the unit tests, lint, the debug build and the bundle script's tests on every pull request.
 
 **Version pins.** The project uses Android Gradle Plugin 8.7.3, the newest line that still builds with build-tools 34.0.0; AGP 8.8 and later need build-tools 35. `gradle.properties` silences AGP 8.7's warning about compileSdk 36, and `android.builder.sdkDownload=false` stops the build from fetching SDK packages on its own. The androidx versions match that AGP:
 - Compose BOM 2025.06.00
@@ -297,9 +332,12 @@ To move to newer libraries, install build-tools 35 or later, raise AGP, and then
 
 **Tests.** JVM tests sit under `app/src/test`. They use a fixture of 17 real profiles from `lookup.json` (`app/src/test/resources/fixture-bundle.json`):
 - `MatcherTest`: the 26202 base profile, LIDL Connect, the Vodafone.de SPN, the 1&1 GID1 profile, the Telekom stack from OCD's README example, Tracfone's specific carrier ID, and ICCID, IMSI and GID2 profiles;
-- `FindingsTest`: the comparisons, no German MMS claim, no "works" or "OCD is wrong" wording, the deep-check finding, and the deep check's findings (the A50 DNS case, signed in over 4G or Wi-Fi, not signed in over 4G);
-- `ReportTest`: the key allowlist, the redaction and fail-closed scan, the GID1 switch, date only, both access tiers, and a Shizuku report built from dumps full of identifiers;
+- `FindingsTest`: the comparisons, no German MMS claim, no "works" or "OCD is wrong" wording, the deep-check finding, and the deep check's findings (the A50 DNS case, signed in over 4G or Wi-Fi, not signed in over 4G), and on Android's IMS the S20 with the LIDL SIM on 2026-10-19 (signed in over LTE while the log says Wi-Fi, the phone's own lookup empty, Android's retry wait), a cell without VoPS, and the wording rules;
+- `ReportTest`: the key allowlist, the redaction and fail-closed scan, the GID1 switch, date only, both access tiers, a Shizuku report built from dumps full of identifiers, and a report from Android's IMS with the new fields;
 - `DeepParsersTest`: the deep check's parsers on `phone_check.py`'s Samsung IMS fixture, ping's first line, the Wi-Fi calling switch and APN rows in the `content` tool's format, with made-up identifiers mixed in that must not come out;
+- `AospParsersTest`: the AOSP IMS reader's parsers on OCD Lab's fixtures (`app/src/test/resources/lab/`, copied from `tools/ocd_lab/fixtures/` at private `main` `0f21d239`): the registry with and without a SIM, the IMS data connection beside a stale log, the call network types, the two-phone IMS dump, the back-off and selector-failure logs, the live log shape of 2026-10-19, the Wi-Fi resolver classes, and the whole deep check on LineageOS with identifiers mixed in;
+- `CallTestTest`: the bundled mailbox table, the emergency and service-number guard with poisoned tables and Android's answer, the watch summaries for outgoing, incoming, Wi-Fi, 5G and 2G calls, the emergency discard, and the stored wording;
+- `LabelHintTest`: round 22's hint on O2 DE video calling (`app/src/test/resources/fixture-o2-step2.json`) for the S20 without a record, a model whose own file is off, one whose file is on, and the cases without a hint;
 - `AllowlistTest`: the guards above;
 - `BundleTest`: the committed asset parses;
 - `ManifestTest`: only the two permissions and no `INTERNET`, in the app's manifest and in the merged one, and every exported component but the launcher behind a system-only permission.
@@ -310,12 +348,14 @@ To move to newer libraries, install build-tools 35 or later, raise AGP, and then
 
 | Path | Contents |
 |---|---|
-| `app/src/main/java/.../core/` | plain Kotlin, no Android imports: bundle model, matcher, findings, report, privacy scan, radio names, and the deep check's allowlist, parsers and findings |
+| `app/src/main/java/.../core/` | plain Kotlin, no Android imports: bundle model, matcher, findings, report, privacy scan, radio names, the deep check's allowlist, parsers (`DeepParsers.kt` for Samsung, `AospParsers.kt` for Android's own IMS) and findings, the call test (`CallTest.kt`) and round 22's hint (`LabelHints.kt`) |
 | `app/src/main/java/.../phone/PhoneReader.kt` | every Android read, reduced to the allowlisted fields at once |
-| `app/src/main/java/.../phone/ShizukuAccess.kt` | Shizuku status and permission, and starting the deep check |
-| `app/src/main/java/.../phone/DeepCheckService.kt` | the Shizuku user service: runs the allowlist as the shell user and returns typed results |
+| `app/src/main/java/.../phone/ShizukuAccess.kt` | Shizuku status and permission, starting the deep check, and the call test's watch |
+| `app/src/main/java/.../phone/DeepCheckService.kt` | the Shizuku user service: runs the allowlist as the shell user, returns typed results, and runs the call test's watch |
+| `app/src/main/java/.../phone/CallTestPhone.kt` | the call test's app-side reads (mailbox table, Android's emergency answer, airplane mode) and its private storage |
 | `app/src/main/java/.../ui/` | one Compose activity, one scrolling screen, a ViewModel |
 | `app/src/main/assets/ocd-lookup.json.gzip` | the bundled OCD data |
+| `app/src/main/assets/call-targets.json` | OCD Lab's mailbox table, copied unchanged |
 | `tools/build_bundle.py` | builds the asset from OCD's public checkout |
 
 ## Licence

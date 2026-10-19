@@ -36,11 +36,29 @@ class AllowlistTest {
         Regex("^settings (put|delete|reset)\\b"),
         Regex("^content (insert|update|delete|call|write|bulkinsert)\\b"),
         Regex("^cmd\\b"),
-        Regex("^(am|pm|svc|setprop|wm|input|appops|device_config|telecom|ip|iptables|ndc|reboot|rm|mv|cp|dd|chmod|chown|kill|killall|stop|start|monkey|logcat|bmgr|dpm|sm|vdc|resetprop|su|sh|bash|toybox|busybox)\\b"),
+        Regex("^(am|pm|svc|setprop|wm|input|appops|device_config|telecom|ip|iptables|ndc|reboot|rm|mv|cp|dd|chmod|chown|kill|killall|stop|start|monkey|bmgr|dpm|sm|vdc|resetprop|su|sh|bash|toybox|busybox)\\b"),
+        // logcat may only dump: no clearing, buffer resizing, file output, rotation or prune list.
+        Regex("^logcat\\b.*\\s(-c|--clear|-G|--buffer-size|-f|--file|-r|--rotate-kbytes|-n|--rotate-count|-P|--prune|-L|--last)\\b"),
         Regex("\\b(set-value|clear-values|override|set-ims-service|enable|disable|grant|revoke|install|uninstall|clear)\\b"),
         Regex("content://telephony/carriers/(restore|update_db|delete|preferapn|dpc)"),
         Regex("[;&|`$<>\\\\\\n]"),
     )
+
+    /** The only dumps the deep check reads. */
+    private val dumpsysServices = listOf(
+        listOf("dumpsys", "secims"),
+        listOf("dumpsys", "activity", "service", "com.android.phone"),
+        listOf("dumpsys", "telephony.registry"),
+        listOf("dumpsys", "connectivity"),
+    )
+
+    /** logcat only dumps (-d) the IWLAN tags of one slot, every other tag silenced (-s). */
+    private val logcatDumps = (0..3).map { slot ->
+        listOf(
+            "logcat", "-d", "-v", "epoch", "-b", "main", "-b", "radio", "-s",
+            "EpdgSelector:V", "IwlanDataService[$slot]:V", "EpdgTunnelManager[$slot]:V",
+        )
+    }
 
     @Test
     fun `every allowlisted command is read-only`() {
@@ -50,19 +68,23 @@ class AllowlistTest {
             val line = argv.joinToString(" ")
             for (verb in writeVerbs) assertFalse("$line matches $verb", verb.containsMatchIn(line))
             when (argv.first()) {
-                "dumpsys" -> assertEquals(listOf("dumpsys", "secims"), argv)
+                "dumpsys" -> assertTrue(line, argv in dumpsysServices)
                 "settings" -> assertEquals(listOf("settings", "get", "system"), argv.take(3))
                 "ping" -> assertEquals(listOf("ping", "-c1", "-W2"), argv.take(3))
                 "content" -> assertEquals(listOf("content", "query"), argv.take(2))
+                "logcat" -> assertTrue(line, argv in logcatDumps)
                 else -> throw AssertionError("not on the read-only tool list: $line")
             }
         }
     }
 
     @Test
-    fun `the allowlist is exactly the four commands, each with a fixed shape`() {
+    fun `the allowlist is exactly the eight commands, each with a fixed shape`() {
         assertEquals(
-            listOf("SAMSUNG_IMS", "WIFI_CALLING_SWITCH", "EPDG_LOOKUP", "APN_LIST"),
+            listOf(
+                "SAMSUNG_IMS", "WIFI_CALLING_SWITCH", "EPDG_LOOKUP", "APN_LIST",
+                "AOSP_IMS", "TELEPHONY_REGISTRY", "IWLAN_LOG", "WIFI_DNS",
+            ),
             ShellCommand.entries.map { it.name },
         )
         val target = DeepCheckTarget(SimSlot.of(1)!!, HomeNetwork.of("26202"))
@@ -73,12 +95,26 @@ class AllowlistTest {
                 "ping -c1 -W2 epdg.epc.mnc002.mcc262.pub.3gppnetwork.org",
                 "content query --uri content://telephony/carriers " +
                     "--projection apn:type:protocol:roaming_protocol:carrier_enabled:mvno_type:edited --where numeric='26202'",
+                "dumpsys activity service com.android.phone",
+                "dumpsys telephony.registry",
+                "logcat -d -v epoch -b main -b radio -s EpdgSelector:V IwlanDataService[1]:V EpdgTunnelManager[1]:V",
+                "dumpsys connectivity",
             ),
             ShellCommand.entries.map { it.argv(target)!!.joinToString(" ") },
         )
         val noHome = DeepCheckTarget(SimSlot.of(0)!!, null)
         assertNull(ShellCommand.EPDG_LOOKUP.argv(noHome))
         assertNull(ShellCommand.APN_LIST.argv(noHome))
+        assertNull(ShellCommand.WIFI_DNS.argv(noHome))
+    }
+
+    @Test
+    fun `the logcat guard catches every writing or rotating option`() {
+        val guard = writeVerbs.last { "logcat" in it.pattern }
+        for (bad in listOf("logcat -c", "logcat -d -b all -c", "logcat -G 16M", "logcat -d -f /sdcard/x", "logcat -P '~!'", "logcat -L")) {
+            assertTrue(bad, guard.containsMatchIn(bad))
+        }
+        for (argv in logcatDumps) assertFalse(argv.joinToString(" "), guard.containsMatchIn(argv.joinToString(" ")))
     }
 
     @Test
@@ -111,21 +147,33 @@ class AllowlistTest {
                     ShellCommand.WIFI_CALLING_SWITCH -> "1"
                     ShellCommand.EPDG_LOOKUP -> "ping: unknown host x"
                     ShellCommand.APN_LIST -> "No result found."
+                    ShellCommand.AOSP_IMS -> "No services match"
+                    ShellCommand.TELEPHONY_REGISTRY -> "last known state:"
+                    ShellCommand.IWLAN_LOG -> "--------- beginning of main"
+                    ShellCommand.WIFI_DNS -> "NetworkAgentInfos:"
                 }
                 return read(output.lineSequence())
             }
         }
         val other = DeepCheck.run(DeepCheckTarget(SimSlot.of(0)!!, HomeNetwork.of("26202")), runner)
-        assertEquals(listOf(ShellCommand.SAMSUNG_IMS, ShellCommand.EPDG_LOOKUP, ShellCommand.APN_LIST), ran)
+        assertEquals(
+            listOf(
+                ShellCommand.SAMSUNG_IMS, ShellCommand.TELEPHONY_REGISTRY, ShellCommand.AOSP_IMS, ShellCommand.IWLAN_LOG,
+                ShellCommand.EPDG_LOOKUP, ShellCommand.WIFI_DNS, ShellCommand.APN_LIST,
+            ),
+            ran,
+        )
+        // Neither Samsung's IMS nor a phone section for the slot: not found, and no switch guessed.
         assertEquals(ImsSource.NOT_FOUND, other.ims.source)
-        assertEquals(WifiCallingSwitch.NOT_CHECKED, other.wifiCallingSwitch)
+        assertEquals(WifiCallingSwitch.UNREADABLE, other.wifiCallingSwitch)
         assertEquals(EpdgName.DOES_NOT_RESOLVE, other.epdgName)
 
         ran.clear()
         val noHome = DeepCheck.run(DeepCheckTarget(SimSlot.of(0)!!, null), runner)
-        assertEquals(listOf(ShellCommand.SAMSUNG_IMS), ran)
+        assertEquals(listOf(ShellCommand.SAMSUNG_IMS, ShellCommand.TELEPHONY_REGISTRY, ShellCommand.AOSP_IMS, ShellCommand.IWLAN_LOG), ran)
         assertEquals(EpdgName.NOT_CHECKED, noHome.epdgName)
         assertNull(noHome.apnList)
+        assertNull(noHome.wifiResolver)
     }
 
     @Test
