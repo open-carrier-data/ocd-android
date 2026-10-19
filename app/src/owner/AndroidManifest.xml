@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The owner build only (src/owner; round 25 B and the owner direction of 2026-10-19).
+    Debug and release never merge this file: they keep READ_PHONE_STATE and
+    ACCESS_NETWORK_STATE only, without INTERNET (ManifestTest).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Pulls OCD's tagged releases from GitHub (owner direction: "update pulls"). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The live-settings notification with its one-tap "Revert all". -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Re-applies the kept values of the SIM in each slot after a boot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!--
+        The privileged route: granted only when the app is installed as a priv-app
+        with priv-app/privapp-permissions-ocd-check-owner.xml. Installed by adb,
+        none of them is granted and the Shizuku route is used.
+    -->
+    <uses-permission
+        android:name="android.permission.MODIFY_PHONE_STATE"
+        tools:ignore="ProtectedPermissions,PermissionImpliesUnsupportedChromeOsHardware" />
+    <uses-permission
+        android:name="android.permission.READ_PRIVILEGED_PHONE_STATE"
+        tools:ignore="ProtectedPermissions,PermissionImpliesUnsupportedChromeOsHardware" />
+    <uses-permission
+        android:name="android.permission.WRITE_APN_SETTINGS"
+        tools:ignore="ProtectedPermissions,PermissionImpliesUnsupportedChromeOsHardware" />
+    <uses-permission
+        android:name="android.permission.DUMP"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission
+        android:name="android.permission.READ_LOGS"
+        tools:ignore="ProtectedPermissions" />
+
+    <application
+        android:label="@string/app_name_owner"
+        android:largeHeap="true"
+        tools:replace="android:label">
+        <activity
+            android:name=".owner.OwnerActivity"
+            android:exported="false"
+            android:label="@string/owner_tools" />
+
+        <receiver
+            android:name=".owner.RevertAllReceiver"
+            android:exported="false" />
+
+        <!-- Boot and carrier-config changes (both exempt from the implicit-broadcast limits). -->
+        <receiver
+            android:name=".owner.OwnerBootReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.telephony.action.CARRIER_CONFIG_CHANGED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

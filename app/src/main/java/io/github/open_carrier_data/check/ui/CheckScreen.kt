@@ -49,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.open_carrier_data.check.BuildConfig
+import io.github.open_carrier_data.check.OwnerHook
 import io.github.open_carrier_data.check.core.ApnEdited
 import io.github.open_carrier_data.check.core.ApnListParser
 import io.github.open_carrier_data.check.core.AudioAnswer
@@ -92,6 +93,8 @@ fun CheckScreen(viewModel: CheckViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Header(state, viewModel::refresh)
+            // Nothing in debug and release; the owner build's entry card.
+            OwnerHook.Entry()
             state.bundleError?.let {
                 Section("The bundled OCD data could not be read") { Note(it) }
                 return@Column

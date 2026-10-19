@@ -181,7 +181,9 @@ class AllowlistTest {
         assertEquals(ShizukuApiConstants.USER_SERVICE_TRANSACTION_destroy, DeepCheckProtocol.DESTROY)
     }
 
-    private val mainSources: List<File> = File("src/main/java").walkTopDown().filter { it.extension == "kt" }.toList()
+    /** Everything debug and release compile: src/main and the no-op owner hook in src/readonly. */
+    private val mainSources: List<File> = listOf("src/main/java", "src/readonly/java")
+        .flatMap { root -> File(root).walkTopDown().filter { it.extension == "kt" }.toList() }
 
     @Test
     fun `only the deep check's runner starts a process, and only from a ShellCommand`() {

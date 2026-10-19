@@ -3,6 +3,8 @@ package io.github.open_carrier_data.check
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeFalse
+import org.junit.Before
 import org.junit.Test
 import org.w3c.dom.Document
 import org.w3c.dom.Element
@@ -20,6 +22,10 @@ import javax.xml.parsers.DocumentBuilderFactory
  * Shizuku app, not by Android, and grants nothing until Shizuku's own dialog.
  */
 class ManifestTest {
+    /** These hold for debug and release; the owner build's own manifest test is OwnerManifestTest (src/testOwner). */
+    @Before
+    fun readOnlyBuildsOnly() = assumeFalse(BuildConfig.OWNER)
+
     private val android = "http://schemas.android.com/apk/res/android"
     private val tools = "http://schemas.android.com/tools"
     private val allowed = setOf("android.permission.READ_PHONE_STATE", "android.permission.ACCESS_NETWORK_STATE")

@@ -14,6 +14,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import io.github.open_carrier_data.check.OwnerHook
 
 class MainActivity : ComponentActivity() {
     private val viewModel: CheckViewModel by viewModels()
@@ -21,6 +22,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // No-op in debug and release; the owner build checks for its own leftovers here.
+        OwnerHook.onAppStart(applicationContext)
         setContent {
             OcdCheckTheme {
                 CheckScreen(viewModel)

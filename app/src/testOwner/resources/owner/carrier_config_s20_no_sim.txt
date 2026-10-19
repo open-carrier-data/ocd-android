@@ -1,0 +1,44 @@
+CarrierConfigLoader: com.android.phone.CarrierConfigLoader@11ac534
+    Default Values from CarrierConfigManager : 
+            5g_nr_ssrsrp_thresholds_int_array = [-110, -90, -80, -65]
+            allowed_initial_attach_apn_types_string_array = [ia, default]
+            carrier_nr_availabilities_int_array = [1, 2]
+            carrier_use_ims_first_for_emergency_bool = true
+            carrier_volte_available_bool = false
+            carrier_vt_available_bool = false
+            carrier_wfc_ims_available_bool = false
+            ims.ims_user_agent_string = #MANUFACTURER#_#MODEL#_Android#AV#_#BUILD#
+            imssms.sms_over_ims_supported_bool = true
+            vonr_enabled_bool = false
+
+Phone Id = 0
+    mConfigFromDefaultApp : null 
+
+    mConfigFromCarrierApp : null 
+
+    mPersistentOverrideConfigs : null 
+
+    mOverrideConfigs : null 
+
+Phone Id = 1
+    mConfigFromDefaultApp : 
+            ims.ims_user_agent_string = 
+
+    mConfigFromCarrierApp : null 
+
+    mPersistentOverrideConfigs : null 
+
+    mOverrideConfigs : null 
+
+    mNoSimConfig : 
+
+mNumPhones=2
+mPlatformCarrierConfigPackage=org.lineageos.samsungcarrierbridge
+mServiceConnection=[null, org.lineageos.samsungcarrierbridge]
+mServiceBoundForNoSimConfig=[false, false]
+mHasSentConfigChange=[true, true]
+mFromSystemUnlocked=[false, false]
+mNeedNotifyCallback=[false, false]
+
+CarrierConfigLoader local log=
+    2026-07-21T14:35:44.504721 - Broadcast CARRIER_CONFIG_CHANGED for phone 0

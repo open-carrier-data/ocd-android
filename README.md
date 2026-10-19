@@ -79,7 +79,7 @@ OCD's rule decisions of 2026-10-18 (round 18) allow passive checks only: with th
 
 Its results never become, withhold or rank an OCD value. A report can only start a review of OCD's sources. A ROM may bundle the app read-only; such a build may add only `READ_PRECISE_PHONE_STATE`.
 
-OCD's round 23 (2026-10-19) keeps the app read-only in every build: no write path, no root channel, no `MODIFY_PHONE_STATE`, `WRITE_APN_SETTINGS` or `INTERNET`. An owner-only build with a write path waits for trigger AV1 and a judged round; one for anyone else's phone waits for AV2 and its round.
+All of this holds for the debug and release builds, unchanged. Round 23 kept the app read-only in every build; round 25 and the owner's direction of 2026-10-19 make one exception, the `owner` build type, which runs only on the owner's own phones and is described in "The owner build" below. A build for anyone else's phone still waits for trigger AV2 and its round.
 
 The owner's OCD Lab is a separate tool on a PC, in OCD's private repository (`tools/ocd_lab/`). It applies temporary CarrierConfig test overrides over ADB as root. It is not part of this app, and this app does none of it.
 
@@ -340,12 +340,49 @@ Only the three switches step 2 can label count, and only records built from the 
 
 The bundled data is OCD's. The OCD contributors waive their own rights in it under CC0 1.0; see OCD's `DATA-LICENSE.md`.
 
+## The owner build
+
+The `owner` build type is the owner's part 2, built as he directed on 2026-10-19 evening ("develop it exactly like this"; OCD's private `research/rule-decisions-20261006/README.md`, "Owner direction, 2026-10-19 evening" and round 25). It is for the owner's S20 (LineageOS 23.2 userdebug, PHH IMS) only. It is never a release asset, a CI artifact (the build refuses to package it when `CI` is set), a store build or part of a ROM anyone else runs.
+
+**What it does.**
+1. **Loads the data and pulls updates.** It fetches the latest release of OCD's public repository from GitHub (`data-2026.10` today): `SHA256SUMS`, `release.json`, `metadata.json`, `lookup.json`, `carrier-variants.json` and `apns-conf.xml`. Every file must match `SHA256SUMS` and `release.json`. The data digest cannot be recomputed on the phone, so it must be the same in `release.json`, `metadata.json`, `carrier-variants.json` (`based_on_data_digest`) and the `apns-conf.xml` header. `lookup.json` has no APN rows; they come from `apns-conf.xml`. Until a pull, the bundled snapshot of the same release is used.
+2. **Tests every entry, on and off.** For each SIM and each IMS switch (VoLTE, Wi-Fi calling, video calling, VoNR, SMS over IMS) it reads the phone's value and its evidence, then sets the other value as a test override, waits up to 120 s for IMS to register with the feature's service on its bearer (or for the service to go), and reverts with proof. For OCD's internet APN rows for the SIM that the phone lacks, it inserts the row (marked "(OCD Check test)"), makes it the preferred APN, waits for mobile data to validate, and removes it again. VoNR's on-test stops before any change on the S20: its modem has standalone 5G switched off.
+3. **Applies the best working value locally**: on when on registers; else off, when off works and, for a voice feature, a call of the owner's own went active with it off; else the phone's own value. An APN row is kept only when mobile data works with it and not without it.
+4. **Re-applies at boot and on a SIM change.** Overrides live in memory and a reboot drops them, so after a boot (once the 10 minutes in which a change is refused have passed) the start-up pass applies the keeps of the SIM in each slot again. A keep of a SIM that left its slot is cleared.
+5. **Tests again** on a tap ("Test again"); a kept value that no longer works is dropped.
+6. **Uploads** by opening a prefilled issue on OCD's "Wrong or missing carrier data" form in the browser. The owner reads it and submits it himself; the app sends nothing. The text passes the report's privacy scan first, and a result never moves an OCD value by itself.
+7. **Runs weekly** through WorkManager (fetched by Gradle, owner build only): pull, then test, only while the phone is idle, charging and on Wi-Fi; the steps still refuse in a call or while roaming. The schedule can be switched off.
+8. **Reverts smartly.** Every start looks for leftovers: a trial left by a crash or a kill is reverted with proof, a trial still live after a reboot is a stop event, and a marked APN row the state does not keep is removed. While anything is live, an ongoing notification offers a one-tap "Revert all", and the owner screen has the same button.
+
+**The safety floor**, the same for both routes and enforced in code with tests:
+- the key guard: never a key matching `emergency|e911|ecbm|wps|tty|rtt|iwlan\.`, and only the five feature switches; never an emergency APN row. The Shizuku service checks the guard and every argument again;
+- never an emergency call: the app never dials, answers or ends a call; for a voice check the owner places the call himself;
+- refusals that fail closed: nothing changes in a call, in emergency callback mode (or emergency SMS mode), within 10 minutes of an emergency call (counted from the first sighting of the registry's emergency-call field, and for 10 minutes after every boot, which clears that field), while roaming (national roaming included), or when one of these cannot be read;
+- a voice off is kept only with voice service measured (a call went active with it off); without a call it is always reverted, and a call that does not connect is a stop event (lost voice);
+- overrides are never persistent: `cmd phone cc set-value` without `-p`, or `CarrierConfigManager.overrideConfig(subId, bundle)` with persistent false. Every change is recorded before it runs, every revert is proven against the dump taken before the first change, and a revert that cannot be proven sets a stop flag that turns the write path off until the owner clears it;
+- the write gate: the S20 (`x1s`, `SM-G981B`) on its LineageOS build and a route; the A50 and every other phone stay read-only and the screen says why;
+- round 25's first-use order: until one override has been left live through a reboot and was gone afterwards ("Start check 3", then reboot), nothing is kept, no off is tested and a weekly run changes nothing. Checks 1 and 2 (only after the S20 build's boot check; the first apply on the cable with a lab `--read` before and after) are the owner's to keep.
+
+**Two routes behind one interface** (`OwnerPhone`), picked at run time:
+- **Privileged system app** (the target form): when the APK sits in `/system/priv-app/` or `/product/priv-app/` and `app/src/owner/priv-app/privapp-permissions-ocd-check-owner.xml` grants `MODIFY_PHONE_STATE`, `READ_PRIVILEGED_PHONE_STATE`, `WRITE_APN_SETTINGS`, `DUMP` and `READ_LOGS`, the app uses `CarrierConfigManager.overrideConfig` (the system API that is never persistent) and the telephony provider directly; reads run `dumpsys` and `logcat` as the app. No root and no Shizuku. To build it into the owner's ROM: put `app-owner.apk` in `priv-app/OcdCheckOwner/OcdCheckOwner.apk` of the partition and the XML in that partition's `etc/permissions/`, signed with the owner key as built here. Only for the owner's own ROM.
+- **Shizuku as root**, when the privileged permissions are not granted: Shizuku's server running as root starts `OwnerShellService`, which runs only the closed `OwnerCommand` list (`cmd phone cc set-value -s SLOT KEY true|false`, `cmd phone cc clear-values -s SLOT`, `content` on the APN table and the preferred APN, and the reads). `cmd phone cc` needs root and a non-user build. Shizuku must grant the app once in its own dialog.
+
+**Build and install.**
+```bash
+# local.properties (never committed): ocd.owner.storeFile, ocd.owner.storePassword, ocd.owner.keyAlias, ocd.owner.keyPassword
+./gradlew testOwnerUnitTest lintOwner assembleOwner
+adb -s <S20 serial> install -r app/build/outputs/apk/owner/app-owner.apk
+```
+The APK is `io.github.open_carrier_data.check.owner`, so it sits next to the read-only app. Without the signing properties it stays unsigned; it never takes the debug key. Its extra permissions are `INTERNET`, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED` and the five privileged ones, which an adb install never gets; WorkManager adds `WAKE_LOCK` and `FOREGROUND_SERVICE`.
+
+**Kept apart from the read-only builds.** The owner code is in `app/src/owner/` only. Debug and release compile the no-op `OwnerHook` from `app/src/readonly/` instead, and `ReadOnlyBuildTest` (run by `testDebugUnitTest` and `testReleaseUnitTest`) proves they hold no owner class and no WorkManager, while `ManifestTest` and `AllowlistTest` keep their meaning for them. The owner build's own tests are in `app/src/testOwner/`, with OCD Lab's fixtures (`tools/ocd_lab/fixtures/`): the key guard and the command list, the dump parser and the revert proof, the session against a fake phone (register first, revert keeps the kept values, an unprovable revert stops, the guards stop before any change, the revert waits for a call), the refusals, the loop (best value, smart revert, voice offs, VoNR, cleanup, re-apply, check 3, revert all, APN trials), the release check, the APN rows and the issue URL.
+
 ## Planned
 
 These steps follow OCD's rule decisions. Each stays read-only and adds no permission.
 - **The rest of the guided call test** (round 19). The outgoing and incoming calls and the local T2 status are built (see above). Still to come: the call state on the normal tier, without Shizuku; and, in debug builds, a ledger draft for the owner, which would carry `config_origin: user_toggle` from the guided switch step.
 
-Round 23 (2026-10-19) keeps active verification in the owner's OCD Lab. The app stays read-only: an owner-only build that writes waits for trigger AV1 and a judged round, and one for anyone else's phone for AV2 and its round.
+Round 25 and the owner's direction of 2026-10-19 bring the owner's loop into the `owner` build type (above). The debug and release builds stay read-only; a build that writes on anyone else's phone waits for trigger AV2 and its round.
 
 ## Build
 
@@ -363,7 +400,7 @@ echo "sdk.dir=/path/to/android-sdk" > local.properties
 python3 -m unittest discover -s tools -p 'test_*.py'
 ```
 
-The APK is `app/build/outputs/apk/debug/app-debug.apk`. CI (`.github/workflows/test.yml`) runs the unit tests, lint, the debug build and the bundle script's tests on every pull request.
+The APK is `app/build/outputs/apk/debug/app-debug.apk`. CI (`.github/workflows/test.yml`) runs the unit tests (debug, release and owner), lint, the debug build and the bundle script's tests on every pull request; it never builds the owner APK.
 
 **Version pins.** The project uses Android Gradle Plugin 8.7.3, the newest line that still builds with build-tools 34.0.0; AGP 8.8 and later need build-tools 35. `gradle.properties` silences AGP 8.7's warning about compileSdk 36, and `android.builder.sdkDownload=false` stops the build from fetching SDK packages on its own. The androidx versions match that AGP:
 - Compose BOM 2025.06.00
@@ -403,6 +440,10 @@ To move to newer libraries, install build-tools 35 or later, raise AGP, and then
 | `app/src/main/assets/ocd-lookup.json.gzip` | the bundled OCD data |
 | `app/src/main/assets/call-targets.json` | OCD Lab's mailbox table, copied unchanged |
 | `tools/build_bundle.py` | builds the asset from OCD's public checkout |
+| `app/src/readonly/java/.../OwnerHook.kt` | the no-op owner hook that debug and release compile |
+| `app/src/owner/java/.../owner/core/` | the owner build's plain Kotlin: the write list and key guard, the dump and revert proof, the refusals, the evidence, the session and the loop, the release check, the APN rows, the issue URL and the state |
+| `app/src/owner/java/.../owner/` | the two routes (`OwnerAccess.kt`), the Shizuku service, the data pull, WorkManager jobs, the boot and revert-all receivers, the notification and the owner screen |
+| `app/src/owner/priv-app/` | the privapp-permissions allowlist for the privileged route |
 
 ## Licence
 

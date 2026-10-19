@@ -1,10 +1,16 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// The owner build's signing key lives outside the repository, in local.properties (round 25 OB1).
+val localProperties = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use { load(it) }
 }
 
 android {
@@ -18,12 +24,44 @@ android {
         targetSdk = 36
         versionCode = 3
         versionName = "0.3.0"
+        // True only in the owner build type; debug and release stay read-only.
+        buildConfigField("boolean", "OWNER", "false")
+    }
+
+    signingConfigs {
+        val store = localProperties.getProperty("ocd.owner.storeFile")
+        if (store != null) {
+            create("owner") {
+                storeFile = file(store)
+                storePassword = localProperties.getProperty("ocd.owner.storePassword")
+                keyAlias = localProperties.getProperty("ocd.owner.keyAlias")
+                keyPassword = localProperties.getProperty("ocd.owner.keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
         }
+        // The owner's own build (round 25 B, the owner direction of 2026-10-19): it tests and
+        // applies carrier settings on the owner's S20 through Shizuku as root. Its code is in
+        // src/owner only; debug and release get the no-op hook from src/readonly. Never a
+        // release asset, a CI artifact or a store build; installed by adb only.
+        create("owner") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".owner"
+            versionNameSuffix = "-owner"
+            buildConfigField("boolean", "OWNER", "true")
+            // Its own key, never the debug key: without local.properties the APK stays unsigned.
+            signingConfig = signingConfigs.findByName("owner")
+            matchingFallbacks += "debug"
+        }
+    }
+
+    sourceSets {
+        getByName("debug").java.srcDir("src/readonly/java")
+        getByName("release").java.srcDir("src/readonly/java")
     }
 
     compileOptions {
@@ -77,5 +115,16 @@ dependencies {
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
 
+    "ownerImplementation"(libs.work.runtime)
+
     testImplementation(libs.junit)
+}
+
+// Round 25 OB1: the owner APK is never a CI artifact.
+tasks.matching { task ->
+    task.name.contains("Owner") && listOf("assemble", "package", "bundle").any { task.name.startsWith(it) }
+}.configureEach {
+    doFirst {
+        if (System.getenv("CI") != null) throw GradleException("The owner build is never built in CI (round 25 OB1).")
+    }
 }
