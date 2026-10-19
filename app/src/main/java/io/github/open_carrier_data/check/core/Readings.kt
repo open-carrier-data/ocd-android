@@ -51,10 +51,21 @@ enum class RomFamily(val wire: String, val plain: String) {
          * function; the strings themselves (which can hold a builder's user
          * name) are never stored or shown.
          */
-        fun detect(display: String?, fingerprint: String?, product: String?, buildType: String?, tags: String?): RomFamily {
+        fun detect(
+            display: String?,
+            fingerprint: String?,
+            product: String?,
+            buildType: String?,
+            tags: String?,
+            lineageFeature: Boolean = false,
+        ): RomFamily {
             val names = listOfNotNull(display, fingerprint, product).joinToString(" ").lowercase()
             return when {
-                "lineage" in names -> LINEAGEOS
+                // LineageOS declares the system feature org.lineageos.android
+                // (vendor/lineage/config/permissions/org.lineageos.android.xml).
+                // Builds that keep the stock fingerprint, like the owner's S20,
+                // carry no "lineage" in any public Build field.
+                lineageFeature || "lineage" in names -> LINEAGEOS
                 buildType != null && buildType != "user" -> OTHER
                 tags != null && "test-keys" in tags -> OTHER
                 else -> STOCK

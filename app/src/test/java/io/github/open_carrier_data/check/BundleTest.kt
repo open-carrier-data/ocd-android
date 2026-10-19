@@ -59,5 +59,13 @@ class BundleTest {
         assertEquals(RomFamily.LINEAGEOS, RomFamily.detect("lineage_x1s-userdebug 16 BP4A eng.someone", null, "lineage_x1s", "userdebug", "test-keys"))
         assertEquals(RomFamily.OTHER, RomFamily.detect("BP2A.250805.005", null, "x1s", "userdebug", "release-keys"))
         assertEquals(RomFamily.STOCK, RomFamily.detect("A505FDDS3AYB3", "samsung/a50/a50:14", "a50", "user", "release-keys"))
+        // The owner's S20: LineageOS 23.2 with Samsung's stock fingerprint, seen only through the system feature.
+        assertEquals(
+            RomFamily.LINEAGEOS,
+            RomFamily.detect(
+                "BP4A.251205.006", "samsung/x1sxxx/x1s:11/RP1A.200720.012/G981BXXSNHYB1:user/release-keys",
+                "x1sxxx", "userdebug", "release-keys", lineageFeature = true,
+            ),
+        )
     }
 }

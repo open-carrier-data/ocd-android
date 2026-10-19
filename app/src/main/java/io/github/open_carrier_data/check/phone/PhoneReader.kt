@@ -119,7 +119,10 @@ class PhoneReader(private val context: Context) {
         model = Build.MODEL.orEmpty(),
         codename = Build.DEVICE.orEmpty(),
         androidMajor = Build.VERSION.RELEASE.orEmpty().takeWhile(Char::isDigit).toIntOrNull() ?: 0,
-        romFamily = RomFamily.detect(Build.DISPLAY, Build.FINGERPRINT, Build.PRODUCT, Build.TYPE, Build.TAGS),
+        romFamily = RomFamily.detect(
+            Build.DISPLAY, Build.FINGERPRINT, Build.PRODUCT, Build.TYPE, Build.TAGS,
+            lineageFeature = context.packageManager.hasSystemFeature("org.lineageos.android"),
+        ),
     )
 
     @SuppressLint("MissingPermission")
