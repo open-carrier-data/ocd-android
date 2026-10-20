@@ -113,9 +113,9 @@ object Ladders {
         fun notPossible(text: String, spoken: String) = FeatureLadder(feature, rungs, 0, Tone.NOT_POSSIBLE, text, spoken, notPossible = true)
 
         val worksText = when {
-            rungs.size < Rung.entries.size -> "Works"
+            rungs.size < Rung.entries.size -> "Signed in"
             callsTested -> "Works, calls tested"
-            else -> "Works, calls not tested yet"
+            else -> "Signed in, calls not tested yet"
         }
         val worksSpoken = when {
             rungs.size < Rung.entries.size -> "signed in"
@@ -172,7 +172,11 @@ object StatusSentence {
                 "Your phone uses its own settings, but ${and(problems)} ${if (problems.size == 1) "isn't" else "aren't"} signed in",
             )
             !checked -> Status(Tone.NEUTRAL, "Not checked yet")
-            else -> Status(Tone.WORKS, "Everything works with your phone's own settings")
+            // "Works" needs passed call tests (README, LB4); registration alone reads "signed in".
+            ladders.filter { !it.notPossible && it.reached > 0 }.let { live ->
+                live.isNotEmpty() && live.all { it.reached >= it.rungs.size }
+            } -> Status(Tone.WORKS, "Everything works with your phone's own settings")
+            else -> Status(Tone.WORKS, "Everything is signed in with your phone's own settings")
         }
     }
 

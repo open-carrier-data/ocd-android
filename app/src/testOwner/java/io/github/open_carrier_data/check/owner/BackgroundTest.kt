@@ -42,7 +42,7 @@ class BackgroundTest {
         assertEquals("1 improvement active: VoLTE switched on", SettingsSummary.line(OwnerState(overrides = listOf(kept), runs = listOf(run)), privileged = true, sims = listOf(view)))
         // A light check that found nothing to change: everything works as the phone has it.
         val checked = OwnerState(runs = listOf(run), lastResult = LastResult(now + day, "checked, nothing changed"))
-        assertEquals("Everything works with your phone's own settings", SettingsSummary.line(checked, privileged = true, sims = listOf(view)))
+        assertEquals("Everything is signed in with your phone's own settings", SettingsSummary.line(checked, privileged = true, sims = listOf(view)))
         assertEquals(
             "A test is running. No system access",
             SettingsSummary.line(OwnerState(overrides = listOf(kept.copy(hold = Hold.TRIAL))), privileged = false, sims = listOf(view)),
