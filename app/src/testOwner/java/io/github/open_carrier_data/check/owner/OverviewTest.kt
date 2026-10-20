@@ -80,13 +80,13 @@ class OverviewTest {
         assertEquals(Tone.WORKS, volte.tone)
         assertEquals(3, volte.reached)
         assertEquals(Rung.entries, volte.rungs)
-        assertEquals("Works, calls not tested yet", volte.text)
+        assertEquals("Signed in, calls not tested yet", volte.text)
         assertEquals("VoLTE: signed in, calls not tested yet", volte.description)
         assertEquals(3, wifi.reached)
         assertEquals(4, wifi.rungs.size)
         assertEquals("SMS over IMS has no call test, so no fourth rung", listOf(Rung.NETWORK_OFFERS, Rung.SWITCHED_ON, Rung.SIGNED_IN), sms.rungs)
         assertEquals(3, sms.reached)
-        assertEquals("Works", sms.text)
+        assertEquals("Signed in", sms.text)
         assertTrue(video.notPossible)
         assertEquals(Tone.NOT_POSSIBLE, video.tone)
         assertEquals("Not possible on this phone (software)", video.text)
@@ -95,7 +95,7 @@ class OverviewTest {
         assertEquals("VoNR: not possible on this phone because of its modem", vonr.description)
         val status = StatusSentence.of(s20Tonight(), listOf(view), ladders)
         assertEquals(Tone.WORKS, status.tone)
-        assertEquals("Everything works with your phone's own settings", status.headline)
+        assertEquals("Everything is signed in with your phone's own settings", status.headline)
     }
 
     @Test
@@ -147,7 +147,7 @@ class OverviewTest {
         val volte = Ladders.of(OwnerFeature.VOLTE, phone.store.state, view)
         assertEquals(Tone.WORKS, volte.tone)
         assertEquals(3, volte.reached)
-        assertEquals("Works, calls not tested yet", volte.text)
+        assertEquals("Signed in, calls not tested yet", volte.text)
     }
 
     @Test
@@ -229,7 +229,7 @@ class OverviewTest {
 
     @Test
     fun `the Settings summary is the status sentence, and says when system access is missing`() {
-        assertEquals("Everything works with your phone's own settings", SettingsSummary.line(s20Tonight(), privileged = true, sims = listOf(view)))
+        assertEquals("Everything is signed in with your phone's own settings", SettingsSummary.line(s20Tonight(), privileged = true, sims = listOf(view)))
         assertEquals("Not checked yet. No system access", SettingsSummary.line(OwnerState(), privileged = false, sims = listOf(view)))
         assertEquals("A check failed — changes are paused", SettingsSummary.line(OwnerState(stop = "revert_not_proven"), privileged = true, sims = listOf(view)))
         assertEquals("No SIM card, so there's nothing to check", SettingsSummary.line(OwnerState(), privileged = true, sims = emptyList()))

@@ -11,7 +11,7 @@ import io.github.open_carrier_data.check.owner.core.SettingsSummary
 
 /**
  * The live summary under "Open Carrier Data" in Settings > Network &
- * internet, the owner screen's status sentence ("Everything works with
+ * internet, the owner screen's status sentence ("Everything is signed in with
  * your phone's own settings", "1 improvement active: VoLTE switched on"):
  * Settings calls `getDynamicSummary` on this authority (the
  * `com.android.settings.summary_uri` meta-data of [OwnerActivity]). It
