@@ -56,6 +56,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -210,7 +211,7 @@ fun OwnerScreen(ui: OwnerUi, actions: OwnerActions) {
             topBar = {
                 TopAppBar(
                     // Settings' positions: the back circle and the title sit further in than Material's defaults.
-                    title = { Text("Open Carrier Data", Modifier.padding(start = 12.dp)) },
+                    title = { Text("Open Carrier Data", Modifier.padding(start = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     navigationIcon = {
                         // Settings' own back button: the arrow in a tonal circle.
                         IconButton(
