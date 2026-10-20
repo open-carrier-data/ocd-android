@@ -309,7 +309,7 @@ object HeaderNotes {
         if (canWrite == false) {
             add(Tone.NEUTRAL to if (ownerPhone == false) "This phone can be checked, not changed" else "Tests can't run: no system access. See Details")
         }
-        if (!state.rebootCleared) add(Tone.NEUTRAL to "Nothing is kept until the restart check in Details is done")
+        if (!state.rebootCleared) add(Tone.NEUTRAL to "Changes start after the restart check in Details")
     }
 }
 

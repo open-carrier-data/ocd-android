@@ -298,7 +298,8 @@ private fun OwnerContent(ui: OwnerUi, options: TestOptions, setOptions: (TestOpt
     // The SIM of the run under way: its record has no end yet.
     val testing = ui.state.runs.lastOrNull { it.endedMs == null }?.sim?.let { key -> sims.orEmpty().firstOrNull { it.owns(key) } }
     val status = StatusSentence.of(ui.state, sims, ladders.values.flatten(), running = running, testing = testing)
-    StatusHeader(ui, sims, status, options, actions)
+    // The header's text starts where the cards' text does: one left edge for every line on the page.
+    Column(Modifier.padding(horizontal = 16.dp)) { StatusHeader(ui, sims, status, options, actions) }
 
     // Before the first check and without a SIM there is nothing to show yet: the headline and Test now are the page.
     if (status.kind != StatusKind.NO_SIM && status.kind != StatusKind.NOT_CHECKED) {
@@ -663,7 +664,7 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         Group {
             item {
                 Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                    Summary("Confirms a restart clears test settings. Until then, nothing is kept")
+                    Summary("Confirms a restart clears test settings")
                     if (state.rebootProbeAtMs != null) {
                         Text("Now restart your phone", style = MaterialTheme.typography.bodyLarge, color = StatusColors.text(Tone.CHANGED), modifier = Modifier.padding(top = 8.dp))
                     }

@@ -294,7 +294,7 @@ class OverviewTest {
         assertEquals(listOf(Tone.PROBLEM to "See the log in Details before resuming"), HeaderNotes.of(OwnerState(stop = "x", rebootCleared = true), canWrite = true, ownerPhone = true))
         assertEquals("This phone can be checked, not changed", HeaderNotes.of(OwnerState(rebootCleared = true), canWrite = false, ownerPhone = false).single().second)
         assertEquals("Tests can't run: no system access. See Details", HeaderNotes.of(OwnerState(rebootCleared = true), canWrite = false, ownerPhone = true).single().second)
-        assertEquals("Nothing is kept until the restart check in Details is done", HeaderNotes.of(OwnerState(), canWrite = true, ownerPhone = true).single().second)
+        assertEquals("Changes start after the restart check in Details", HeaderNotes.of(OwnerState(), canWrite = true, ownerPhone = true).single().second)
     }
 
     @Test
@@ -350,8 +350,7 @@ class OverviewTest {
                 HeaderNotes.of(state, canWrite = false, ownerPhone = true).map { it.second } + ScheduleLine.of(true) + ScheduleLine.of(false) +
                 listOfNotNull(CheckedLine.of(status, state, listOf(view), 0, now, ZoneId.of("UTC"), { "t" }, { "d" }, scheduleOn = true, canTest = true))
             for (text in texts) {
-                // The restart-check note's "nothing is kept" is the plan's final copy.
-                assertFalse(text, internal.containsMatchIn(text.replace("Nothing is kept", "")))
+                assertFalse(text, internal.containsMatchIn(text))
                 assertFalse("no final full stop: $text", text.endsWith("."))
             }
         }
