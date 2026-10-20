@@ -16,7 +16,11 @@ import java.util.concurrent.TimeUnit
  * a switch whose value changed under the app, a test that did not finish)
  * and otherwise in rotation once two weeks old. Two failures in a row pause
  * an entry for four weeks; after a ROM flash or a data release only on
- * values run for two nights.
+ * values run for two nights. Others' reports (OCD's observed/summary.json,
+ * [ObservedReports]) only move an entry of this phone's own cell earlier:
+ * reported working or contested, and not tested here since, it is due the
+ * next night, ahead of the plain rotation. A report never adds, skips,
+ * pauses or removes an entry, and the test it moves is the same test.
  */
 
 /** What a test result rests on. A change of any of the three tests every entry again. */
@@ -101,9 +105,20 @@ object PlanWhy {
     /** The last test did not decide (no voice path then, a call, the owner's run without the off values, a failure). */
     const val RETRY = "not_decided_last_time"
     const val ROTATION = "rotation"
+
+    /** Others reported it working or contested on this phone's cell, newer than its last test here: due earlier, never a trigger. */
+    const val REPORTED = "reported_by_others"
 }
 
-data class PlannedEntry(val slot: Int, val sim: SimKey, val entry: String, val why: String, val sinceMs: Long = 0) {
+data class PlannedEntry(
+    val slot: Int,
+    val sim: SimKey,
+    val entry: String,
+    val why: String,
+    val sinceMs: Long = 0,
+    /** Others' report points at it and is not answered here yet: it goes ahead of the entries no report points at. */
+    val reported: Boolean = false,
+) {
     val feature: OwnerFeature? get() = OwnerFeature.ofWire(entry.substringBefore(':'))
     val value: Boolean? get() = when (entry.substringAfter(':', "")) {
         "on" -> true
@@ -114,7 +129,8 @@ data class PlannedEntry(val slot: Int, val sim: SimKey, val entry: String, val w
 
     /** An on value or an APN row; an off value turns a working service off. */
     val isOn: Boolean get() = value != false
-    val triggered: Boolean get() = why != PlanWhy.ROTATION
+    /** A trigger (not the rotation, not a report): it may use any silent window after [QuietPlan.NIGHT_GRACE_MS]. */
+    val triggered: Boolean get() = why != PlanWhy.ROTATION && why != PlanWhy.REPORTED
     val group: String get() = entry.substringBefore(':')
 }
 
@@ -127,6 +143,8 @@ data class Plan(
     /** Due entries left for later nights, and the ones paused after failures. */
     val waiting: Int = 0,
     val paused: List<String> = emptyList(),
+    /** Every entry due now, in the order the nights take them; [entries] is tonight's part. */
+    val due: List<PlannedEntry> = emptyList(),
 ) {
     val triggered: Boolean get() = entries.any { it.triggered }
     val all: List<PlannedEntry> get() = reverts + entries
@@ -173,6 +191,8 @@ object QuietPlan {
      * [onOnly]: after a ROM flash or a data release, off values wait.
      * [nightUsed]: tonight's change was made already; only reverts run.
      * [undone]: changes the owner undid; never planned again for their SIM.
+     * [reports]: others' reports for each SIM's own cell, by entry
+     * ([ObservedReports.forCell]); they only move an entry earlier.
      */
     fun plan(
         checks: List<SimCheck>,
@@ -183,6 +203,7 @@ object QuietPlan {
         onOnly: Boolean = false,
         nightUsed: Boolean = false,
         undone: List<UndoneEntry> = emptyList(),
+        reports: Map<SimKey, Map<String, ReportPointer>> = emptyMap(),
     ): Plan {
         val due = mutableListOf<PlannedEntry>()
         val reverts = mutableListOf<PlannedEntry>()
@@ -201,25 +222,29 @@ object QuietPlan {
                 val last = mine.lastOrNull { it.entry == entry }
                 val feature = OwnerFeature.ofWire(entry.substringBefore(':'))
                 val now = feature?.let { check.effective[it] }
+                val pausedNow = last != null && last.failures >= PAUSE_AFTER_FAILURES && nowMs - last.atMs < PAUSE_MS
+                // Only an entry this loop already has can be pointed at, and never a paused one; a report naming anything else finds nothing here.
+                val pointed = !pausedNow && reports[key]?.get(entry)?.let { ObservedReports.unanswered(it, last) } == true
                 val why = when {
                     last == null -> if (mine.isEmpty() && key !in known) PlanWhy.NEW_SIM else PlanWhy.NOT_TESTED
                     else -> basis.changesFrom(last.basis).firstOrNull()
                         ?: PlanWhy.VALUE_CHANGED.takeIf { last.effective != null && now != null && now != last.effective }
                         ?: PlanWhy.RETRY.takeIf { last.works == null && nowMs - last.atMs >= RETRY_AFTER_MS }
                         ?: PlanWhy.ROTATION.takeIf { nowMs - last.atMs >= ROTATION_AGE_MS || nowMs < last.atMs }
+                        ?: PlanWhy.REPORTED.takeIf { pointed }
                 } ?: continue
-                if (last != null && last.failures >= PAUSE_AFTER_FAILURES && nowMs - last.atMs < PAUSE_MS) {
+                if (pausedNow) {
                     paused += entry
                     continue
                 }
-                val planned = PlannedEntry(check.sim.slot, key, entry, why, last?.atMs ?: 0L)
+                val planned = PlannedEntry(check.sim.slot, key, entry, why, last?.atMs ?: 0L, reported = pointed)
                 if (onOnly && !planned.isOn) continue
                 due += planned
             }
         }
-        if (nightUsed) return Plan(emptyList(), reverts, checks.any { it.missingKeeps.isNotEmpty() }, due.size, paused)
-        // Triggered before rotation, the oldest first; then the rest of that one feature within the night's budget.
-        val ordered = due.sortedWith(compareBy({ !it.triggered }, { it.sinceMs }))
+        // Triggered before rotation, what others' reports point at before the rest, the oldest first; then the rest of that one feature within the night's budget.
+        val ordered = due.sortedWith(compareBy({ !it.triggered }, { !it.reported }, { it.sinceMs }))
+        if (nightUsed) return Plan(emptyList(), reverts, checks.any { it.missingKeeps.isNotEmpty() }, due.size, paused, ordered)
         val first = ordered.firstOrNull()
         val night = mutableListOf<PlannedEntry>()
         if (first != null) {
@@ -235,7 +260,7 @@ object QuietPlan {
                 }
             }
         }
-        return Plan(night, reverts, checks.any { it.missingKeeps.isNotEmpty() }, due.size - night.size, paused)
+        return Plan(night, reverts, checks.any { it.missingKeeps.isNotEmpty() }, due.size - night.size, paused, ordered)
     }
 
     /**

@@ -654,6 +654,15 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
                 }
             }
         }
+        // Others' reports (OCD's observed/summary.json): one line per test they move earlier; they never change a setting.
+        if (ui.reportLines.isNotEmpty()) {
+            item {
+                Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Title("Reported by others")
+                    ui.reportLines.forEach { Summary(it) }
+                }
+            }
+        }
     }
 
     if (gate != null && !gate.canWrite) {

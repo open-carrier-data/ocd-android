@@ -13,7 +13,13 @@ import io.github.open_carrier_data.check.owner.core.ReportCell
 import io.github.open_carrier_data.check.owner.core.CallsTested
 import io.github.open_carrier_data.check.owner.core.OwnerFeature
 import io.github.open_carrier_data.check.phone.CallTestStore
+import io.github.open_carrier_data.check.core.Matcher
 import io.github.open_carrier_data.check.owner.core.ApnConf
+import io.github.open_carrier_data.check.owner.core.ObservedCell
+import io.github.open_carrier_data.check.owner.core.ObservedPull
+import io.github.open_carrier_data.check.owner.core.ObservedReports
+import io.github.open_carrier_data.check.owner.core.ObservedSource
+import io.github.open_carrier_data.check.owner.core.ObservedStore
 import io.github.open_carrier_data.check.owner.core.OcdApnRow
 import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerState
@@ -28,8 +34,11 @@ import io.github.open_carrier_data.check.phone.PhoneReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.zip.GZIPInputStream
@@ -67,7 +76,8 @@ class FileStateStore(context: Context) : StateStore {
  * every asset checked against SHA256SUMS and release.json, the data digest
  * checked across the files. Until a release is pulled, the bundled asset
  * (the same data-2026.10 snapshot) is used for the IMS values; APN rows need
- * a pulled release.
+ * a pulled release. Each pull also fetches OCD's observed/summary.json (others'
+ * reports, which only order the night's tests; [ObservedReports]).
  */
 class OwnerData(private val context: Context, private val store: StateStore) {
     private val root = File(context.filesDir, "releases")
@@ -88,16 +98,46 @@ class OwnerData(private val context: Context, private val store: StateStore) {
     }
 
     /**
-     * Pulls the latest release when its tag differs from the current one.
-     * Returns a line for the log. Throws [ReleaseException] or IOException.
+     * Pulls the latest release when its tag differs from the current one, and
+     * fetches observed/summary.json either way ([pullObserved]). Returns the
+     * release's line for the log. Throws [ReleaseException] or IOException
+     * when the release could not be checked; the summary has its own log line.
+     * [verbose]: the owner asked ("Check for update"); the background logs
+     * only what is new.
      */
-    suspend fun pull(force: Boolean = false): String = withContext(Dispatchers.IO) {
+    suspend fun pull(force: Boolean = false, verbose: Boolean = true): String = withContext(Dispatchers.IO) {
+        val release = runCatching { pullRelease(force) }
+        pullObserved(verbose)
+        release.getOrThrow()
+    }
+
+    /**
+     * Fetches OCD's observed/summary.json from the public repository's main
+     * branch and keeps it only when it passes: the size cap, strict JSON and
+     * the public schema (a copy in the owner build's assets). A fetch that
+     * fails, offline included, keeps the previous copy. The owner's own
+     * reports (the hashes of the reports the app opened) are taken out.
+     * Returns the log line; never throws.
+     */
+    fun pullObserved(verbose: Boolean = true): String {
+        val now = System.currentTimeMillis()
+        val device = OwnerWorker.device(context)
+        val pull = runCatching {
+            val schema = context.assets.open(ObservedSource.SCHEMA_ASSET).use { Json.parseToJsonElement(it.readBytes().decodeToString()).jsonObject }
+            ObservedReports.pull({ url, max -> get(url, maxBytes = max) }, schema, device.model, device.codename, ObservedReports.ownHashes(store.read()), now)
+        }.getOrElse { ObservedPull.Kept("not checked (${it.javaClass.simpleName})") }
+        val kept = ObservedReports.keep(pull, ObservedStore(File(context.filesDir, "observed")))
+        store.update { ObservedReports.applied(it, kept, device.model, now, verbose) }
+        return ObservedReports.line(kept, device.model)
+    }
+
+    private fun pullRelease(force: Boolean): String {
         val latest = ReleaseCheck.latest(get(ReleaseSource.LATEST_API, accept = "application/vnd.github+json").decodeToString())
         if (latest.draft || latest.prerelease) throw ReleaseException("the latest release is a draft or prerelease")
         val tag = latest.tagName
         if (!ReleaseSource.TAG.matches(tag)) throw ReleaseException("the latest release $tag is not a data release")
         val current = store.read().release
-        if (!force && current?.tag == tag && currentDir() != null) return@withContext "up to date: $tag"
+        if (!force && current?.tag == tag && currentDir() != null) return "up to date: $tag"
         for (asset in ReleaseSource.ASSETS) {
             val listed = latest.assets.firstOrNull { it.name == asset } ?: throw ReleaseException("the release has no $asset")
             if (listed.size > ReleaseSource.MAX_ASSET_BYTES) throw ReleaseException("$asset is larger than the cap")
@@ -126,10 +166,10 @@ class OwnerData(private val context: Context, private val store: StateStore) {
             )
         }
         root.listFiles()?.filter { it.name != tag }?.forEach { it.deleteRecursively() }
-        "pulled $tag"
+        return "pulled $tag"
     }
 
-    private fun get(url: String, accept: String? = null): ByteArray {
+    private fun get(url: String, accept: String? = null, maxBytes: Long = ReleaseSource.MAX_ASSET_BYTES): ByteArray {
         var target = URL(url)
         repeat(6) {
             require(target.protocol == "https") { "https only" }
@@ -141,10 +181,9 @@ class OwnerData(private val context: Context, private val store: StateStore) {
             accept?.let { connection.setRequestProperty("Accept", it) }
             try {
                 when (val code = connection.responseCode) {
-                    HttpURLConnection.HTTP_OK -> return connection.inputStream.use { input ->
-                        val bytes = input.readBytes()
-                        if (bytes.size > ReleaseSource.MAX_ASSET_BYTES) throw ReleaseException("download larger than the cap")
-                        bytes
+                    HttpURLConnection.HTTP_OK -> {
+                        if (connection.contentLengthLong > maxBytes) throw ReleaseException("download larger than the cap")
+                        return connection.inputStream.use { capped(it, maxBytes) }
                     }
                     301, 302, 303, 307, 308 -> {
                         val next = URL(target, connection.getHeaderField("Location") ?: throw IOException("redirect without a location"))
@@ -161,6 +200,18 @@ class OwnerData(private val context: Context, private val store: StateStore) {
             }
         }
         throw IOException("too many redirects")
+    }
+
+    /** Reads at most [maxBytes]; one byte more is a refusal, so an oversized answer is never read whole. */
+    private fun capped(input: InputStream, maxBytes: Long): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(1 shl 16)
+        while (true) {
+            val n = input.read(buffer)
+            if (n < 0) return out.toByteArray()
+            out.write(buffer, 0, n)
+            if (out.size() > maxBytes) throw ReleaseException("download larger than the cap")
+        }
     }
 
     companion object {
@@ -208,6 +259,26 @@ class OwnerData(private val context: Context, private val store: StateStore) {
         }
 
         private val HEX = Regex("[0-9A-F]{1,20}")
+
+        /**
+         * Each SIM's own cell in observed/summary.json, named as its test
+         * report would name it: this phone, the OCD profile the SIM matches
+         * in [bundle], its network code, the software and the IMS stack.
+         */
+        fun observedCells(context: Context, device: DeviceInfo, sims: List<OwnerSim>, bundle: OcdBundle): List<Pair<OwnerSim, ObservedCell>> {
+            val ims = ImsStack.of(VideoStatic.imsPackages(context))
+            return sims.map { sim ->
+                sim to ObservedCell(
+                    model = device.model,
+                    codename = device.codename,
+                    carrierProfile = Matcher.resolve(bundle, sim.identity).mostSpecific?.profileId,
+                    mccmnc = sim.identity.mccmnc,
+                    romFamily = device.romFamily.wire,
+                    imsStack = ims,
+                    androidMajor = device.androidMajor,
+                )
+            }
+        }
 
         fun callsTested(context: Context): List<CallsTested> =
             runCatching { CallTestStore(context).load().t2 }.getOrDefault(emptyList())

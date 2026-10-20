@@ -1,0 +1,680 @@
+{
+  "schema_version": 1,
+  "description": "Unverified observations from OCD Check reports (observed/reports/), per device, carrier profile, software stack and release entry. A report only points at an entry of an OCD data release; it never changes an OCD value, a file under generated/ or a release, and it never makes a phone skip its own test. Nothing here is a support claim.",
+  "verification": "unverified",
+  "statuses": {
+    "reported": "Counted reports of people's phones, by result. Not checked by OCD: anyone can open an issue, and nothing checks who sent a report or whether the phone exists.",
+    "contested": "At least one counted report measured a clean failure of the entry (the test ran and the phone's state came back). It asks the next phone to test the entry and a maintainer to look; it switches nothing off.",
+    "retested_by_ocd": "Set only from OCD's own phones after a passed T2 call test, from the owner's private ledger. Empty until that status is published."
+  },
+  "reports": {
+    "counted": 5,
+    "duplicate": 0,
+    "expired": 0,
+    "held": 0,
+    "superseded": 0
+  },
+  "cells": [
+    {
+      "device": {
+        "model": "SM-A505F",
+        "codename": "a50"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "stock",
+        "ims_stack": "samsung_ims",
+        "android_major": 14
+      },
+      "entry": "vowifi:on",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 1,
+        "results": {
+          "works": 0,
+          "signed_in": 0,
+          "service_off": 0,
+          "not_possible": 0,
+          "failed": 1,
+          "not_tested": 0
+        },
+        "first_report": "2026-10-05",
+        "last_report": "2026-10-05",
+        "issues": [
+          23
+        ]
+      },
+      "contested": {
+        "status": "contested: a clean measured failure was reported",
+        "count": 1,
+        "first_report": "2026-10-05",
+        "last_report": "2026-10-05",
+        "issues": [
+          23
+        ]
+      },
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "apn:web.vodafone.de|default,dun|IPV4V6",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 1,
+        "results": {
+          "works": 0,
+          "signed_in": 0,
+          "service_off": 0,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 1
+        },
+        "first_report": "2026-10-21",
+        "last_report": "2026-10-21",
+        "issues": [
+          21
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "apn:web.vodafone.de|default,ia,supl|",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 1,
+        "results": {
+          "works": 0,
+          "signed_in": 0,
+          "service_off": 0,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 1
+        },
+        "first_report": "2026-10-21",
+        "last_report": "2026-10-21",
+        "issues": [
+          21
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "apn:web.vodafone.de|default,supl,xcap|IPV4V6",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 2,
+        "results": {
+          "works": 0,
+          "signed_in": 0,
+          "service_off": 0,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 2
+        },
+        "first_report": "2026-10-02",
+        "last_report": "2026-10-21",
+        "issues": [
+          7,
+          21
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "apn:web.vodafone.de|default,supl|",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 1,
+        "results": {
+          "works": 0,
+          "signed_in": 0,
+          "service_off": 0,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 1
+        },
+        "first_report": "2026-10-21",
+        "last_report": "2026-10-21",
+        "issues": [
+          21
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "apn:web.vodafone.de|default,supl|IPV4V6",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 2,
+        "results": {
+          "works": 0,
+          "signed_in": 0,
+          "service_off": 0,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 2
+        },
+        "first_report": "2026-10-02",
+        "last_report": "2026-10-21",
+        "issues": [
+          7,
+          21
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "apn:web.vodafone.de|default|IPV4V6",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 1,
+        "results": {
+          "works": 0,
+          "signed_in": 0,
+          "service_off": 0,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 1
+        },
+        "first_report": "2026-10-21",
+        "last_report": "2026-10-21",
+        "issues": [
+          21
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "sms_over_ims:off",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 3,
+        "results": {
+          "works": 0,
+          "signed_in": 0,
+          "service_off": 1,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 2
+        },
+        "first_report": "2026-10-02",
+        "last_report": "2026-10-22",
+        "issues": [
+          7,
+          21,
+          22
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "sms_over_ims:on",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 2,
+        "results": {
+          "works": 0,
+          "signed_in": 2,
+          "service_off": 0,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 0
+        },
+        "first_report": "2026-10-02",
+        "last_report": "2026-10-21",
+        "issues": [
+          7,
+          21
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "video_calling:off",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 2,
+        "results": {
+          "works": 0,
+          "signed_in": 0,
+          "service_off": 2,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 0
+        },
+        "first_report": "2026-10-02",
+        "last_report": "2026-10-21",
+        "issues": [
+          7,
+          21
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "video_calling:on",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 2,
+        "results": {
+          "works": 0,
+          "signed_in": 0,
+          "service_off": 0,
+          "not_possible": 2,
+          "failed": 0,
+          "not_tested": 0
+        },
+        "first_report": "2026-10-02",
+        "last_report": "2026-10-21",
+        "issues": [
+          7,
+          21
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 15
+      },
+      "entry": "volte:off",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 1,
+        "results": {
+          "works": 1,
+          "signed_in": 0,
+          "service_off": 0,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 0
+        },
+        "first_report": "2026-10-05",
+        "last_report": "2026-10-05",
+        "issues": [
+          24
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "volte:off",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 3,
+        "results": {
+          "works": 1,
+          "signed_in": 0,
+          "service_off": 0,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 2
+        },
+        "first_report": "2026-10-02",
+        "last_report": "2026-10-22",
+        "issues": [
+          7,
+          21,
+          22
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "volte:on",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 2,
+        "results": {
+          "works": 1,
+          "signed_in": 1,
+          "service_off": 0,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 0
+        },
+        "first_report": "2026-10-02",
+        "last_report": "2026-10-21",
+        "issues": [
+          7,
+          21
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "vonr:off",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 2,
+        "results": {
+          "works": 0,
+          "signed_in": 0,
+          "service_off": 2,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 0
+        },
+        "first_report": "2026-10-02",
+        "last_report": "2026-10-21",
+        "issues": [
+          7,
+          21
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "vonr:on",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 2,
+        "results": {
+          "works": 0,
+          "signed_in": 0,
+          "service_off": 0,
+          "not_possible": 2,
+          "failed": 0,
+          "not_tested": 0
+        },
+        "first_report": "2026-10-02",
+        "last_report": "2026-10-21",
+        "issues": [
+          7,
+          21
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "vowifi:off",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 3,
+        "results": {
+          "works": 0,
+          "signed_in": 0,
+          "service_off": 1,
+          "not_possible": 0,
+          "failed": 1,
+          "not_tested": 1
+        },
+        "first_report": "2026-10-02",
+        "last_report": "2026-10-22",
+        "issues": [
+          7,
+          21,
+          22
+        ]
+      },
+      "contested": {
+        "status": "contested: a clean measured failure was reported",
+        "count": 1,
+        "first_report": "2026-10-22",
+        "last_report": "2026-10-22",
+        "issues": [
+          22
+        ]
+      },
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    },
+    {
+      "device": {
+        "model": "SM-G981B",
+        "codename": "x1s"
+      },
+      "carrier_profile": "open.26202.8cebd7550c67",
+      "mccmnc": "26202",
+      "stack": {
+        "rom_family": "lineageos",
+        "ims_stack": "phh_ims",
+        "android_major": 16
+      },
+      "entry": "vowifi:on",
+      "reported": {
+        "status": "reported, not checked by OCD",
+        "count": 2,
+        "results": {
+          "works": 0,
+          "signed_in": 2,
+          "service_off": 0,
+          "not_possible": 0,
+          "failed": 0,
+          "not_tested": 0
+        },
+        "first_report": "2026-10-02",
+        "last_report": "2026-10-21",
+        "issues": [
+          7,
+          21
+        ]
+      },
+      "contested": null,
+      "retested_by_ocd": null,
+      "held": 0,
+      "verification": "unverified"
+    }
+  ]
+}
