@@ -14,6 +14,7 @@ import androidx.work.OneTimeWorkRequest
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -22,58 +23,92 @@ import io.github.open_carrier_data.check.core.Matcher
 import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.RomFamily
 import io.github.open_carrier_data.check.owner.core.ApnResult
+import io.github.open_carrier_data.check.owner.core.LastResult
+import io.github.open_carrier_data.check.owner.core.Notices
+import io.github.open_carrier_data.check.owner.core.OcdAnswer
 import io.github.open_carrier_data.check.owner.core.OwnerFeature
+import io.github.open_carrier_data.check.owner.core.OwnerPhone
 import io.github.open_carrier_data.check.owner.core.OwnerRunner
 import io.github.open_carrier_data.check.owner.core.OwnerSim
-import io.github.open_carrier_data.check.owner.core.Refusals
+import io.github.open_carrier_data.check.owner.core.OwnerState
+import io.github.open_carrier_data.check.owner.core.Plan
+import io.github.open_carrier_data.check.owner.core.QuietBlock
+import io.github.open_carrier_data.check.owner.core.QuietPlan
+import io.github.open_carrier_data.check.owner.core.QuietWindow
+import io.github.open_carrier_data.check.owner.core.RunInterrupted
 import io.github.open_carrier_data.check.owner.core.RunOptions
 import io.github.open_carrier_data.check.owner.core.RunResult
+import io.github.open_carrier_data.check.owner.core.RunSummary
 import io.github.open_carrier_data.check.owner.core.SafetyException
-import io.github.open_carrier_data.check.owner.core.WeeklySchedule
+import io.github.open_carrier_data.check.owner.core.ServerClock
+import io.github.open_carrier_data.check.owner.core.recorded
 import io.github.open_carrier_data.check.owner.core.update
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.time.ZonedDateTime
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
  * Every owner job runs as WorkManager work, one short step at a time (a
- * worker has about 10 minutes): a test run is a chain of one step per SIM
- * and feature, then one per SIM for the APN rows. Each step leaves no trial
- * behind; a step that dies in the middle leaves a recorded trial that the
- * next cleanup reverts.
+ * worker has about 10 minutes): a test run is a chain of steps, each leaving
+ * no trial behind; a step that dies in the middle leaves a recorded trial
+ * that the next cleanup (or the revert alarm) reverts.
+ *
+ * The background (2026-10-20, automatic and silent): the hourly quiet job
+ * looks whether the phone lies unused, does the light read-only check every
+ * few hours (and each hour of the night), and queues the night's one feature
+ * when the silent window is open. Each step of that chain checks the window
+ * again, arms the revert alarm, and stops at once on the screen, a call, the
+ * audio mode or the charger. Routine work posts no notification.
  */
 class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     // One owner job at a time in the process: a cleanup never runs into the middle of a test.
     override suspend fun doWork(): Result = LOCK.withLock { work() }
 
+    private val background: Boolean get() = inputData.getBoolean(KEY_BACKGROUND, false)
+
     private suspend fun work(): Result {
         val step = inputData.getString(KEY_STEP) ?: return Result.failure()
         val store = FileStateStore(applicationContext)
+        val before = store.read()
         val result = try {
             when (step) {
-                STEP_WEEKLY -> weekly()
+                // A registration of a build before 2026-10-20: replaced by the quiet job.
+                STEP_WEEKLY -> {
+                    OwnerScheduler.ensureQuiet(applicationContext, before.scheduleOn)
+                    Result.success()
+                }
+                STEP_QUIET -> quiet(store)
                 STEP_CLEANUP -> cleanup(store)
-                STEP_REVERT_ALL -> withPhone(store) { runner, sims -> runner.revertAll(sims); Result.success() }
+                STEP_REVERT_ALL -> withPhone(store) { runner, sims, _ -> runner.revertAll(sims); Result.success() }
                 STEP_PULL -> {
                     val line = OwnerData(applicationContext, store).pull(force = inputData.getBoolean(KEY_FORCE, false))
                     store.update { it.logged(System.currentTimeMillis(), "pull", line) }
                     Result.success()
                 }
-                STEP_PROBE -> withPhone(store) { runner, sims ->
+                STEP_PROBE -> withPhone(store) { runner, sims, _ ->
                     val sim = sims.firstOrNull() ?: throw SafetyException("no_sim", "no SIM, nothing to test")
                     runner.rebootProbe(sim)
                     Result.success()
                 }
                 STEP_FEATURE -> feature(store)
                 STEP_APN -> apn(store)
-                STEP_FINISH -> {
-                    val id = inputData.getString(KEY_RUN)
-                    store.update { s -> s.runs.firstOrNull { it.id == id }?.let { s.withRun(it.copy(endedMs = System.currentTimeMillis())) } ?: s }
-                    Result.success()
-                }
+                STEP_FINISH -> finish(store)
                 else -> Result.failure()
             }
+        } catch (e: CancellationException) {
+            // JobScheduler stopped the work (the screen came on, the charger was pulled): the step reverted what it could, the cleanup takes the rest.
+            withContext(NonCancellable) {
+                val now = store.read()
+                if (now.anyLive) OwnerScheduler.cleanup(applicationContext, policy = ExistingWorkPolicy.KEEP)
+                if (!now.trialsLive()) RevertAlarm.disarm(applicationContext)
+                OwnerNotifications.refresh(applicationContext, now)
+            }
+            throw e
         } catch (e: SafetyException) {
             store.update { it.logged(System.currentTimeMillis(), "refused", "$step: ${e.message}") }
             if (step == STEP_CLEANUP) {
@@ -93,17 +128,20 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             store.update { it.logged(System.currentTimeMillis(), "error", "$step: ${e.javaClass.simpleName}: ${e.message?.take(160)}") }
             if (step == STEP_PULL && runAttemptCount < 3) Result.retry() else Result.success()
         }
-        OwnerNotifications.refresh(applicationContext, store.read())
+        val after = store.read()
+        // Routine work is silent; a change or a failure is told. A chain's changes wait for its end (STEP_FINISH).
+        if (step !in CHAIN_STEPS && step != STEP_REVERT_ALL) Notices.of(before, after)?.let { OwnerNotifications.notice(applicationContext, it) }
+        OwnerNotifications.refresh(applicationContext, after)
         return result
     }
 
-    private suspend fun <T> withPhone(store: FileStateStore, block: suspend (OwnerRunner, List<OwnerSim>) -> T): T {
+    private suspend fun <T> withPhone(store: FileStateStore, block: suspend (OwnerRunner, List<OwnerSim>, OwnerPhone) -> T): T {
         val handle = OwnerAccess.open(applicationContext)
         // The route in the log whenever it changes (privileged system app, or the Shizuku fallback).
         val route = handle.phone.route.plain
         if (store.read().log.lastOrNull { it.kind == "route" }?.text != route) store.update { it.logged(System.currentTimeMillis(), "route", route) }
         try {
-            return block(OwnerRunner(handle.phone, store, device(applicationContext)), OwnerData.sims(applicationContext))
+            return block(OwnerRunner(handle.phone, store, device(applicationContext)), OwnerData.sims(applicationContext), handle.phone)
         } finally {
             handle.close()
         }
@@ -111,7 +149,8 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
 
     /** Leftover cleanup and the per-SIM re-apply; retried while a refusal holds (in a call, just booted, Shizuku not up yet). */
     private suspend fun cleanup(store: FileStateStore): Result {
-        val summary = withPhone(store) { runner, sims -> runner.reconcile(sims) }
+        val summary = withPhone(store) { runner, sims, _ -> runner.reconcile(sims) }
+        if (!store.read().trialsLive()) RevertAlarm.disarm(applicationContext)
         return if ("refused" in summary || "waits" in summary) {
             if (runAttemptCount < 8) Result.retry() else Result.success()
         } else {
@@ -119,12 +158,161 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         }
     }
 
-    private fun options() = RunOptions(
-        testOffs = inputData.getBoolean(KEY_OFFS, true),
-        voiceCheckMs = inputData.getLong(KEY_VOICE_MS, 0),
-        apns = inputData.getBoolean(KEY_APNS, true),
-        scheduled = inputData.getBoolean(KEY_SCHEDULED, false),
-    )
+    /**
+     * The hourly quiet job: nothing while the screen is on or a call is up;
+     * the light check every [CHECK_EVERY_MS] (and each hour of the night); the
+     * night's one feature when the silent window is open. Writes the log only
+     * when something is new, so a quiet phone keeps a quiet log.
+     */
+    private suspend fun quiet(store: FileStateStore): Result {
+        val context = applicationContext
+        var state = store.read()
+        if (!state.scheduleOn || OwnerScheduler.runActive(context)) return Result.success()
+        val handle = runCatching { OwnerAccess.open(context) }.getOrElse { e ->
+            quietLog(store, "quiet", "no access now: ${e.message?.take(120)}")
+            return Result.success()
+        }
+        try {
+            val phone = handle.phone
+            val reader = QuietReader(context)
+            val look = reader.read(phone, sampleMs = 0)
+            if (QuietWindow.checkBlocker(look) != null) return Result.success()
+            val now = System.currentTimeMillis()
+            val nowLocal = ZonedDateTime.now()
+            val night = QuietWindow.night(look.minuteOfDay)
+            val last = state.lastCheckAtMs
+            val checkDue = !periodic || last == null || now - last >= CHECK_EVERY_MS || now < last || night || state.triggerSinceMs != null
+            if (!checkDue) return Result.success()
+            // The data release, once a day, on Wi-Fi.
+            if (look.wifiConnected == true && (state.lastPullAtMs == null || now - state.lastPullAtMs!! >= PULL_EVERY_MS)) {
+                store.update { it.copy(lastPullAtMs = now) }
+                runCatching { OwnerData(context, store).pull() }
+                    .onSuccess { line -> if (!line.startsWith("up to date")) store.update { it.logged(now, "pull", "background: $line") } }
+                    .onFailure { e -> quietLog(store, "pull", "background pull failed: ${e.message?.take(120)}") }
+            }
+            val sims = OwnerData.sims(context)
+            if (sims.isEmpty()) return Result.success()
+            state = store.read()
+            val basis = OwnerBasis.current(context, state)
+            val seen = state.basisSeen
+            if (seen != basis) {
+                // A ROM flash or a data release: only on values for two nights (the report of 2026-10-20).
+                val onOnly = seen != null && (seen.rom != basis.rom || seen.release != basis.release)
+                store.update {
+                    it.copy(basisSeen = basis, onOnlyUntilMs = if (onOnly) now + QuietPlan.ON_ONLY_MS else it.onOnlyUntilMs)
+                        .logged(now, "basis", if (seen == null) "basis recorded" else "new ${basis.changesFrom(seen).joinToString()}${if (onOnly) "; only on values for two nights" else ""}")
+                }
+            }
+            val runner = OwnerRunner(phone, store, device(context))
+            val data = OwnerData(context, store)
+            val video = VideoStatic.reasons(context)
+            val checks = try {
+                sims.map { sim -> runner.check(sim, video, data.apnRows(sim)) }
+            } catch (e: SafetyException) {
+                quietLog(store, "check", "light check could not read the phone: ${e.reason}")
+                return Result.success()
+            }
+            store.update { s -> checks.flatMap { QuietPlan.observedRecords(it, basis, now) }.fold(s) { acc, r -> acc.recorded(r) } }
+            if (checks.any { it.missingKeeps.isNotEmpty() }) OwnerScheduler.cleanup(context, policy = ExistingWorkPolicy.KEEP)
+            state = store.read()
+            val plan = QuietPlan.plan(
+                checks, state.entries, basis, now,
+                known = state.runs.mapNotNull { it.sim }.toSet(),
+                onOnly = (state.onOnlyUntilMs ?: 0) > now,
+                nightUsed = state.trialNight == QuietWindow.nightOf(nowLocal),
+            )
+            val ims = checks.joinToString { "slot ${it.sim.slot + 1}: ${it.imsLine}" }
+            if (plan.all.isEmpty()) {
+                val text = "checked, nothing changed" + if (plan.waiting > 0) " (${plan.waiting} due on later nights)" else ""
+                store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, text)) }
+                quietLog(store, "check", "light check: $ims; ${plan.line}${if (plan.paused.isNotEmpty()) "; paused after failures: ${plan.paused.joinToString()}" else ""}")
+                return Result.success()
+            }
+            if (plan.triggered && state.triggerSinceMs == null) store.update { it.copy(triggerSinceMs = now) }
+            val nightOnly = QuietPlan.nightOnly(plan, store.read().triggerSinceMs, now)
+            val unhealthy = plan.entries.isNotEmpty() && checks.any { !it.healthy }
+            // The cheap conditions first; the minute of traffic sampling only when they hold.
+            val block = QuietWindow.trialBlocker(look, nightOnly, traffic = false)
+                ?: QuietBlock.NOT_HEALTHY.takeIf { unhealthy }
+                ?: QuietWindow.trialBlocker(reader.read(phone, QuietWindow.FIRST_SAMPLE_MS), nightOnly)
+            if (block != null) {
+                store.update { it.copy(lastCheckAtMs = now, lastResult = LastResult(now, "checked; ${plan.all.size} test(s) wait: ${block.plain}")) }
+                quietLog(store, "quiet_wait", "${plan.line}; waits: ${block.wire}")
+                return Result.success()
+            }
+            val line = OwnerScheduler.runPlanned(context, plan, nightOnly)
+            store.update { it.copy(lastCheckAtMs = now).logged(now, "quiet", "silent window open; $line: ${plan.line}") }
+            return Result.success()
+        } finally {
+            handle.close()
+        }
+    }
+
+    /** The hourly run keeps to [CHECK_EVERY_MS] outside the night; the owner screen's "check now" always checks. */
+    private val periodic: Boolean get() = inputData.getBoolean(KEY_PERIODIC, false)
+
+    /** A log line only when it differs from the last of its kind: a quiet phone keeps a quiet log. */
+    private fun quietLog(store: FileStateStore, kind: String, text: String) {
+        if (store.read().log.lastOrNull { it.kind == kind }?.text == text) return
+        store.update { it.logged(System.currentTimeMillis(), kind, text) }
+    }
+
+    private fun options(store: FileStateStore, phone: OwnerPhone?, ocd: OcdAnswer?): RunOptions {
+        val video = VideoStatic.reasons(applicationContext).let { if (it.isNotEmpty() && ocd?.value != true) it + "no_carrier_offer" else it }
+        return RunOptions(
+            testOffs = inputData.getBoolean(KEY_OFFS, true),
+            voiceCheckMs = if (background) 0 else inputData.getLong(KEY_VOICE_MS, 0),
+            apns = inputData.getBoolean(KEY_APNS, true),
+            scheduled = inputData.getBoolean(KEY_SCHEDULED, false),
+            only = if (inputData.keyValueMap.containsKey(KEY_ONLY)) inputData.getBoolean(KEY_ONLY, true) else null,
+            apnKeys = inputData.getStringArray(KEY_APN_KEYS)?.toSet(),
+            maxApnRows = if (background) QuietPlan.MAX_ON_PER_NIGHT else Int.MAX_VALUE,
+            interrupt = if (background) AndroidInterrupt(applicationContext) else null,
+            basis = OwnerBasis.current(applicationContext, store.read()),
+            videoUnavailable = video,
+        )
+    }
+
+    /**
+     * A background step's own look at the silent window (the job that queued
+     * it may be minutes old): closed, or the night's 20 minutes over, stops
+     * the chain here; the quiet job tries again later.
+     */
+    private suspend fun gate(store: FileStateStore, phone: OwnerPhone, runId: String): Result? {
+        val started = inputData.getLong(KEY_SESSION_START, 0)
+        val over = started > 0 && System.currentTimeMillis() - started > QuietWindow.SESSION_MS
+        val block = if (over) null else QuietWindow.trialBlocker(QuietReader(applicationContext).read(phone, QuietWindow.STEP_SAMPLE_MS), inputData.getBoolean(KEY_NIGHT_ONLY, true))
+        if (!over && block == null) return null
+        val why = if (over) "the night's 20 minutes are over" else block!!.plain
+        store.update { s ->
+            val run = s.runs.firstOrNull { it.id == runId }
+            (if (run != null) s.withRun(run.copy(endedMs = System.currentTimeMillis(), note = "stopped before a step: $why; tried again later")) else s)
+                .logged(System.currentTimeMillis(), "quiet_wait", "background run $runId stopped before a step: $why")
+        }
+        return Result.failure()
+    }
+
+    /** A background step met an interruption: the trial is reverted; the rest of the chain stops and the quiet job tries again later. */
+    private fun interrupted(store: FileStateStore, runId: String, reason: String): Result {
+        store.update { s ->
+            val run = s.runs.firstOrNull { it.id == runId }
+            (if (run != null) s.withRun(run.copy(endedMs = System.currentTimeMillis(), note = "stopped: ${reason.removePrefix(RunInterrupted.INTERRUPTED)}; tried again later")) else s)
+        }
+        if (store.read().anyLive) OwnerScheduler.cleanup(applicationContext, policy = ExistingWorkPolicy.KEEP)
+        return Result.failure()
+    }
+
+    /** A chain step's changes go into its run (told at the end); a failure is told at once. */
+    private fun account(store: FileStateStore, runId: String, before: OwnerState) {
+        val after = store.read()
+        val changes = Notices.changes(before, after)
+        val failures = Notices.failures(before, after)
+        if (changes.isNotEmpty() || failures.isNotEmpty()) {
+            store.update { s -> s.runs.firstOrNull { it.id == runId }?.let { s.withRun(it.copy(changes = it.changes + changes, failures = it.failures + failures)) } ?: s }
+        }
+        Notices.of(before, after)?.takeIf { it.failed }?.let { OwnerNotifications.notice(applicationContext, it) }
+        if (background) store.update { it.copy(trialNight = QuietWindow.nightOf(ZonedDateTime.now())) }
+    }
 
     private suspend fun feature(store: FileStateStore): Result {
         val feature = OwnerFeature.ofWire(inputData.getString(KEY_FEATURE).orEmpty()) ?: return Result.failure()
@@ -132,41 +320,82 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         val runId = inputData.getString(KEY_RUN) ?: return Result.failure()
         val data = OwnerData(applicationContext, store)
         val bundle = data.bundle()
-        withPhone(store) { runner, sims ->
+        return withPhone(store) { runner, sims, phone ->
             val sim = sims.firstOrNull { it.slot == slot }
             val run = startRun(store, runId, sim, bundle)
             if (sim == null) {
                 store.update { it.withRun(run.copy(refused = "no_sim", note = "no SIM, nothing to test")) }
-                return@withPhone
+                return@withPhone Result.success()
             }
+            if (background) gate(store, phone, runId)?.let { return@withPhone it }
             val ocd = OwnerRunner.answers(bundle, sim, device(applicationContext)).getValue(feature)
-            val result = runner.testFeature(sim, feature, ocd, options())
+            val options = options(store, phone, ocd)
+            val before = store.read()
+            if (background) RevertAlarm.arm(applicationContext)
+            val result = try {
+                runner.testFeature(sim, feature, ocd, options)
+            } finally {
+                if (background && !store.read().trialsLive()) RevertAlarm.disarm(applicationContext)
+            }
             store.update { s ->
                 val current = s.runs.firstOrNull { it.id == runId } ?: run
                 s.withRun(current.copy(features = current.features.filterNot { it.feature == feature } + result))
             }
+            if (background && result.refused?.startsWith(RunInterrupted.INTERRUPTED) == true) return@withPhone interrupted(store, runId, result.refused)
+            account(store, runId, before)
+            Result.success()
         }
-        return Result.success()
     }
 
     private suspend fun apn(store: FileStateStore): Result {
         val slot = inputData.getInt(KEY_SLOT, -1)
         val runId = inputData.getString(KEY_RUN) ?: return Result.failure()
         val data = OwnerData(applicationContext, store)
-        withPhone(store) { runner, sims ->
-            val sim = sims.firstOrNull { it.slot == slot } ?: return@withPhone
+        return withPhone(store) { runner, sims, phone ->
+            val sim = sims.firstOrNull { it.slot == slot } ?: return@withPhone Result.success()
             val run = startRun(store, runId, sim, data.bundle())
+            if (background) gate(store, phone, runId)?.let { return@withPhone it }
             val rows = data.apnRows(sim)
-            val results = if (rows.isEmpty() && data.currentDir() == null) {
-                listOf(ApnResult("all rows", "", "no_release_pulled"))
-            } else {
-                runner.testApns(sim, rows, options())
+            val before = store.read()
+            if (background) RevertAlarm.arm(applicationContext)
+            val results = try {
+                if (rows.isEmpty() && data.currentDir() == null) {
+                    listOf(ApnResult("all rows", "", "no_release_pulled"))
+                } else {
+                    runner.testApns(sim, rows, options(store, phone, null))
+                }
+            } finally {
+                if (background && !store.read().trialsLive()) RevertAlarm.disarm(applicationContext)
             }
             store.update { s ->
                 val current = s.runs.firstOrNull { it.id == runId } ?: run
                 s.withRun(current.copy(apns = results))
             }
+            val stopped = results.firstOrNull { it.status.startsWith("refused_" + RunInterrupted.INTERRUPTED) }
+            if (background && stopped != null) return@withPhone interrupted(store, runId, stopped.status.removePrefix("refused_"))
+            account(store, runId, before)
+            Result.success()
         }
+    }
+
+    /** The end of a chain: the run's one line for the Settings entry, and a notification only when it changed something. */
+    private fun finish(store: FileStateStore): Result {
+        val id = inputData.getString(KEY_RUN)
+        val run = store.read().runs.firstOrNull { it.id == id } ?: return Result.success()
+        val ended = run.copy(endedMs = System.currentTimeMillis())
+        val notice = if (ended.changes.isNotEmpty() || ended.failures.isNotEmpty()) {
+            io.github.open_carrier_data.check.owner.core.Notice(
+                title = if (ended.failures.isNotEmpty()) "Open Carrier Data: needs a look" else "Open Carrier Data: carrier settings changed",
+                text = (ended.failures + ended.changes).joinToString("; "),
+                failed = ended.failures.isNotEmpty(),
+            )
+        } else {
+            null
+        }
+        val line = RunSummary.line(ended, notice)
+        store.update { it.withRun(ended).copy(lastResult = LastResult(System.currentTimeMillis(), line, changed = ended.changes.isNotEmpty(), failed = ended.failures.isNotEmpty())) }
+        // Failures were told when they happened; the changes are told now.
+        if (ended.changes.isNotEmpty()) OwnerNotifications.notice(applicationContext, notice!!)
         return Result.success()
     }
 
@@ -185,20 +414,11 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             releaseTag = state.release?.tag ?: "bundled ${bundle.source.commit.take(8)}",
             device = "${device.model} (${device.codename})",
             stack = "${device.romFamily.plain}, Android ${device.androidMajor}, ${Build.TYPE}",
+            background = background,
+            plan = inputData.getString(KEY_PLAN),
         )
         store.update { it.withRun(run) }
         return run
-    }
-
-    /** The weekly job: pull an update, then queue the test chain under the same conditions. */
-    private suspend fun weekly(): Result {
-        val store = FileStateStore(applicationContext)
-        if (!store.read().scheduleOn) return Result.success()
-        runCatching { OwnerData(applicationContext, store).pull() }
-            .onSuccess { line -> store.update { it.logged(System.currentTimeMillis(), "pull", "weekly: $line") } }
-            .onFailure { e -> store.update { it.logged(System.currentTimeMillis(), "error", "weekly pull: ${e.message?.take(160)}") } }
-        OwnerScheduler.runTests(applicationContext, scheduled = true, offs = true, voiceCheckMs = 0, apns = true)
-        return Result.success()
     }
 
     companion object {
@@ -211,8 +431,16 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val KEY_APNS = "apns"
         const val KEY_SCHEDULED = "scheduled"
         const val KEY_FORCE = "force"
+        const val KEY_BACKGROUND = "background"
+        const val KEY_ONLY = "only"
+        const val KEY_APN_KEYS = "apn_keys"
+        const val KEY_NIGHT_ONLY = "night_only"
+        const val KEY_SESSION_START = "session_start"
+        const val KEY_PLAN = "plan"
+        const val KEY_PERIODIC = "periodic"
 
         const val STEP_WEEKLY = "weekly"
+        const val STEP_QUIET = "quiet"
         const val STEP_CLEANUP = "cleanup"
         const val STEP_REVERT_ALL = "revert_all"
         const val STEP_PULL = "pull"
@@ -220,6 +448,12 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val STEP_APN = "apn"
         const val STEP_FINISH = "finish"
         const val STEP_PROBE = "probe"
+
+        private val CHAIN_STEPS = setOf(STEP_FEATURE, STEP_APN, STEP_FINISH)
+
+        /** The light check outside the night: every six hours. */
+        val CHECK_EVERY_MS: Long = TimeUnit.HOURS.toMillis(6)
+        val PULL_EVERY_MS: Long = TimeUnit.HOURS.toMillis(20)
 
         private val LOCK = Mutex()
 
@@ -239,39 +473,38 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
 /** Queues the owner's jobs. Unique names keep one of each at a time. */
 object OwnerScheduler {
     const val WEEKLY = "owner-weekly"
+    const val QUIET = "owner-quiet"
     const val RUN = "owner-run"
     const val CLEANUP = "owner-cleanup"
     const val REVERT_ALL = "owner-revert-all"
     const val PULL = "owner-pull"
 
-    /** Weekly, only while idle, charging and on Wi-Fi (unmetered). The worker itself refuses in a call or while roaming. */
-    fun scheduledConstraints(): Constraints = Constraints.Builder()
-        .setRequiredNetworkType(NetworkType.UNMETERED)
-        .setRequiresCharging(true)
-        .setRequiresDeviceIdle(true)
-        .build()
+    /** The quiet job runs while Android counts the phone idle (screen off about half an hour); the job checks the rest itself. */
+    private fun quietConstraints(): Constraints = Constraints.Builder().setRequiresDeviceIdle(true).build()
 
-    /** The VoLTE step switches Wi-Fi off while IMS runs over it: no network constraint, or WorkManager would stop it. */
-    private fun scheduledWithoutNetwork(): Constraints = Constraints.Builder()
-        .setRequiresCharging(true)
-        .setRequiresDeviceIdle(true)
-        .build()
+    /** A night step: idle and charging, as the silent window wants; no network constraint (an APN trial moves mobile data). */
+    private fun nightConstraints(): Constraints = Constraints.Builder().setRequiresCharging(true).setRequiresDeviceIdle(true).build()
 
-    fun ensureWeekly(context: Context, on: Boolean) {
+    /** The hourly quiet job (replaces the weekly job of the builds before 2026-10-20). */
+    fun ensureQuiet(context: Context, on: Boolean) {
         val wm = WorkManager.getInstance(context)
+        wm.cancelUniqueWork(WEEKLY)
         if (!on) {
-            wm.cancelUniqueWork(WEEKLY)
+            wm.cancelUniqueWork(QUIET)
             return
         }
-        val lastRun = FileStateStore(context).read().runs.lastOrNull()?.startedMs
-        val request = PeriodicWorkRequestBuilder<OwnerWorker>(7, TimeUnit.DAYS)
-            .setInitialDelay(WeeklySchedule.initialDelayMs(lastRun, System.currentTimeMillis()), TimeUnit.MILLISECONDS)
-            .setConstraints(scheduledConstraints())
-            .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_WEEKLY))
-            .addTag(WEEKLY)
+        val request = PeriodicWorkRequestBuilder<OwnerWorker>(1, TimeUnit.HOURS)
+            .setConstraints(quietConstraints())
+            .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_QUIET, OwnerWorker.KEY_PERIODIC to true))
+            .addTag(QUIET)
             .build()
-        wm.enqueueUniquePeriodicWork(WEEKLY, ExistingPeriodicWorkPolicy.KEEP, request)
+        wm.enqueueUniquePeriodicWork(QUIET, ExistingPeriodicWorkPolicy.UPDATE, request)
     }
+
+    /** Whether a test chain is queued or running. */
+    fun runActive(context: Context): Boolean = runCatching {
+        WorkManager.getInstance(context).getWorkInfosForUniqueWork(RUN).get().any { !it.state.isFinished }
+    }.getOrDefault(false)
 
     private fun step(data: Data, constraints: Constraints?, expedite: Boolean): OneTimeWorkRequest =
         OneTimeWorkRequestBuilder<OwnerWorker>().setInputData(data).apply {
@@ -279,9 +512,14 @@ object OwnerScheduler {
             if (expedite) setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
         }.build()
 
-    /** Leftover cleanup and per-SIM re-apply; after a boot it waits out the 10 minutes in which a change is refused anyway. */
-    fun cleanup(context: Context, afterBoot: Boolean = false, policy: ExistingWorkPolicy = ExistingWorkPolicy.REPLACE) {
-        val delay = if (afterBoot) (Refusals.EMERGENCY_WINDOW_MS - SystemClock.elapsedRealtime()).coerceAtLeast(0) + 30_000 else 0
+    /**
+     * Leftover cleanup and per-SIM re-apply; after a boot or the app's own
+     * update it waits out the 10 minutes in which a change is refused anyway,
+     * counted from the boot or from the system server's start, whichever is
+     * later (a soft restart, 2026-10-20).
+     */
+    fun cleanup(context: Context, afterBoot: Boolean = false, policy: ExistingWorkPolicy = ExistingWorkPolicy.REPLACE, serverUpMs: Long? = null) {
+        val delay = if (afterBoot) ServerClock.delayAfterWindowMs(SystemClock.elapsedRealtime(), serverUpMs ?: 0) else 0
         val request = OneTimeWorkRequestBuilder<OwnerWorker>()
             .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_CLEANUP))
             .setInitialDelay(delay, TimeUnit.MILLISECONDS)
@@ -314,30 +552,86 @@ object OwnerScheduler {
         WorkManager.getInstance(context).enqueueUniqueWork(PULL, ExistingWorkPolicy.KEEP, request)
     }
 
-    /** A test run: one step per SIM and feature, then the APN rows, then the end mark. */
-    suspend fun runTests(context: Context, scheduled: Boolean, offs: Boolean, voiceCheckMs: Long, apns: Boolean): String {
+    /** The owner's "check now": the light check at once, without waiting for idle. */
+    fun checkNow(context: Context) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "owner-check-now", ExistingWorkPolicy.REPLACE,
+            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_QUIET), null, expedite = false),
+        )
+    }
+
+    /**
+     * The night's chain from a [Plan]: the reverts of failing kept values,
+     * then the one feature's entries (both values in one step when both are
+     * due), or its APN rows; then the end mark. Every step is a background
+     * step: it checks the silent window again and stops on an interruption.
+     */
+    fun runPlanned(context: Context, plan: Plan, nightOnly: Boolean): String {
+        val runId = UUID.randomUUID().toString().take(8)
+        val common = arrayOf(
+            OwnerWorker.KEY_RUN to runId, OwnerWorker.KEY_OFFS to true, OwnerWorker.KEY_VOICE_MS to 0L, OwnerWorker.KEY_APNS to true,
+            OwnerWorker.KEY_SCHEDULED to true, OwnerWorker.KEY_BACKGROUND to true, OwnerWorker.KEY_NIGHT_ONLY to nightOnly,
+            OwnerWorker.KEY_SESSION_START to System.currentTimeMillis(), OwnerWorker.KEY_PLAN to plan.line.take(400),
+        )
+        val steps = mutableListOf<OneTimeWorkRequest>()
+        for (revert in plan.reverts) {
+            val feature = revert.feature ?: continue
+            steps += step(
+                workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_FEATURE, OwnerWorker.KEY_SLOT to revert.slot, OwnerWorker.KEY_FEATURE to feature.wire, OwnerWorker.KEY_ONLY to revert.value, OwnerWorker.KEY_NIGHT_ONLY to false),
+                nightConstraints(), expedite = false,
+            )
+        }
+        for ((key, entries) in plan.entries.groupBy { it.slot to it.group }) {
+            val (slot, group) = key
+            val feature = OwnerFeature.ofWire(group)
+            steps += if (feature != null) {
+                val values = entries.mapNotNull { it.value }.toSet()
+                val only = values.singleOrNull()
+                step(
+                    if (only != null) {
+                        workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_FEATURE, OwnerWorker.KEY_SLOT to slot, OwnerWorker.KEY_FEATURE to feature.wire, OwnerWorker.KEY_ONLY to only)
+                    } else {
+                        workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_FEATURE, OwnerWorker.KEY_SLOT to slot, OwnerWorker.KEY_FEATURE to feature.wire)
+                    },
+                    nightConstraints(), expedite = false,
+                )
+            } else {
+                step(
+                    workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_APN, OwnerWorker.KEY_SLOT to slot, OwnerWorker.KEY_APN_KEYS to entries.mapNotNull { it.apnKey }.toTypedArray()),
+                    nightConstraints(), expedite = false,
+                )
+            }
+        }
+        if (steps.isEmpty()) return "nothing to queue"
+        steps += step(workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_FINISH), null, false)
+        var chain = WorkManager.getInstance(context).beginUniqueWork(RUN, ExistingWorkPolicy.KEEP, steps.first())
+        for (next in steps.drop(1)) chain = chain.then(next)
+        chain.enqueue()
+        return "queued background run $runId (${steps.size - 1} step(s))"
+    }
+
+    /** The owner's "Test now": one step per SIM and feature, then the APN rows, then the end mark. */
+    suspend fun runTests(context: Context, offs: Boolean, voiceCheckMs: Long, apns: Boolean): String {
         val sims = OwnerData.sims(context)
         val runId = UUID.randomUUID().toString().take(8)
-        val constraints = if (scheduled) scheduledConstraints() else null
         val common = arrayOf(
             OwnerWorker.KEY_RUN to runId, OwnerWorker.KEY_OFFS to offs, OwnerWorker.KEY_VOICE_MS to voiceCheckMs,
-            OwnerWorker.KEY_APNS to apns, OwnerWorker.KEY_SCHEDULED to scheduled,
+            OwnerWorker.KEY_APNS to apns, OwnerWorker.KEY_SCHEDULED to false,
         )
         val steps = mutableListOf<OneTimeWorkRequest>()
         for (sim in sims) {
             for (feature in OwnerFeature.entries) {
-                val stepConstraints = if (scheduled && feature == OwnerFeature.VOLTE) scheduledWithoutNetwork() else constraints
                 steps += step(
                     workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_FEATURE, OwnerWorker.KEY_SLOT to sim.slot, OwnerWorker.KEY_FEATURE to feature.wire),
-                    stepConstraints, expedite = false,
+                    null, expedite = false,
                 )
             }
-            if (apns) steps += step(workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_APN, OwnerWorker.KEY_SLOT to sim.slot), constraints, false)
+            if (apns) steps += step(workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_APN, OwnerWorker.KEY_SLOT to sim.slot), null, false)
         }
         val store = FileStateStore(context)
         if (steps.isEmpty()) {
             store.update {
-                it.withRun(RunResult(id = runId, startedMs = System.currentTimeMillis(), scheduled = scheduled, endedMs = System.currentTimeMillis(), refused = "no_sim", note = "no SIM, nothing to test"))
+                it.withRun(RunResult(id = runId, startedMs = System.currentTimeMillis(), scheduled = false, endedMs = System.currentTimeMillis(), refused = "no_sim", note = "no SIM, nothing to test"))
                     .logged(System.currentTimeMillis(), "run", "no SIM, nothing to test")
             }
             return "no SIM, nothing to test"
@@ -346,7 +640,10 @@ object OwnerScheduler {
         var chain = WorkManager.getInstance(context).beginUniqueWork(RUN, ExistingWorkPolicy.KEEP, steps.first())
         for (next in steps.drop(1)) chain = chain.then(next)
         chain.enqueue()
-        store.update { it.logged(System.currentTimeMillis(), "run", "queued run $runId: ${sims.size} SIM(s), ${steps.size - 1} steps${if (scheduled) ", scheduled" else ""}") }
+        store.update { it.logged(System.currentTimeMillis(), "run", "queued run $runId: ${sims.size} SIM(s), ${steps.size - 1} steps${if (offs) ", off values too" else ", on values only"}") }
         return "queued run $runId"
     }
+
+    /** Whether the work of a unique name is still to run. */
+    fun pending(info: List<WorkInfo>): Int = info.count { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
 }

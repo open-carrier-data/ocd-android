@@ -126,9 +126,10 @@ class DataTest {
         assertEquals(listOf(ApnMatch.MATCHES, ApnMatch.MATCHES, ApnMatch.MATCHES, ApnMatch.NOT_THIS_SIM), rows.map { ApnConf.match(it, lidl) })
         assertEquals(ApnMatch.NOT_THIS_SIM, ApnConf.match(rows[1], lidl.copy(spn = "Vodafone")))
         assertEquals(ApnMatch.NOT_CHECKABLE, ApnConf.match(rows[1], lidl.copy(spn = null)))
-        val values = ApnColumns.values(rows[0])
+        val values = ApnColumns.testRow(rows[0], 2397)
         assertEquals("Vodafone Internet (OCD Check test)", values["name"])
-        assertEquals("26202", values["numeric"])
+        assertEquals("the test row has no numeric; the carrier ID keys it", "", values["numeric"])
+        assertEquals("26202", ApnColumns.identity(rows[0])["numeric"])
         assertEquals(((1L shl 0) or (1L shl 1) or (1L shl 12)).toString(), values["bearer_bitmask"])
         val parsed = PhoneApnRow.parseQuery("Row: 0 _id=12, name=LIDL, apn=web.vodafone.de, type=default,supl, protocol=IPV4V6, mvno_type=\n")!!
         assertEquals(rows[0].key, parsed.single().key)

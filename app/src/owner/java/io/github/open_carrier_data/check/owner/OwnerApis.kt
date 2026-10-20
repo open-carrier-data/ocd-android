@@ -10,6 +10,8 @@ import android.telephony.ims.ImsMmTelManager
 import android.telephony.ims.feature.MmTelFeature
 import androidx.annotation.RequiresApi
 import io.github.open_carrier_data.check.owner.core.ImsApi
+import io.github.open_carrier_data.check.owner.core.RegistrationEvent
+import io.github.open_carrier_data.check.owner.core.RegistrationWatch
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.Executor
@@ -105,5 +107,66 @@ object ImsApiReader {
         } finally {
             runCatching { mmtel.unregisterMmTelCapabilityCallback(callback) }
         }
+    }
+}
+
+/**
+ * IMS registrations of one subscription through RegistrationManager's
+ * callback (READ_PRECISE_PHONE_STATE or READ_PRIVILEGED_PHONE_STATE). Android
+ * answers at once with the current state; the runner counts only events after
+ * its change, so a fresh REGISTER over LTE is told from a kept registration.
+ */
+@RequiresApi(Build.VERSION_CODES.TIRAMISU)
+class ImsRegistrationWatch private constructor(private val mmtel: ImsMmTelManager) : RegistrationWatch {
+    private val events = java.util.concurrent.CopyOnWriteArrayList<RegistrationEvent>()
+    private val callback = object : android.telephony.ims.RegistrationManager.RegistrationCallback() {
+        override fun onRegistered(attributes: android.telephony.ims.ImsRegistrationAttributes) {
+            events += RegistrationEvent(System.currentTimeMillis(), true, attributes.transportType)
+        }
+
+        override fun onUnregistered(info: android.telephony.ims.ImsReasonInfo) {
+            events += RegistrationEvent(System.currentTimeMillis(), false, null)
+        }
+    }
+
+    override fun events(): List<RegistrationEvent> = events.toList()
+
+    override fun close() {
+        runCatching { mmtel.unregisterImsRegistrationCallback(callback) }
+    }
+
+    companion object {
+        private val direct = Executor { it.run() }
+
+        @SuppressLint("MissingPermission")
+        fun start(context: Context, subId: Int): RegistrationWatch? {
+            val mmtel = runCatching { context.getSystemService(ImsManager::class.java)?.getImsMmTelManager(subId) }.getOrNull() ?: return null
+            val watch = ImsRegistrationWatch(mmtel)
+            return if (runCatching { mmtel.registerImsRegistrationCallback(direct, watch.callback) }.isSuccess) watch else null
+        }
+    }
+}
+
+/**
+ * Why video calling cannot work on this build, from static checks (the
+ * report of 2026-10-20): PHH IMS has no video (it masks the capability out,
+ * has no video call provider and offers audio only), and Android's video gate
+ * also needs the device's config_device_vt_available, which the S20 tree
+ * leaves off. Empty: no static reason, so a trial may tell.
+ */
+object VideoStatic {
+    const val IMS_SERVICE = "android.telephony.ims.ImsService"
+
+    fun reasons(context: Context): List<String> = buildList {
+        val stacks = runCatching {
+            context.packageManager.queryIntentServices(android.content.Intent(IMS_SERVICE), 0).map { it.serviceInfo.packageName }
+        }.getOrDefault(emptyList())
+        if (stacks.any { it.startsWith("me.phh.ims") }) add("ims_stack_phh_no_video")
+        val flag = runCatching {
+            val res = android.content.res.Resources.getSystem()
+            val id = res.getIdentifier("config_device_vt_available", "bool", "android")
+            if (id == 0) null else res.getBoolean(id)
+        }.getOrNull()
+        if (flag == false) add("device_vt_flag_off")
     }
 }

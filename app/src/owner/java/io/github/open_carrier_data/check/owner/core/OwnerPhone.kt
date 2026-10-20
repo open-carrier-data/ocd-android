@@ -14,7 +14,8 @@ import io.github.open_carrier_data.check.core.SimIdentity
  *
  * Every write goes through [OwnerSession], which checks the key guard, the
  * refusals and the stop flag first, records the change before it runs, and
- * proves every revert.
+ * proves every revert. Neither route reads the device log or switches Wi-Fi
+ * (2026-10-20).
  */
 interface OwnerPhone {
     val route: Route
@@ -39,8 +40,26 @@ interface OwnerPhone {
     /** One slot's IMS from ImsMmTelManager, the privileged route's stand-in for [phoneText]. Null: this route reads the dump. */
     suspend fun imsApi(slot: Int, subId: Int): ImsApi? = null
 
-    /** The IWLAN tags of one slot, dumped from logcat, never cleared. */
-    suspend fun iwlanLogText(slot: Int): String?
+    /**
+     * The IWLAN data service's dump and QNS's dump (`dumpsys activity
+     * service`; the privileged route needs DUMP and PACKAGE_USAGE_STATS), in
+     * place of the device log ([IwlanDumps]). Null: unreadable.
+     */
+    suspend fun iwlanServiceText(): String? = null
+    suspend fun qnsText(): String? = null
+
+    /** `dumpsys power`, for how long the screen has been off ([PowerDump]); null when the route cannot read it. */
+    suspend fun powerText(): String? = null
+
+    /** When the running system_server started ([ServerClock]); null when the route cannot tell. */
+    suspend fun serverStart(): ServerStart? = null
+
+    /**
+     * Starts watching the IMS registrations of one subscription (the
+     * registration callback): a fresh REGISTER after a change is the stronger
+     * result. Null when the route cannot. Close it after the measurement.
+     */
+    suspend fun watchRegistrations(subId: Int): RegistrationWatch? = null
 
     /** A non-persistent override of one key. Implementations check [KeyGuard] again. */
     suspend fun ccSet(slot: Int, subId: Int, key: String, value: Boolean): CcResult
@@ -50,8 +69,11 @@ interface OwnerPhone {
 
     suspend fun apnQuery(numeric: String): List<PhoneApnRow>?
 
-    /** Rows whose name carries [ApnColumns.MARKER], for every network code. */
+    /** Rows whose name carries [ApnColumns.MARKER], for every network code. Read only: the owner build never deletes by marker. */
     suspend fun apnQueryMarked(): List<PhoneApnRow>?
+
+    /** One row by its own ID; null when it is gone (or unreadable). */
+    suspend fun apnRowById(id: Long): PhoneApnRow?
 
     /**
      * IDs of the rows an insert of [values] would be merged into instead of
@@ -59,8 +81,13 @@ interface OwnerPhone {
      * when the table could not be read.
      */
     suspend fun apnConflicts(values: Map<String, String>): List<Long>?
-    suspend fun apnInsert(values: Map<String, String>): Boolean
+
+    /** Inserts one row; its new ID, or null when the provider added none (a stop for the runner). */
+    suspend fun apnInsert(values: Map<String, String>): Long?
     suspend fun apnDelete(id: Long): Boolean
+
+    /** A hash over every visible APN row (journal before a trial, proof after its revert); null when unreadable. */
+    suspend fun apnTableHash(): String?
     suspend fun preferredApn(subId: Int): PreferredApn
 
     /** null removes the preference, so Android picks again. */
@@ -68,13 +95,6 @@ interface OwnerPhone {
 
     suspend fun mobileData(subId: Int): MobileData
     suspend fun wifiConnected(): Boolean?
-
-    /**
-     * Wi-Fi on or off, for VoLTE's measurement while IMS runs over Wi-Fi (lab
-     * `--wifi-off-test`). Always switched back on by the runner, and by the
-     * cleanup from the state's record after a crash. False: the phone refused.
-     */
-    suspend fun setWifiEnabled(on: Boolean): Boolean
 
     fun nowMs(): Long
     fun uptimeMs(): Long

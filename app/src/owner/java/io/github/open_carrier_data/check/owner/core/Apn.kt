@@ -8,9 +8,12 @@ import kotlinx.serialization.Serializable
  * OCD's APN rows for one SIM, from the release's apns-conf.xml (lookup.json
  * carries none), and the phone's own rows from the telephony provider. The
  * owner build tests OCD's internet (default-type) rows: it inserts a missing
- * one, makes it the preferred APN, measures whether mobile data comes up
- * validated, and removes it again unless it is the best working value.
- * Emergency rows are never touched.
+ * one as a test row, makes it the preferred APN, measures whether mobile data
+ * comes up validated, and removes it again unless it is the best working
+ * value. The test row is built the way AOSP Settings adds an APN (the report
+ * of 2026-10-20): keyed by the SIM's carrier ID with an empty numeric, so no
+ * stock row can share its provider key, and inserted as edited, so deleting
+ * it removes it. Emergency rows are never touched.
  */
 
 /** One `<apn .../>` element of OCD's apns-conf.xml, attributes as written. */
@@ -101,12 +104,14 @@ data class PhoneApnRow(
     val types: List<String>,
     val protocol: String?,
     val mvnoType: String?,
+    val numeric: String? = null,
+    val carrierId: Long? = null,
 ) {
     val key: String get() = apnKey(apn, types, protocol)
 
     companion object {
         /** The projection the owner build asks for. No user name, password, server or proxy column. */
-        val COLUMNS = listOf("_id", "name", "apn", "type", "protocol", "mvno_type")
+        val COLUMNS = listOf("_id", "name", "apn", "type", "protocol", "mvno_type", "numeric", "carrier_id")
         private val ROW = Regex("^Row: \\d+ (.*)$")
         private val SPLIT = Regex(", (?=(?:${COLUMNS.joinToString("|")})=)")
 
@@ -128,6 +133,8 @@ data class PhoneApnRow(
                     types = fields["type"].orEmpty().split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() },
                     protocol = fields["protocol"]?.takeIf { it != "NULL" }?.uppercase(),
                     mvnoType = fields["mvno_type"]?.takeIf { it.isNotEmpty() && it != "NULL" }?.lowercase(),
+                    numeric = fields["numeric"]?.takeIf { it != "NULL" },
+                    carrierId = fields["carrier_id"]?.toLongOrNull(),
                 )
             }
             return if (answered) rows else null
@@ -169,13 +176,19 @@ object ApnColumns {
         "carrier_enabled" to "carrier_enabled",
         "carrier_id" to "carrier_id",
     )
-    val INTEGER = setOf("authtype", "mtu", "carrier_enabled", "carrier_id", "bearer_bitmask", "network_type_bitmask")
+    val INTEGER = setOf("authtype", "mtu", "carrier_enabled", "carrier_id", "bearer_bitmask", "network_type_bitmask", "infrastructure_bitmask", "apn_set_id", "edited", "user_visible")
 
     /** What marks a row the owner build inserted, so a leftover is found without its state file. */
     const val MARKER = " (OCD Check test)"
 
-    /** Provider column to value for one OCD row, with the marker on the name; booleans as 1/0, bitmasks as Android's. */
-    fun values(row: OcdApnRow): Map<String, String> {
+    /** Types a test row never carries: initial attach, the wildcard, IMS, emergency (the report of 2026-10-20). */
+    val TEST_ROW_NEVER = setOf("ia", "*", "ims", "emergency")
+
+    /** TelephonyProvider's USER_EDITED: a delete of such a row removes it (an unedited row is only hidden, edited=2). */
+    const val USER_EDITED = "1"
+
+    /** Provider column to value for one OCD row as written; booleans as 1/0, bitmasks as Android's. */
+    private fun columns(row: OcdApnRow): LinkedHashMap<String, String> {
         KeyGuard.checkApn(row)
         val out = LinkedHashMap<String, String>()
         for ((xml, column) in FROM_XML) {
@@ -185,10 +198,41 @@ object ApnColumns {
             if (column in INTEGER && value.toLongOrNull() == null) continue
             out[column] = value
         }
-        out["numeric"] = row.numeric
+        return out
+    }
+
+    /**
+     * The row as a stock row would hold it (its numeric, mcc and mnc), for the
+     * read-only lookup "does the phone have this APN already": a phone row
+     * that matches on the provider's identity columns carries the same APN.
+     */
+    fun identity(row: OcdApnRow): Map<String, String> = columns(row).apply { this["numeric"] = row.numeric }
+
+    /**
+     * The test row (the report of 2026-10-20, as AOSP Settings' ApnRepository
+     * adds one): an empty numeric, mcc and mnc and the SIM's own carrier ID,
+     * infrastructure_bitmask 1 and apn_set_id 0, so it cannot share the
+     * provider's 22-column key with any stock row; inserted as edited, never
+     * edited=0, so its delete is a real delete and leaves no hidden tombstone;
+     * no ia, wildcard, ims or emergency type; the MVNO match is the carrier ID.
+     */
+    fun testRow(row: OcdApnRow, carrierId: Long): Map<String, String> {
+        require(carrierId > 0) { "carrier ID" }
+        val out = columns(row)
+        val types = row.types.flatMap { if (it == "*") listOf("default") else listOf(it) }.filter { it !in TEST_ROW_NEVER }.distinct()
+        require("default" in types) { "not an internet row" }
+        out["type"] = types.joinToString(",")
+        out["numeric"] = ""
+        out["mcc"] = ""
+        out["mnc"] = ""
+        out.remove("mvno_type")
+        out.remove("mvno_match_data")
+        out["carrier_id"] = carrierId.toString()
+        out["infrastructure_bitmask"] = "1"
+        out["apn_set_id"] = "0"
         out["name"] = (row.name ?: row.apn) + MARKER
         out["user_visible"] = "1"
-        out["edited"] = "0"
+        out["edited"] = USER_EDITED
         return out
     }
 

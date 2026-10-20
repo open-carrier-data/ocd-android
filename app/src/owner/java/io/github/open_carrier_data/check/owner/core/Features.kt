@@ -37,7 +37,7 @@ enum class OwnerFeature(
 }
 
 /** A guard refused. Whatever ran so far is reverted, and nothing else changes. */
-class SafetyException(val reason: String, message: String = reason) : Exception(message)
+open class SafetyException(val reason: String, message: String = reason) : Exception(message)
 
 /**
  * The key guard, checked before every write, in the app and again in the

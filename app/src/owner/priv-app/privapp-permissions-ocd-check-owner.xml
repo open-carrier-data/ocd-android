@@ -7,28 +7,32 @@
 
     The ROM enforces this list (ro.control_privapp_permissions=enforce): a privileged
     permission the APK asks for and this file lacks stops system_server at boot.
-    OwnerManifestTest keeps the two in step.
+    OwnerManifestTest keeps the two in step. Install this file together with the APK
+    that matches it, before the reboot.
 
     MODIFY_PHONE_STATE: CarrierConfigManager.overrideConfig(subId, bundle), never persistent;
           telecom's isInEmergencyCall for the refusals; also guards the Settings entry's activity.
     READ_PRIVILEGED_PHONE_STATE: the emergency state (callback mode, emergency SMS mode) and
           IMS (ImsMmTelManager registration, capabilities, switches) for the refusals and the
           evidence, through the system APIs.
-    WRITE_APN_SETTINGS: the APN trials and their revert.
-    DUMP: dumpsys carrier_config and telephony.registry, read for the refusals, the evidence
-          and the revert proof. The phone service's dump goes through ActivityManager, which
-          also wants PACKAGE_USAGE_STATS; the app reads that state through the APIs instead.
-    READ_LOGS: the IWLAN tags of logcat, dumped and never cleared (Wi-Fi calling back-off).
-          Android 13+ still asks the user once while the app is in the foreground, and
-          declines in the background; the evidence then lacks the IWLAN lines.
+    READ_PRECISE_PHONE_STATE: the IMS registration callback (a fresh REGISTER over LTE after
+          VoLTE's measurement) and the telephony callbacks that stand in for the log.
+    WRITE_APN_SETTINGS: the APN trials (a test row in, deleted by its own ID) and their revert.
+    DUMP: dumpsys carrier_config, telephony.registry and power, read for the refusals, the
+          evidence, the revert proof and the silent window.
+    PACKAGE_USAGE_STATS: with DUMP, `dumpsys activity service` of the IWLAN data service and
+          QNS (Wi-Fi calling's tunnel, errors and back-off) in place of the device log.
+          READ_LOGS is gone (2026-10-20): reading the log makes Android ask the owner, and a
+          privileged app cannot skip that prompt.
 -->
 <permissions>
     <privapp-permissions package="io.github.open_carrier_data.check.owner">
         <permission name="android.permission.MODIFY_PHONE_STATE" />
         <permission name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
+        <permission name="android.permission.READ_PRECISE_PHONE_STATE" />
         <permission name="android.permission.WRITE_APN_SETTINGS" />
         <permission name="android.permission.DUMP" />
-        <permission name="android.permission.READ_LOGS" />
+        <permission name="android.permission.PACKAGE_USAGE_STATS" />
     </privapp-permissions>
 
     <!--

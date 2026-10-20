@@ -42,13 +42,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import io.github.open_carrier_data.check.owner.core.Hold
 import io.github.open_carrier_data.check.owner.core.IssueReport
 import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerState
-import io.github.open_carrier_data.check.owner.core.WeeklySchedule
+import io.github.open_carrier_data.check.owner.core.IwlanDumps
+import io.github.open_carrier_data.check.owner.core.QuietSchedule
 import io.github.open_carrier_data.check.owner.core.update
 import io.github.open_carrier_data.check.ui.MainActivity
 import io.github.open_carrier_data.check.ui.OcdCheckTheme
@@ -70,6 +70,8 @@ data class OwnerUi(
     val weekly: String = "not read",
     val run: String = "idle",
     val message: String? = null,
+    /** Wi-Fi calling details from the IWLAN and QNS dumps, read when the owner asks; never the device log. */
+    val details: List<String>? = null,
 )
 
 class OwnerViewModel(app: Application) : AndroidViewModel(app) {
@@ -93,14 +95,13 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         val wm = WorkManager.getInstance(context)
         val state = store.read()
         val info = withContext(Dispatchers.IO) {
-            runCatching { wm.getWorkInfosForUniqueWork(OwnerScheduler.WEEKLY).get() }.getOrNull()
+            runCatching { wm.getWorkInfosForUniqueWork(OwnerScheduler.QUIET).get() }.getOrNull()
         }?.firstOrNull { !it.state.isFinished }
-        // WorkManager's next time is the earliest start; once it has passed the job waits for idle, charging and Wi-Fi.
-        val weekly = WeeklySchedule.line(state.scheduleOn, info != null, info?.nextScheduleTimeMillis, System.currentTimeMillis()) {
+        val weekly = QuietSchedule.line(state.scheduleOn, info != null, state, System.currentTimeMillis()) {
             DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it))
         }
         val run = withContext(Dispatchers.IO) { runCatching { wm.getWorkInfosForUniqueWork(OwnerScheduler.RUN).get() }.getOrNull() }.orEmpty()
-        val running = run.count { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED }
+        val running = OwnerScheduler.pending(run)
         _ui.value = _ui.value.copy(
             gate = gate,
             state = state,
@@ -120,9 +121,44 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun test(offs: Boolean, voiceCheck: Boolean, apns: Boolean) = viewModelScope.launch {
-        val line = OwnerScheduler.runTests(getApplication(), scheduled = false, offs = offs, voiceCheckMs = if (voiceCheck) 120_000 else 0, apns = apns)
+        val line = OwnerScheduler.runTests(getApplication(), offs = offs, voiceCheckMs = if (voiceCheck) 120_000 else 0, apns = apns)
         say(line)
         refresh()
+    }
+
+    fun checkNow() {
+        OwnerScheduler.checkNow(getApplication())
+        say("Light check queued: reads only, changes nothing.")
+    }
+
+    /** Wi-Fi calling's state from the dumps (no device log, so Android asks for nothing). */
+    fun details() = viewModelScope.launch {
+        val context = getApplication<Application>()
+        val lines = withContext(Dispatchers.IO) {
+            runCatching {
+                val handle = OwnerAccess.open(context)
+                try {
+                    val phone = handle.phone
+                    val registry = phone.registryText()
+                    val iwlan = phone.iwlanServiceText()
+                    val qns = phone.qnsText()
+                    OwnerData.sims(context).flatMap { sim ->
+                        val r = IwlanDumps.reading(registry, iwlan, qns, sim.slot)
+                        listOf(
+                            "Slot ${sim.slot + 1}: IMS tunnel over Wi-Fi ${when (r?.tunnelUp) { true -> "up"; false -> "down"; null -> "not seen" }}",
+                            "Slot ${sim.slot + 1}: QNS qualifies ${IwlanDumps.qualifiedForIms(qns, sim.slot) ?: "-"} for IMS; Wi-Fi restrictions ${IwlanDumps.restrictions(qns, sim.slot).ifEmpty { listOf("none") }.joinToString()}",
+                            "Slot ${sim.slot + 1}: last IWLAN refusal ${r?.lastRefusal ?: "none"}${if (r?.selectionFailed == true) " (the ePDG selector found no server)" else ""}",
+                        )
+                    } + listOfNotNull(
+                        "IWLAN dump unreadable (PACKAGE_USAGE_STATS missing?)".takeIf { iwlan == null },
+                        "QNS dump unreadable".takeIf { qns == null },
+                    )
+                } finally {
+                    handle.close()
+                }
+            }.getOrElse { listOf("not readable: ${it.message}") }
+        }
+        _ui.value = _ui.value.copy(details = lines)
     }
 
     fun revertAll() {
@@ -141,8 +177,8 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setSchedule(on: Boolean) = viewModelScope.launch {
-        store.update { it.copy(scheduleOn = on).logged(System.currentTimeMillis(), "schedule", if (on) "weekly tests on" else "weekly tests off") }
-        OwnerScheduler.ensureWeekly(getApplication(), on)
+        store.update { it.copy(scheduleOn = on).logged(System.currentTimeMillis(), "schedule", if (on) "background checks and night tests on" else "background checks and night tests off") }
+        OwnerScheduler.ensureQuiet(getApplication(), on)
         refresh()
     }
 
@@ -239,7 +275,7 @@ private fun OwnerScreen(viewModel: OwnerViewModel, openIssue: () -> Unit, openCh
                     }
                     Line("Build type", gate.buildType)
                     Line("Writes", if (gate.canWrite) "allowed" else "refused: ${gate.reason}")
-                    Line("Background", "boot and SIM-change reconcile, weekly test, update pulls")
+                    Line("Background", "boot and SIM-change reconcile; a light check while the phone is unused; one feature a night (02:00 to 05:00); update pulls")
                     Line("Last reconcile", ui.state.lastCleanup ?: "not run yet")
                     if (!gate.privilegedGranted && gate.shizukuRunning && !gate.shizukuPermitted) {
                         OutlinedButton(onClick = { runCatching { Shizuku.requestPermission(4713) } }) { Text("Grant Shizuku") }
@@ -271,7 +307,6 @@ private fun OwnerScreen(viewModel: OwnerViewModel, openIssue: () -> Unit, openCh
                 s.apns.filter { it.hold == Hold.KEPT }.forEach { Line("APN ${it.label}", "kept as the preferred APN") }
                 s.overrides.filter { it.hold == Hold.TRIAL }.forEach { Line("Slot ${it.slot + 1} ${it.key}", "${it.value}, under test") }
                 s.apns.filter { it.hold == Hold.TRIAL }.forEach { Line("APN ${it.label}", "under test") }
-                if (s.wifiOffSinceMs != null) Line("Wi-Fi", "off for a VoLTE measurement; switched back on at its end")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = viewModel::revertAll, enabled = s.anyLive) { Text("Revert all") }
                     OutlinedButton(onClick = viewModel::cleanup) { Text("Check for leftovers") }
@@ -292,12 +327,13 @@ private fun OwnerScreen(viewModel: OwnerViewModel, openIssue: () -> Unit, openCh
                     }
                 }
             }
-            var offs by remember { mutableStateOf(true) }
+            // Off values run at night on their own; here only when the owner asks.
+            var offs by remember { mutableStateOf(false) }
             var voice by remember { mutableStateOf(false) }
             var apns by remember { mutableStateOf(true) }
             OwnerCard("Test") {
                 Line("Run", ui.run)
-                Check("Test the off values too", offs) { offs = it }
+                Check("Test the off values too (otherwise the night run tries them, one at a time)", offs) { offs = it }
                 Check("Voice check: I place a call myself while a voice feature is off (2 minutes)", voice) { voice = it }
                 Check("Test OCD's internet APN rows the phone lacks", apns) { apns = it }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -309,16 +345,20 @@ private fun OwnerScreen(viewModel: OwnerViewModel, openIssue: () -> Unit, openCh
                 }
             }
             OwnerCard("Last result") {
+                ui.state.lastResult?.let { Text("${DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it.atMs))}: ${it.text}", style = MaterialTheme.typography.bodyMedium) }
                 val run = ui.state.runs.lastOrNull()
                 if (run == null) {
                     Text("No run yet.")
                 } else {
-                    Text("${run.simName ?: "-"} ${run.sim?.mccmnc ?: ""}, ${run.releaseTag ?: ""}${run.note?.let { ", $it" } ?: ""}", style = MaterialTheme.typography.bodySmall)
+                    Text("${if (run.background) "Night run" else "Run"}: ${run.simName ?: "-"} ${run.sim?.mccmnc ?: ""}, ${run.releaseTag ?: ""}${run.note?.let { ", $it" } ?: ""}", style = MaterialTheme.typography.bodySmall)
+                    run.plan?.let { Text("Due: $it", style = MaterialTheme.typography.bodySmall) }
                     run.features.forEach { f ->
                         Line(
                             f.feature.label,
                             "phone ${f.baseline.onOff()}, OCD ${f.ocd.value.onOff()}, best ${f.best.onOff()}" +
                                 (if (f.applied) ", applied" else "") + (f.refused?.let { ", refused: $it" } ?: "") +
+                                (f.method?.let { ", measured by $it${if (f.freshRegister == true) " (fresh REGISTER over LTE)" else ""}" } ?: "") +
+                                (if (f.restored == false) ", baseline NOT back in time" else "") +
                                 (f.bestWhy?.let { " ($it)" } ?: ""),
                         )
                     }
@@ -326,12 +366,22 @@ private fun OwnerScreen(viewModel: OwnerViewModel, openIssue: () -> Unit, openCh
                     OutlinedButton(onClick = openIssue, enabled = run.features.isNotEmpty()) { Text("Upload: report on GitHub (opens a prefilled issue)") }
                 }
             }
-            OwnerCard("Schedule") {
+            OwnerCard("Background") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(checked = ui.state.scheduleOn, onCheckedChange = { viewModel.setSchedule(it) })
-                    Text("  Weekly: pull, then test (idle, charging, Wi-Fi; never in a call or roaming)", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "  Automatic and silent: a light check while unused; trials only at night on the charger, screen off an hour, " +
+                            "on Wi-Fi, no call or audio, no alarm soon; stopped at once by the screen, a call or the charger",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
                 Text(ui.weekly, style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = viewModel::checkNow) { Text("Check now (reads only)") }
+            }
+            OwnerCard("Wi-Fi calling details") {
+                Text("From the IWLAN and QNS dumps; the device log is never read.", style = MaterialTheme.typography.bodySmall)
+                ui.details?.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                OutlinedButton(onClick = { viewModel.details() }) { Text("Read details") }
             }
             OutlinedButton(onClick = openCheck) { Text("Open the read-only check") }
             OwnerCard("Log") {

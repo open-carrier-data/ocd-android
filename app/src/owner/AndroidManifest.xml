@@ -9,15 +9,15 @@
 
     <!-- Pulls OCD's tagged releases from GitHub (owner direction: "update pulls"). -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- The live-settings notification with its one-tap "Revert all". -->
+    <!-- The quiet live-settings notification with its one-tap "Revert all", and a notice on a change or a failure. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Re-applies the kept values of the SIM in each slot after a boot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--
-        VoLTE's measurement while IMS runs over Wi-Fi: Wi-Fi off for the trial and
-        always back on (lab wifi-off test). WifiManager lets only system apps do it.
+        No CHANGE_WIFI_STATE and no READ_LOGS since 2026-10-20: the owner build never
+        switches Wi-Fi (VoLTE is measured inside a non-persistent Wi-Fi-calling-off
+        override) and never reads the device log (the IWLAN and QNS dumps instead).
     -->
-    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
     <!--
         The privileged route: granted only when the app is installed as a priv-app
@@ -31,20 +31,31 @@
         android:name="android.permission.READ_PRIVILEGED_PHONE_STATE"
         tools:ignore="ProtectedPermissions,PermissionImpliesUnsupportedChromeOsHardware" />
     <uses-permission
+        android:name="android.permission.READ_PRECISE_PHONE_STATE"
+        tools:ignore="ProtectedPermissions,PermissionImpliesUnsupportedChromeOsHardware" />
+    <uses-permission
         android:name="android.permission.WRITE_APN_SETTINGS"
         tools:ignore="ProtectedPermissions,PermissionImpliesUnsupportedChromeOsHardware" />
     <uses-permission
         android:name="android.permission.DUMP"
         tools:ignore="ProtectedPermissions" />
     <uses-permission
-        android:name="android.permission.READ_LOGS"
+        android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
+
+    <!-- Which IMS stack the phone runs, for video calling's static check (PHH IMS has no video). -->
+    <queries>
+        <intent>
+            <action android:name="android.telephony.ims.ImsService" />
+        </intent>
+    </queries>
 
     <!--
         The owner's target form (2026-10-19): a system app with no launcher icon. Its
         screen is the "Open Carrier Data" entry in Settings > Network & internet, and
-        the work runs in the background (boot and SIM-change reconcile, the weekly
-        test, update pulls) without the screen.
+        the work runs in the background (boot and SIM-change reconcile, the hourly
+        quiet job with its light check and the night's tests, update pulls) without
+        the screen.
     -->
     <application
         android:label="@string/app_name_owner"
@@ -108,6 +119,11 @@
 
         <receiver
             android:name=".owner.RevertAllReceiver"
+            android:exported="false" />
+
+        <!-- The revert alarm armed before each background change: queues the cleanup if a step died. -->
+        <receiver
+            android:name=".owner.RevertAlarmReceiver"
             android:exported="false" />
 
         <!-- Boot, the app's own update and carrier-config changes (all exempt from the implicit-broadcast limits). -->

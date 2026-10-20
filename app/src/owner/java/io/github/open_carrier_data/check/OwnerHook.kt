@@ -21,7 +21,7 @@ import io.github.open_carrier_data.check.owner.OwnerScheduler
 
 /**
  * The owner build's entry points (src/owner only; debug and release compile
- * the no-op in src/readonly). On start: the weekly schedule is registered
+ * the no-op in src/readonly). On start: the hourly quiet job is registered
  * (unless the owner turned it off), the leftover cleanup is queued, and the
  * live-settings notification is refreshed.
  */
@@ -30,7 +30,7 @@ object OwnerHook {
 
     fun onAppStart(context: Context) {
         val state = FileStateStore(context).read()
-        OwnerScheduler.ensureWeekly(context, state.scheduleOn)
+        OwnerScheduler.ensureQuiet(context, state.scheduleOn)
         OwnerScheduler.cleanup(context, policy = ExistingWorkPolicy.KEEP)
         OwnerNotifications.refresh(context, state)
     }

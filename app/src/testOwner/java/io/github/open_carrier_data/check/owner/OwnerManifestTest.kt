@@ -31,15 +31,17 @@ class OwnerManifestTest {
         val requested = elements("uses-permission").filter { it.getAttributeNS(tools, "node") != "remove" }.map { it.getAttributeNS(android, "name") }.toSet()
         val own = setOf(
             "android.permission.INTERNET", "android.permission.POST_NOTIFICATIONS", "android.permission.RECEIVE_BOOT_COMPLETED",
-            "android.permission.CHANGE_WIFI_STATE",
-            "android.permission.MODIFY_PHONE_STATE", "android.permission.READ_PRIVILEGED_PHONE_STATE", "android.permission.WRITE_APN_SETTINGS",
-            "android.permission.DUMP", "android.permission.READ_LOGS",
+            "android.permission.MODIFY_PHONE_STATE", "android.permission.READ_PRIVILEGED_PHONE_STATE", "android.permission.READ_PRECISE_PHONE_STATE",
+            "android.permission.WRITE_APN_SETTINGS", "android.permission.DUMP", "android.permission.PACKAGE_USAGE_STATS",
         )
         val readOnly = setOf("android.permission.READ_PHONE_STATE", "android.permission.ACCESS_NETWORK_STATE", "moe.shizuku.manager.permission.API_V23")
         // WorkManager's own: wake lock and its foreground service (never started by the owner build).
         val work = setOf("android.permission.WAKE_LOCK", "android.permission.FOREGROUND_SERVICE")
         assertEquals(emptySet<String>(), requested - own - readOnly - work)
         assertTrue((own + readOnly).all { it in requested })
+        // 2026-10-20: no device log, no Wi-Fi switching.
+        assertTrue("android.permission.READ_LOGS" !in requested)
+        assertTrue("android.permission.CHANGE_WIFI_STATE" !in requested)
     }
 
     @Test
@@ -60,6 +62,7 @@ class OwnerManifestTest {
         assertEquals("", exported["io.github.open_carrier_data.check.owner.OwnerSettingsProvider"])
         assertTrue("io.github.open_carrier_data.check.owner.OwnerBootReceiver" in exported)
         assertTrue("io.github.open_carrier_data.check.owner.RevertAllReceiver" !in exported)
+        assertTrue("io.github.open_carrier_data.check.owner.RevertAlarmReceiver" !in exported)
         assertEquals(
             setOf(
                 "io.github.open_carrier_data.check.owner.OwnerActivity", "rikka.shizuku.ShizukuProvider",
@@ -107,10 +110,17 @@ class OwnerManifestTest {
         // Every requested permission is either one of those or one that is not signature|privileged.
         val notPrivileged = setOf(
             "android.permission.INTERNET", "android.permission.POST_NOTIFICATIONS", "android.permission.RECEIVE_BOOT_COMPLETED",
-            "android.permission.CHANGE_WIFI_STATE", "android.permission.READ_PHONE_STATE", "android.permission.ACCESS_NETWORK_STATE",
+            "android.permission.READ_PHONE_STATE", "android.permission.ACCESS_NETWORK_STATE",
             "moe.shizuku.manager.permission.API_V23", "android.permission.WAKE_LOCK", "android.permission.FOREGROUND_SERVICE",
         )
         val requested = elements("uses-permission").filter { it.getAttributeNS(tools, "node") != "remove" }.map { it.getAttributeNS(android, "name") }.toSet()
         assertEquals(emptySet<String>(), requested - notPrivileged - listed)
+    }
+
+    @Test
+    fun `the power-save allowlist names the owner build`() {
+        val xml = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(File("src/owner/priv-app/sysconfig-ocd-check-owner.xml"))
+        val entry = xml.getElementsByTagName("allow-in-power-save").item(0) as Element
+        assertEquals("io.github.open_carrier_data.check.owner", entry.getAttribute("package"))
     }
 }

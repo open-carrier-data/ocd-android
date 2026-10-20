@@ -1,8 +1,6 @@
 package io.github.open_carrier_data.check.owner.core
 
 import io.github.open_carrier_data.check.core.AospImsParser
-import io.github.open_carrier_data.check.core.HomeNetwork
-import io.github.open_carrier_data.check.core.IwlanLogParser
 import io.github.open_carrier_data.check.core.PreciseCallState
 import io.github.open_carrier_data.check.core.RegistryParser
 import io.github.open_carrier_data.check.core.SimSlot
@@ -39,8 +37,19 @@ class OwnerSession(
         return CcDump.parse(text)
     }
 
+    /** How long the running system_server has run; stores its first sighting. Null when the route cannot tell. */
+    suspend fun serverUpMs(): Long? {
+        val start = phone.serverStart() ?: return null
+        val (up, sighting) = ServerClock.upMs(start, store.read().serverSeen)
+        if (sighting != store.read().serverSeen) {
+            store.update { it.copy(serverSeen = sighting).logged(phone.nowMs(), "server", "system server ${sighting.key.substringAfter('/')} first seen ${start.elapsedMs / 1000} s after boot; up ${up / 1000} s") }
+        }
+        return up
+    }
+
     /** The refusals now; stores the emergency sighting for the next check. */
     suspend fun safety(): SafetyVerdict {
+        val serverUp = serverUpMs()
         val input = SafetyInputs(
             registry = phone.registryText(),
             phoneDump = phone.phoneText(),
@@ -51,6 +60,7 @@ class OwnerSession(
             uptimeMs = phone.uptimeMs(),
             seen = store.read().emergencySeen,
             emergencyApi = phone.emergencyApi(),
+            serverUpMs = serverUp,
         )
         val verdict = Refusals.check(input)
         if (verdict.seen != store.read().emergencySeen) store.update { it.copy(emergencySeen = verdict.seen) }
@@ -90,11 +100,13 @@ class OwnerSession(
         KeyGuard.check(feature.key)
         guard()
         val before = takeSnapshot().effective(slot)[feature.key]
-        // Registered first: from here on any exit finds it and reverts it.
+        // Registered first: from here on any exit finds it and reverts it. A trial on a kept key remembers the keep for its revert.
         store.update { state ->
+            val keep = state.overrides.firstOrNull { it.slot == slot && it.key == feature.key && it.hold == Hold.KEPT }
+            val displaced = if (hold == Hold.TRIAL) keep?.value else null
             state.copy(
                 overrides = state.overrides.filterNot { it.slot == slot && it.key == feature.key } +
-                    LiveOverride(slot, sim.key, feature.key, value, hold, phone.nowMs(), before, why),
+                    LiveOverride(slot, sim.key, feature.key, value, hold, phone.nowMs(), before, if (displaced != null) keep?.why else why, keptBefore = displaced),
             )
         }
         val result = phone.ccSet(slot, sim.subId, feature.key, value)
@@ -129,6 +141,8 @@ class OwnerSession(
         }
         val base = takeSnapshot()
         val cleared = phone.ccClear(slot, sim.subId)
+        // A keep a trial displaced is a keep again.
+        store.update { it.keepsRestored(slot) }
         val keep = store.read().kept(slot)
         for ((key, value) in keep) {
             KeyGuard.check(key)
@@ -137,10 +151,11 @@ class OwnerSession(
         // Keys kept at the snapshot and let go now go back to the phone's own value.
         val atSnapshot = CcLayer.OVERRIDES.flatMap { base.phones[slot]?.get(it)?.keys.orEmpty() }.toSet()
         val dropped = trials.map { it.key }.filter { it in atSnapshot && it !in keep }.toSet()
+        val trialKeys = trials.map { it.key }.toSet()
         val proof = RevertProof.of(base, dump(), slot, keep, dropped)
         log("revert", "slot $slot ($reason): clear ${cleared.reason ?: "ok"}, kept ${keep.keys.sorted()}, proof ${if (proof.ok) "holds" else "FAILED"}")
         if (proof.ok) {
-            store.update { s -> s.copy(overrides = s.overrides.filterNot { it.slot == slot && it.hold == Hold.TRIAL }) }
+            store.update { s -> s.copy(overrides = s.overrides.filterNot { it.slot == slot && it.hold == Hold.TRIAL && it.key in trialKeys }) }
         } else {
             stop("revert_not_proven on slot $slot: ${proof.unexpectedDifferences.take(3).map { "${it.where}.${it.key}" }}")
         }
@@ -150,7 +165,7 @@ class OwnerSession(
     /** Drops one kept value: the slot goes back to the phone's own value for that key. */
     suspend fun dropKeep(feature: OwnerFeature, reason: String): Boolean {
         val kept = store.read().overrides.firstOrNull { it.slot == slot && it.key == feature.key && it.hold == Hold.KEPT } ?: return true
-        store.update { s -> s.copy(overrides = s.overrides.map { if (it == kept) it.copy(hold = Hold.TRIAL) else it }) }
+        store.update { s -> s.copy(overrides = s.overrides.map { if (it == kept) it.copy(hold = Hold.TRIAL, keptBefore = null) else it }) }
         return revertTrials("drop keep: $reason")?.ok == true
     }
 
@@ -168,8 +183,12 @@ class OwnerSession(
         store.update { it.copy(stop = reason).logged(phone.nowMs(), "stop", reason) }
     }
 
-    /** One read of the slot for the evidence ladder. */
-    suspend fun observe(): Observation {
+    /**
+     * One read of the slot for the evidence ladder. [iwlan] also reads the
+     * IWLAN service's and QNS's dumps (Wi-Fi calling's tunnel and back-off);
+     * without it the IWLAN state comes from the registry alone.
+     */
+    suspend fun observe(iwlan: Boolean = false): Observation {
         val registry = phone.registryText().orEmpty()
         val phoneText = phone.phoneText()
         val cc = dump()
@@ -179,10 +198,8 @@ class OwnerSession(
         val reg = RegistryParser.parse(registry.lineSequence(), simSlot)
         val api = phone.imsApi(slot, sim.subId)
         val aosp = api?.state() ?: phoneText?.let { AospImsParser.parse(it.lineSequence(), simSlot) }
-        val nowSeconds = phone.nowMs() / 1000.0
-        val iwlan = phone.iwlanLogText(slot)?.let {
-            IwlanLogParser.parse(it.lineSequence(), HomeNetwork.of(sim.identity.mccmnc)?.epdgFqdn, nowSeconds)
-        }
+        // From the dumps, never the device log: reading logcat asks the owner for log access (2026-10-20).
+        val iwlanReading = if (iwlan) IwlanDumps.reading(registry, phone.iwlanServiceText(), phone.qnsText(), slot) else IwlanRegistry.reading(registry, slot)
         return Observation(
             config = keys.mapNotNull { key -> effective[key]?.let { key to it } }.toMap(),
             ims = AospImsParser.reading(aosp, reg, dumpRead = api != null || phoneText != null),
@@ -191,7 +208,7 @@ class OwnerSession(
             lteVops = reg?.lteVops,
             nrVops = reg?.nrVops,
             wifiConnected = phone.wifiConnected(),
-            iwlan = iwlan,
+            iwlan = iwlanReading,
             callActive = RegistryText.anyCallActive(registry),
             callNetworkType = reg?.call?.networkType?.takeIf { reg.call.foreground == PreciseCallState.ACTIVE },
         )
