@@ -10,9 +10,13 @@ import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.OcdProfile
 import io.github.open_carrier_data.check.owner.core.ImsStack
 import io.github.open_carrier_data.check.owner.core.ReportCell
+import io.github.open_carrier_data.check.owner.core.CallLevels
 import io.github.open_carrier_data.check.owner.core.CallsTested
+import io.github.open_carrier_data.check.owner.core.Hold
+import io.github.open_carrier_data.check.owner.core.Ladders
+import io.github.open_carrier_data.check.owner.core.SimKey
+import io.github.open_carrier_data.check.owner.core.sameCard
 import io.github.open_carrier_data.check.owner.core.OwnerFeature
-import io.github.open_carrier_data.check.phone.CallTestStore
 import io.github.open_carrier_data.check.core.Matcher
 import io.github.open_carrier_data.check.owner.core.ApnConf
 import io.github.open_carrier_data.check.owner.core.ObservedCell
@@ -280,10 +284,24 @@ class OwnerData(private val context: Context, private val store: StateStore) {
             }
         }
 
-        fun callsTested(context: Context): List<CallsTested> =
-            runCatching { CallTestStore(context).load().t2 }.getOrDefault(emptyList())
-                .filter { it.model == Build.MODEL }
-                .mapNotNull { pass -> OwnerFeature.ofWire(pass.feature.wire)?.let { CallsTested(it, pass.homeMccMnc) } }
+        /**
+         * How far this phone's own measured calls went per SIM and feature
+         * (round 26): calls out or works, on this ROM build, within 90 days,
+         * and for a value Open Carrier Data keeps only since it was applied.
+         * The read-only check's T2 passes rest on a person's yes and no longer
+         * count here (round 26 rule change 1).
+         */
+        fun callsTested(context: Context, state: OwnerState = FileStateStore(context).read()): List<CallsTested> = runCatching {
+            val build = OwnerBasis.current(context, state).rom
+            val now = System.currentTimeMillis()
+            simViews(context).orEmpty().flatMap { view ->
+                val key = SimKey(view.subId, view.mccmnc, null)
+                Ladders.CALL_TESTED.mapNotNull { feature ->
+                    val since = state.overrides.lastOrNull { it.slot == view.slot && it.key == feature.key && it.hold == Hold.KEPT && it.sim.sameCard(key) }?.sinceMs ?: 0L
+                    CallLevels.level(state.calls, key, feature, build, since, now)?.let { CallsTested(feature, view.mccmnc, it) }
+                }
+            }
+        }.getOrDefault(emptyList())
 
         /**
          * The data release the app ships ("2026.10"), for when none is pulled.

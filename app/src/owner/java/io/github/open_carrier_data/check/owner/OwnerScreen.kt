@@ -97,6 +97,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.open_carrier_data.check.owner.core.CheckedLine
 import io.github.open_carrier_data.check.owner.core.FeatureLadder
+import io.github.open_carrier_data.check.owner.core.CallsOutMode
 import io.github.open_carrier_data.check.owner.core.HeaderNotes
 import io.github.open_carrier_data.check.owner.core.Ladders
 import io.github.open_carrier_data.check.owner.core.LeftoversLine
@@ -128,7 +129,9 @@ class OwnerActions(
     val clearStop: () -> Unit,
     val grantShizuku: () -> Unit,
     val sendReport: () -> Unit,
-    val openCheck: () -> Unit,
+    val setCallsOutLive: (Boolean) -> Unit,
+    val dryRunCallsOut: () -> Unit,
+    val setSelfSms: (Boolean) -> Unit,
 )
 
 /** The options under "When you tap Test now" in Details. Off values run at night on their own. */
@@ -615,14 +618,59 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
     SectionTitle("When you tap Test now")
     Group {
         item { SwitchRow("Also test switching features off", null, options.offs) { setOptions(options.copy(offs = it)) } }
-        item { SwitchRow("Include a call test", "2 minutes, you place the call", options.voice) { setOptions(options.copy(voice = it)) } }
         item { SwitchRow("Test missing access point names", null, options.apns) { setOptions(options.copy(apns = it)) } }
+    }
+
+    // Round 26: calls are measured by the phone; nobody dials or listens.
+    SectionTitle("Calls")
+    Group {
+        item {
+            SwitchRow(
+                "Test calls out automatically",
+                if (state.callsOutMode == CallsOutMode.LIVE) "At night, muted, to your own mailbox, when your own calls didn't show it" else "Off: only notes what it would dial",
+                state.callsOutMode == CallsOutMode.LIVE,
+                actions.setCallsOutLive,
+            )
+        }
+        item {
+            ToolRow(
+                "Try the mailbox call without dialling",
+                state.log.lastOrNull { it.kind == "calls_out" }?.text?.take(240),
+                onClick = actions.dryRunCallsOut,
+            )
+        }
+        if (ui.retestedLines.isNotEmpty() || ui.callLines.isNotEmpty()) {
+            item {
+                Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Title("Measured calls")
+                    (ui.retestedLines.map { it.replaceFirstChar(Char::uppercase) } + ui.callLines).forEach { Summary(it) }
+                }
+            }
+        }
+    }
+
+    SectionTitle("Messages")
+    Group {
+        if (ui.mmsLines.isNotEmpty()) {
+            item {
+                Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    ui.mmsLines.forEach { Summary(it) }
+                }
+            }
+        }
+        item {
+            SwitchRow(
+                "Check incoming SMS over IMS",
+                "A hidden SMS to your own number about once a week. It may cost an SMS on your tariff. ${ui.selfSmsLine.orEmpty()}".trim(),
+                state.selfSmsOn,
+                actions.setSelfSms,
+            )
+        }
     }
 
     SectionTitle("Tools")
     Group {
         item { ToolRow("Check without changing anything", onClick = actions.checkNow) }
-        item { ToolRow("Test calls", onClick = actions.openCheck) }
         item { ToolRow("Show Wi-Fi calling details", ui.details?.joinToString("\n"), onClick = actions.readDetails) }
         item { ToolRow("Remove leftovers", LeftoversLine.of(state.log, System.currentTimeMillis(), zone) { dateFormat.format(Date(it)) }, onClick = actions.cleanup) }
         item {
@@ -703,6 +751,7 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         item {
             Summary(
                 "Never touches emergency calling. Nothing changes during a call, while roaming, or within 10 minutes of an emergency call. " +
+                    "The only number it ever calls is your own mailbox, muted, at night. " +
                     "Undo changes always brings back your phone's own settings",
                 Modifier.padding(16.dp),
             )

@@ -110,16 +110,48 @@ class GuardTest {
     private val ownerSources = File("src/owner/java").walkTopDown().filter { it.extension == "kt" }.toList()
 
     @Test
-    fun `the owner build never dials, ends a call or touches settings or the emergency dialer`() {
+    fun `the owner build never opens a dialler, never touches settings or the emergency dialer`() {
         assertTrue(ownerSources.size > 8)
         val banned = Regex(
-            "ACTION_CALL\\b|ACTION_DIAL|CALL_EMERGENCY|\"tel:|placeCall|endCall|KEYCODE_ENDCALL|KEYCODE_CALL|" +
+            "ACTION_CALL\\b|ACTION_DIAL|ACTION_CALL_PRIVILEGED|CALL_EMERGENCY|\"tel:|KEYCODE_ENDCALL|KEYCODE_CALL|acceptRingingCall|" +
                 "Settings\\.(Global|System|Secure)\\.put|\"-p\"|persistent = true|overrideConfig\\([^)]*true\\)|reboot\\(",
         )
         for (file in ownerSources) {
             val hit = banned.find(file.readText())
             assertNull("${file.name}: ${hit?.value}", hit)
         }
+    }
+
+    @Test
+    fun `round 26 - one place dials, only after the mailbox guard, and one place ends the app's own call`() {
+        // Telecom's placeCall and endCall appear once each, in the Android side of the mailbox call.
+        val dialling = ownerSources.filter { Regex("placeCall|endCall").containsMatchIn(it.readText()) }.map { it.name }
+        assertEquals(listOf("OwnerCalls.kt"), dialling)
+        val calls = ownerSources.single { it.name == "OwnerCalls.kt" }.readText()
+        assertEquals(1, Regex("\\.placeCall\\(").findAll(calls).count())
+        assertEquals(1, Regex("\\.endCall\\(").findAll(calls).count())
+        val place = calls.substringAfter("override suspend fun place(").substringBefore("override suspend fun end(")
+        assertTrue("the last look before the dial", place.indexOf("MailboxGuard.refusal(number) != null) return false") in 0 until place.indexOf("placeCall"))
+        // Only the mailbox caller asks the device to place a call.
+        val placers = ownerSources.filter { Regex("device\\.place\\(").containsMatchIn(it.readText()) }.map { it.name }
+        assertEquals(listOf("MailboxCall.kt"), placers)
+        val caller = ownerSources.single { it.name == "MailboxCall.kt" }.readText()
+        // The dial comes after the mailbox guard, the refusals and the mute.
+        val body = caller.substringAfter("suspend fun run(")
+        assertTrue(body.indexOf("MailboxGuard.target(") < body.indexOf("session.guard("))
+        assertTrue(caller.indexOf("device.mute()") < caller.indexOf("device.place("))
+    }
+
+    @Test
+    fun `round 26 - never DTMF, never a text or multimedia message, and a data SMS only on the app's port`() {
+        val banned = Regex("(?i)dtmf|sendTextMessage|sendMultipartTextMessage|sendMultimediaMessage|downloadMultimediaMessage|\"POST\"")
+        for (file in ownerSources) {
+            val hit = banned.find(file.readText())
+            assertNull("${file.name}: ${hit?.value}", hit)
+        }
+        val senders = ownerSources.filter { "sendDataMessage" in it.readText() }
+        assertEquals(listOf("OwnerMessages.kt"), senders.map { it.name })
+        assertTrue(Regex("sendDataMessage\\(own, null, SelfSms\\.PORT, SelfSms\\.payload\\(nonce\\)").containsMatchIn(senders.single().readText()))
     }
 
     @Test

@@ -1,16 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    For a ROM build: the two runtime permissions the background work needs without the
+    For a ROM build: the runtime permissions the background work needs without the
     screen ever opening, granted by DefaultPermissionGrantPolicy on the first boot of a
     system app. Goes to <partition>/etc/default-permissions/. The owner can revoke them
-    (fixed="false"). A hand install grants them with `pm grant` instead.
+    (fixed="false"). A hand install grants them with `pm grant` instead. None of them is
+    privileged, so the privapp-permissions file does not list them.
 
-    READ_PHONE_STATE: the active SIMs (also covered by READ_PRIVILEGED_PHONE_STATE).
+    READ_PHONE_STATE: the active SIMs, and the PHONE_STATE broadcast that starts the
+          passive call watch (round 26).
     POST_NOTIFICATIONS: the live-settings notification with its one-tap "Revert all".
+    CALL_PHONE: round 26's "calls out" call, only to the SIM's own allowlisted mailbox,
+          muted, at night, after every emergency and refusal check (Telecom placeCall).
+    READ_CALL_LOG, WRITE_CALL_LOG: removing exactly that call's call log entry (one
+          outgoing entry to the mailbox at the call's time, deleted by its own ID).
+    SEND_SMS, RECEIVE_SMS: the optional data SMS to the phone's own number on the app's
+          port; off unless the owner turns it on in Details.
 -->
 <exceptions>
     <exception package="io.github.open_carrier_data.check.owner">
         <permission name="android.permission.READ_PHONE_STATE" fixed="false" />
         <permission name="android.permission.POST_NOTIFICATIONS" fixed="false" />
+        <permission name="android.permission.CALL_PHONE" fixed="false" />
+        <permission name="android.permission.READ_CALL_LOG" fixed="false" />
+        <permission name="android.permission.WRITE_CALL_LOG" fixed="false" />
+        <permission name="android.permission.SEND_SMS" fixed="false" />
+        <permission name="android.permission.RECEIVE_SMS" fixed="false" />
     </exception>
 </exceptions>

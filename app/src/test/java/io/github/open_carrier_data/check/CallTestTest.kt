@@ -182,9 +182,10 @@ class CallTestTest {
             lte.plain,
         )
         assertTrue(lte.measuredOutgoing)
+        // Round 26: type 18 while the fixture's ims data connection is on LTE is no proof; airplane mode is never asked for.
         val wifi = record(watch(sample(0, 0, 0), sample(2, 1, 18), sample(0, 0, 0)))
-        assertTrue(wifi.plain, "not the airplane-mode test" in wifi.plain)
-        assertFalse("airplane" in record(wifi.watch, airplane = true).plain)
+        assertTrue(wifi.plain, "the bearer is not proven and this call does not count" in wifi.plain)
+        assertFalse("airplane" in record(wifi.watch, airplane = false).plain)
         assertFalse(record(lte.watch, heard = AudioAnswer.NOT_SURE).measuredOutgoing)
         val banned = Regex("(?i)\\bworks\\b|is working|calls work")
         for (test in listOf(lte, wifi, record(watch(sample(0, 0, 0), sample(0, 0, 0)), AudioAnswer.NO))) {

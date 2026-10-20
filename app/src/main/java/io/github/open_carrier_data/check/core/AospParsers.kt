@@ -176,14 +176,13 @@ data class RegistryPhone(
     /** Transports on which the IMS data connection is CONNECTED; a HANDOVERINPROGRESS entry is left out. */
     val imsPdn: List<ImsTransport>,
     val call: CallSample,
+    /** The WWAN packet-switched registration's RAT (lte, lte_ca, nr, ...), when registered home or roaming. */
+    val wwanDataRat: String? = null,
 )
 
 object RegistryParser {
     private val LTE_VOPS = Regex("LteVopsSupportInfo :\\s+mVopsSupport = (\\d)")
     private val NR_VOPS = Regex("NrVopsSupportInfo :\\s+mVopsSupport = (\\d)")
-    private val IMS_PDN = Regex(
-        "state: (\\w+), transport: (\\w+), id: -?\\d+, netId: -?\\d+, network type: (\\w+), APN Setting: \\[ApnSetting\\] ims,",
-    )
     private val CALL_STATE = Regex("mCallState=(\\d)")
     private val CALL_NETWORK_TYPE = Regex("mCallNetworkType=(\\d+)")
     private val FOREGROUND = Regex("Foreground call state: (-?\\d+)")
@@ -213,6 +212,11 @@ object RegistryParser {
         var foreground: String? = null
         var emergency: Int? = null
         var incomingIsMailbox: Boolean? = null
+        var dataRat: String? = null
+        var quality: CallQualityReading? = null
+        var imsReason: Pair<Int, String>? = null
+        var cause: Int? = null
+        var precise: Int? = null
         val codes = mailboxes.map { NOT_DIGIT.replace(it, "") }.filter { it.isNotEmpty() }.toSet()
         for (line in lines) {
             if (!found) {
@@ -222,10 +226,16 @@ object RegistryParser {
             if (ANY_PHONE.matches(line) || (line.isNotEmpty() && !line[0].isWhitespace())) break
             LTE_VOPS.findAll(line).lastOrNull()?.let { lte = it.groupValues[1] }
             NR_VOPS.findAll(line).lastOrNull()?.let { nr = it.groupValues[1] }
-            for (match in IMS_PDN.findAll(line)) {
-                if (match.groupValues[1] != "CONNECTED") continue
+            // The ims data connection by its APN types, not its entry name (round 26, lab ims_pdn_transports).
+            for (match in CallMediaParser.DATA_CONNECTION.findAll(line)) {
+                if (match.groupValues[1] != "CONNECTED" || !CallMediaParser.isImsApn(match.groupValues[4])) continue
                 pdn += pdnTransport(match.groupValues[2], match.groupValues[3])
             }
+            CallMediaParser.wwanDataRat(line)?.let { dataRat = it }
+            CallMediaParser.quality(line)?.let { quality = it }
+            CallMediaParser.imsReason(line)?.let { imsReason = it }
+            CallMediaParser.cause(line)?.let { cause = it }
+            CallMediaParser.precise(line)?.let { precise = it }
             CALL_STATE.findAll(line).lastOrNull()?.let { callState = it.groupValues[1] }
             CALL_NETWORK_TYPE.findAll(line).lastOrNull()?.let { callType = it.groupValues[1] }
             FOREGROUND.findAll(line).lastOrNull()?.let { foreground = it.groupValues[1] }
@@ -242,18 +252,25 @@ object RegistryParser {
             }
         }
         if (!found) return null
+        // The lab counts transports (Wi-Fi or mobile); two mobile entries are one transport.
+        val transports = pdn.distinctBy { it.isWifi }
+        val networkType = callType?.toIntOrNull()
         return RegistryPhone(
             lteVops = LteVops.fromCode(lte),
             nrVops = NrVops.fromCode(nr),
-            // The lab counts transports (Wi-Fi or mobile); two mobile entries are one transport.
-            imsPdn = pdn.distinctBy { it.isWifi },
+            imsPdn = transports,
             call = CallSample(
                 state = CallState.fromCode(callState),
                 foreground = PreciseCallState.fromCode(foreground),
-                networkType = callType?.toIntOrNull(),
+                networkType = networkType,
                 emergencyMark = emergency,
                 incomingIsMailbox = incomingIsMailbox,
+                bearer = BearerReading(networkType, transports, dataRat),
+                quality = quality,
+                disconnect = DisconnectReading(imsReason?.first, imsReason?.second, cause, precise)
+                    .takeIf { imsReason != null || cause != null || precise != null },
             ),
+            wwanDataRat = dataRat,
         )
     }
 

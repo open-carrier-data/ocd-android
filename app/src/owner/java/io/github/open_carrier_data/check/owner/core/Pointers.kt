@@ -72,8 +72,9 @@ object Pointers {
 
     /**
      * The two entries of one feature, `<feature>:on` and `<feature>:off`: the
-     * phone's own value as observed, the other as tested. [t2]: a passed T2
-     * call test on this phone model and network (VoLTE and Wi-Fi calling).
+     * phone's own value as observed, the other as tested. [t2]: calls both
+     * ways measured on this phone and network (round 26 L3, which replaces
+     * T2's person's yes; VoLTE and Wi-Fi calling).
      * Empty when the phone's value was not read.
      */
     fun entries(f: FeatureResult, t2: Boolean): List<EntryResult> {

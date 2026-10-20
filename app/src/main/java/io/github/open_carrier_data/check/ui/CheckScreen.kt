@@ -770,10 +770,10 @@ private fun T2Plan(call: CallTestUi, mailbox: String, ready: Boolean, viewModel:
     }
     val feature = call.feature
     Note(
-        "Both calls count only over ${feature.bearerPlain}, call network type ${feature.bearerCode}. " +
+        "Both calls count only over ${feature.bearerPlain}, call network type ${feature.bearerCode}, when the IMS data " +
+            "connection and the data network agree with it at the start and the end of the call. " +
             if (feature == T2Feature.VOWIFI) {
-                "For Wi-Fi calling, OCD's rules count a call only with airplane mode on and Wi-Fi on. Set that yourself " +
-                    "before each call; this app changes no setting."
+                "Airplane mode is not needed."
             } else {
                 "A call the phone places over Wi-Fi shows type 18 and counts for Wi-Fi calling, not VoLTE."
             },

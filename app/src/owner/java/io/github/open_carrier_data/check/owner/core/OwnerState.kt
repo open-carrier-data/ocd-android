@@ -226,6 +226,21 @@ data class OwnerState(
     val observed: ObservedInfo? = null,
     /** The hashes of the reports the owner opened ("Open report on GitHub"): his own reports are not others'. */
     val reportsOpened: List<String> = emptyList(),
+    /** Round 26: every measured call, the app's own mailbox calls and the owner's real calls, never a number ([CallRecord]). */
+    val calls: List<CallRecord> = emptyList(),
+    /** Changed voice values kept for now: past the night only after calls out, then until incoming is seen ([Provisional]). */
+    val provisional: List<ProvisionalKeep> = emptyList(),
+    /** "Re-tested by OCD" from this phone's own measured calls, 90 days each ([Retested]). */
+    val retested: List<RetestedEntry> = emptyList(),
+    /** Whether the app dials its own mailbox calls or only logs what it would dial ([CallsOutMode]). */
+    val callsOutMode: CallsOutMode = CallsOutMode.DRY_RUN,
+    /** The mailbox calls of the recent nights: at most one per feature and bearer a night. */
+    val callsOutNights: List<CallsOutNight> = emptyList(),
+    /** The MMS access point checks per SIM ([MmsProbe]); never an MMS. */
+    val mms: List<MmsCheck> = emptyList(),
+    /** The optional data SMS to the phone's own number (off unless the owner turns it on; it may cost an SMS). */
+    val selfSmsOn: Boolean = false,
+    val selfSms: List<SelfSmsCheck> = emptyList(),
 ) {
     val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
 

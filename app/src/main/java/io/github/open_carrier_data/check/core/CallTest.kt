@@ -175,6 +175,14 @@ data class CallSample(
      * compared in [RegistryParser] and never kept (lab `incoming_number_is`).
      */
     val incomingIsMailbox: Boolean? = null,
+    /** The bearer readings of this moment (round 26): call type, ims data connection, WWAN data RAT. */
+    val bearer: BearerReading? = null,
+    /** mCallQuality: RTP packets both ways, cumulative while the call is active. */
+    val quality: CallQualityReading? = null,
+    /** Why the phone's last call ended; stale until the next call ends. */
+    val disconnect: DisconnectReading? = null,
+    /** When the reading was taken (elapsed ms), if the watch knows; only differences are used. */
+    val atMs: Long? = null,
 )
 
 /** The call bearer a call network type stands for (lab CALL_BEARERS); 2G and 3G types are a circuit-switched call. */
@@ -233,6 +241,20 @@ data class CallWatchSummary(
     val stoppedByLimit: Boolean = false,
     /** An emergency call showed during the watch. The app then keeps nothing from it. */
     val emergencySeen: Boolean = false,
+    /** Round 26: the bearer readings when the call started (IMS's bearer when it rang or dialled), at ACTIVE and at hang-up. */
+    val bearerAtStart: BearerReading? = null,
+    val bearerAtActive: BearerReading? = null,
+    val bearerAtHangUp: BearerReading? = null,
+    /** The bearer proof over those readings; null in watches before round 26. */
+    val bearerProof: BearerVerdict? = null,
+    /** RTP both ways while active (mCallQuality); null in watches before round 26. */
+    val rtp: RtpFlow? = null,
+    /** How long the call was active, ms: the call-quality duration, else the readings' clock. */
+    val activeMs: Long? = null,
+    /** The disconnect readings before the call and after it ended; [disconnectFresh] when they changed. */
+    val disconnectBefore: DisconnectReading? = null,
+    val disconnectAfter: DisconnectReading? = null,
+    val disconnectFresh: Boolean? = null,
 ) {
     fun encode(): String = wire.encodeToString(serializer(), this)
 
@@ -264,6 +286,20 @@ class CallWatch {
     private var emergencySeen = false
     private var mailboxReadings = 0
     private var mailboxSeen = false
+    private var bearerAtStart: BearerReading? = null
+    private var bearerAtActive: BearerReading? = null
+    private var bearerAtHangUp: BearerReading? = null
+    private var firstQuality: CallQualityReading? = null
+    private var lastQuality: CallQualityReading? = null
+    private var inactiveSeen = false
+    private var firstActiveAt: Long? = null
+    private var lastActiveAt: Long? = null
+    private var firstQualityAt: Long? = null
+    private var lastQualityAt: Long? = null
+    private var disconnectBefore: DisconnectReading? = null
+    private var disconnectRead = false
+    private var disconnectAfter: DisconnectReading? = null
+    private var callOver = false
 
     @Synchronized
     fun add(sample: CallSample?) {
@@ -286,7 +322,17 @@ class CallWatch {
             if (it) mailboxSeen = true
         }
         sample.foreground?.let { foreground += it }
-        if (state != CallState.IDLE && (previous == null || previous == CallState.IDLE)) calls++
+        if (!disconnectRead) {
+            disconnectBefore = sample.disconnect
+            disconnectRead = true
+        }
+        if (state != CallState.IDLE && (previous == null || previous == CallState.IDLE)) {
+            calls++
+            if (bearerAtStart == null) bearerAtStart = sample.bearer
+        }
+        if (state == CallState.IDLE && previous != null && previous != CallState.IDLE) callOver = true
+        // After the call: the disconnect readings that now stand for it.
+        if (callOver && state == CallState.IDLE) sample.disconnect?.let { disconnectAfter = it }
         previous = state
         val type = sample.networkType?.takeIf { it != 0 }
         if (state == CallState.OFFHOOK && type != null) {
@@ -294,7 +340,26 @@ class CallWatch {
             lastType = type
             if (sample.foreground == PreciseCallState.ACTIVE) lastActiveType = type
         }
+        if (state == CallState.OFFHOOK && sample.foreground == PreciseCallState.ACTIVE) {
+            if (firstActiveAt == null) firstActiveAt = sample.atMs
+            lastActiveAt = sample.atMs ?: lastActiveAt
+            // "At ACTIVE": the first active reading with a call type (the registry sets it with the first call-quality report).
+            if (bearerAtActive == null && type != null) bearerAtActive = sample.bearer
+            // "At hang-up": the last active reading.
+            if (sample.bearer != null) bearerAtHangUp = sample.bearer
+            sample.quality?.takeIf { it.durationMs > 0 }?.let { q ->
+                if (firstQuality == null) {
+                    firstQuality = q
+                    firstQualityAt = sample.atMs
+                }
+                lastQuality = q
+                lastQualityAt = sample.atMs
+                if (q.rtpInactive) inactiveSeen = true
+            }
+        }
     }
+
+    private fun sampleWindow(from: Long?, to: Long?): Long? = if (from != null && to != null && to >= from) to - from else null
 
     @Synchronized
     fun markStoppedByLimit() {
@@ -334,6 +399,19 @@ class CallWatch {
             bearer = CallBearer.of(type) ?: if (connected) CallBearer.UNKNOWN else null,
             ended = connected && previous == CallState.IDLE,
             stoppedByLimit = stoppedByLimit,
+            bearerAtStart = bearerAtStart,
+            bearerAtActive = bearerAtActive,
+            bearerAtHangUp = bearerAtHangUp,
+            bearerProof = BearerProof.of(PreciseCallState.ACTIVE in foreground, bearerAtActive, bearerAtHangUp),
+            rtp = if (PreciseCallState.ACTIVE in foreground) {
+                RtpFlow.of(firstQuality, lastQuality, inactiveSeen, sampleWindow(firstQualityAt, lastQualityAt))
+            } else {
+                null
+            },
+            activeMs = lastQuality?.durationMs?.takeIf { it > 0 } ?: sampleWindow(firstActiveAt, lastActiveAt),
+            disconnectBefore = disconnectBefore,
+            disconnectAfter = disconnectAfter,
+            disconnectFresh = disconnectAfter?.let { it != disconnectBefore },
         ).let { if (emergencySeen) it.discarded() else it }
     }
 }
@@ -440,8 +518,8 @@ data class CallTestRecord(
                 append(" The incoming number was a mailbox short code, so it does not count as the incoming call.")
             }
             if (watch.callsSeen > 1) append(" ${watch.callsSeen} calls were seen during the watch.")
-            if (watch.bearer == CallBearer.VOWIFI && airplaneModeAtStart != true) {
-                append(" Airplane mode was off, so for Wi-Fi calling this is not the airplane-mode test round 19 asks for.")
+            watch.bearerProof?.takeIf { watch.wentActive && !it.counted }?.let {
+                append(" The call type, the IMS data connection and the data network did not agree, so the bearer is not proven and this call does not count.")
             }
         }
 

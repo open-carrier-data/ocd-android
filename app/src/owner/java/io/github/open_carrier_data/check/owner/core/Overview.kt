@@ -23,15 +23,20 @@ data class SimView(val slot: Int, val subId: Int, val mccmnc: String, val name: 
     fun owns(key: SimKey): Boolean = key.subId == subId && key.mccmnc == mccmnc
 }
 
-/** A T2 pass of the read-only check's guided call test, on this phone model, for a SIM's network ([io.github.open_carrier_data.check.core.T2Record]). */
-data class CallsTested(val feature: OwnerFeature, val mccmnc: String?)
+/**
+ * How far this phone's own measured calls went for a feature on a SIM's
+ * network (round 26): calls out (L2) or works, calls both ways (L3). From the
+ * owner build's call ledger ([CallLevels.level]), never from a person's yes.
+ */
+data class CallsTested(val feature: OwnerFeature, val mccmnc: String?, val level: CallsLevel = CallsLevel.WORKS)
 
-/** The rungs of the evidence ladder, in order: each needs the one before it. */
+/** The rungs of the evidence ladder, in order: each needs the one before it (round 26: "signed in -> calls out -> works"). */
 enum class Rung(val plain: String) {
     NETWORK_OFFERS("Network offers it"),
     SWITCHED_ON("Switched on"),
     SIGNED_IN("Signed in"),
-    CALLS_TESTED("Calls tested"),
+    CALLS_OUT("Calls out"),
+    CALLS_BOTH_WAYS("Calls both ways"),
 }
 
 /** What a status colour means. The screen gives each of the first four one fixed colour; neutral takes the theme's. */
@@ -66,7 +71,7 @@ object Ladders {
     /** The order of "Calls and messages". */
     val ORDER = listOf(OwnerFeature.VOLTE, OwnerFeature.VOWIFI, OwnerFeature.SMS_OVER_IMS, OwnerFeature.VIDEO_CALLING, OwnerFeature.VONR)
 
-    /** The features the guided call test (T2) covers; only they have the fourth rung. */
+    /** The features whose calls the phone measures (VoLTE over LTE, Wi-Fi calling over Wi-Fi); only they have the call rungs. */
     val CALL_TESTED = setOf(OwnerFeature.VOLTE, OwnerFeature.VOWIFI)
 
     /** Results that no later test changes: the S20's modem (VoNR), video on PHH IMS. */
@@ -75,7 +80,7 @@ object Ladders {
     private const val USER_SWITCH_BLOCK = "blocked_at_user_switch"
     private val NEEDS_WIFI = setOf("wifi_not_connected", "blocked_at_wifi_connected")
 
-    fun rungs(feature: OwnerFeature): List<Rung> = if (feature in CALL_TESTED) Rung.entries else Rung.entries.dropLast(1)
+    fun rungs(feature: OwnerFeature): List<Rung> = if (feature in CALL_TESTED) Rung.entries else Rung.entries.take(Rung.SIGNED_IN.ordinal + 1)
 
     fun of(state: OwnerState, sim: SimView, calls: List<CallsTested> = emptyList()): List<FeatureLadder> = ORDER.map { of(it, state, sim, calls) }
 
@@ -90,7 +95,10 @@ object Ladders {
      * - Switched on: the effective switch (a value Open Carrier Data keeps,
      *   else the phone's own).
      * - Signed in: IMS registered with the feature's service on its bearer.
-     * - Calls tested: a T2 pass on this phone model for the SIM's network.
+     * - Calls out: a measured outgoing call on the feature's bearer passed
+     *   (the app's mailbox call or a real call of the owner's, round 26 L2).
+     * - Calls both ways: also a measured incoming call on that bearer (L3).
+     *   "Calls out" never claims anything about incoming calls.
      */
     fun of(feature: OwnerFeature, state: OwnerState, sim: SimView, calls: List<CallsTested> = emptyList()): FeatureLadder {
         val rungs = rungs(feature)
@@ -117,8 +125,11 @@ object Ladders {
             else -> false
         }
         val signedIn = switchOn == true && onWorks == true
-        val callsTested = feature in CALL_TESTED && calls.any { it.feature == feature && (it.mccmnc == null || it.mccmnc == sim.mccmnc) }
-        val reached = listOf(networkOffers, switchOn == true, signedIn, callsTested).take(rungs.size).takeWhile { it }.count()
+        val levels = if (feature in CALL_TESTED) calls.filter { it.feature == feature && (it.mccmnc == null || it.mccmnc == sim.mccmnc) }.map { it.level } else emptyList()
+        val callsBoth = CallsLevel.WORKS in levels
+        val callsOut = callsBoth || CallsLevel.CALLS_OUT in levels
+        val reached = listOf(networkOffers, switchOn == true, signedIn, callsOut, callsBoth).take(rungs.size).takeWhile { it }.count()
+        val provisional = state.provisional.firstOrNull { it.slot == sim.slot && sim.owns(it.sim) && it.feature == feature }
 
         fun ladder(tone: Tone, text: String, wouldWork: Boolean = false) =
             FeatureLadder(feature, rungs, reached, tone, text, kept = kept, switchedOn = switchOn, wouldWork = wouldWork)
@@ -126,15 +137,23 @@ object Ladders {
 
         val worksText = when {
             rungs.size < Rung.entries.size -> "Signed in"
-            callsTested -> "Works, calls tested"
+            callsBoth && reached >= rungs.size -> "Works: calls both ways"
+            callsOut && reached >= Rung.CALLS_OUT.ordinal + 1 -> "Calls out work"
             else -> "Signed in, calls untested"
+        }
+        // A changed voice value kept for now: calls out first, then incoming (round 26 check 6).
+        val keptText = when {
+            provisional == null -> "Switched on by Open Carrier Data"
+            provisional.callsOutAtMs == null -> "Switched on by Open Carrier Data, calls out not checked yet"
+            else -> "Switched on by Open Carrier Data, calls out work, incoming not yet seen"
         }
         return when {
             // The reason (modem or software) goes to the report and the log only.
             staticReason != null -> FeatureLadder(feature, rungs, 0, Tone.NOT_POSSIBLE, "Not supported on this phone", notPossible = true, unsupported = true)
             trial -> ladder(Tone.CHANGED, "Testing now")
             kept == true && onWorks == false -> ladder(Tone.PROBLEM, "Switched on by Open Carrier Data, not signed in")
-            kept == true -> ladder(Tone.CHANGED, "Switched on by Open Carrier Data")
+            kept == true && provisional == null && callsBoth && reached >= rungs.size -> ladder(Tone.CHANGED, "Switched on by Open Carrier Data, calls both ways")
+            kept == true -> ladder(Tone.CHANGED, keptText)
             kept == false -> ladder(Tone.CHANGED, "Switched off by Open Carrier Data")
             switchOn == true && onWorks == true -> ladder(Tone.WORKS, worksText)
             switchOn == true && onWorks == false -> ladder(Tone.PROBLEM, "On, but not signed in")
@@ -200,7 +219,7 @@ object StatusSentence {
             keptAny -> Status(Tone.CHANGED, changed(state), StatusKind.KEPT)
             own.isNotEmpty() -> Status(Tone.PROBLEM, "${joinAnd(own)} ${if (own.size == 1) "isn't" else "aren't"} signed in", StatusKind.OWN_NOT_SIGNED_IN)
             !checked -> Status(Tone.NEUTRAL, "Not checked yet", StatusKind.NOT_CHECKED)
-            // "Works" needs passed call tests (README, LB4); registration alone reads "signed in".
+            // "Works" needs calls both ways measured (round 26 L3); registration alone reads "signed in".
             ladders.filter { !it.notPossible && it.reached > 0 }.let { live ->
                 live.isNotEmpty() && live.all { it.reached >= it.rungs.size }
             } -> Status(Tone.WORKS, "All working on your phone's own settings", StatusKind.WORKS)
