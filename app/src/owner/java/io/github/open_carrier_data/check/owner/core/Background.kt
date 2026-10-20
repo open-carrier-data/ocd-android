@@ -17,29 +17,6 @@ object QuietSchedule {
     }
 }
 
-/** The summary line under "Open Carrier Data" in Settings > Network & internet: the status and the last result. */
-object SettingsSummary {
-    fun line(state: OwnerState, privileged: Boolean, format: (Long) -> String): String {
-        val parts = mutableListOf<String>()
-        if (state.stop != null) return "Stopped after a stop event; open to review"
-        val kept = state.overrides.count { it.hold == Hold.KEPT } + state.apns.count { it.hold == Hold.KEPT }
-        val trials = state.overrides.count { it.hold == Hold.TRIAL } + state.apns.count { it.hold == Hold.TRIAL }
-        parts += when {
-            trials > 0 -> "Test running"
-            kept > 0 -> "$kept kept"
-            else -> "Phone's own carrier settings"
-        }
-        val result = state.lastResult
-        parts += when {
-            result != null -> "${format(result.atMs)}: ${result.text}"
-            state.runs.isNotEmpty() -> "last test ${format(state.runs.last().startedMs)}"
-            else -> "not tested yet"
-        }
-        if (!privileged) parts += "no privileged access"
-        return parts.joinToString(" · ")
-    }
-}
-
 /** A notification the owner gets: only when a value changed on the phone or something failed. */
 data class Notice(val title: String, val text: String, val failed: Boolean)
 

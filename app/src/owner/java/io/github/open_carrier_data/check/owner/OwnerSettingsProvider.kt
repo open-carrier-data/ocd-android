@@ -8,12 +8,12 @@ import android.os.Binder
 import android.os.Bundle
 import android.os.Process
 import io.github.open_carrier_data.check.owner.core.SettingsSummary
-import java.text.DateFormat
-import java.util.Date
 
 /**
  * The live summary under "Open Carrier Data" in Settings > Network &
- * internet: Settings calls `getDynamicSummary` on this authority (the
+ * internet, the owner screen's status sentence ("Everything works with
+ * your phone's own settings", "1 improvement active: VoLTE switched on"):
+ * Settings calls `getDynamicSummary` on this authority (the
  * `com.android.settings.summary_uri` meta-data of [OwnerActivity]). It
  * answers only the system (Settings runs as the system uid), root, the
  * shell and the app itself, and only with the one line; nothing else is
@@ -28,11 +28,10 @@ class OwnerSettingsProvider : ContentProvider() {
         val context = context ?: return null
         return when (method) {
             METHOD_SUMMARY -> {
+                // The owner screen's status sentence, as plain as on the screen.
                 val line = runCatching {
-                    SettingsSummary.line(FileStateStore(context).read(), OwnerAccess.privilegedGranted(context)) {
-                        DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(it))
-                    }
-                }.getOrDefault("Carrier settings tests")
+                    SettingsSummary.line(FileStateStore(context).read(), OwnerAccess.privilegedGranted(context), OwnerData.simViews(context))
+                }.getOrDefault("Carrier settings checks")
                 Bundle().apply { putString(KEY_SUMMARY, line) }
             }
             else -> null
