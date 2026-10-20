@@ -58,19 +58,20 @@ object PrivacyScan {
     /** Fixed-shape hex fields skip only the two extra phone heuristics, as in field_observations.py. */
     val hexFields = setOf("report.ocd_data.source_commit", "report.sim.gid1")
 
-    fun scan(element: JsonElement, where: String = "report"): List<Hit> {
+    /** [hex]: the fixed-shape hex fields of this report kind ([hexFields] for the check's report). */
+    fun scan(element: JsonElement, where: String = "report", hex: Set<String> = hexFields): List<Hit> {
         val hits = mutableListOf<Hit>()
-        walk(element, where, hits)
+        walk(element, where, hits, hex)
         return hits
     }
 
-    fun scanValue(path: String, text: String): List<Hit> {
+    fun scanValue(path: String, text: String, hex: Set<String> = hexFields): List<Hit> {
         val hits = mutableListOf<Hit>()
         for (candidate in variants(text)) {
             for ((name, pattern) in blockPatterns) {
                 if (pattern.containsMatchIn(candidate)) hits += Hit(path, name)
             }
-            if (path in hexFields) continue
+            if (path in hex) continue
             for ((name, pattern) in extraValuePatterns) {
                 if (pattern.containsMatchIn(candidate)) hits += Hit(path, name)
             }
@@ -85,15 +86,15 @@ object PrivacyScan {
         }
     }
 
-    private fun walk(element: JsonElement, where: String, hits: MutableList<Hit>) {
+    private fun walk(element: JsonElement, where: String, hits: MutableList<Hit>, hex: Set<String>) {
         when (element) {
             is JsonObject -> for ((key, child) in element) {
                 hits += scanKey("$where.$key", key)
-                walk(child, "$where.$key", hits)
+                walk(child, "$where.$key", hits, hex)
             }
-            is JsonArray -> element.forEachIndexed { index, child -> walk(child, "$where[$index]", hits) }
+            is JsonArray -> element.forEachIndexed { index, child -> walk(child, "$where[$index]", hits, hex) }
             JsonNull -> Unit
-            is JsonPrimitive -> if (element.isString) hits += scanValue(where, element.content)
+            is JsonPrimitive -> if (element.isString) hits += scanValue(where, element.content, hex)
         }
     }
 

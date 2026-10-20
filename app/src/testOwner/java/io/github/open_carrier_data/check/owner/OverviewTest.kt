@@ -1,6 +1,8 @@
 package io.github.open_carrier_data.check.owner
 
 import io.github.open_carrier_data.check.core.DeviceInfo
+import io.github.open_carrier_data.check.core.IwlanHold
+import io.github.open_carrier_data.check.core.IwlanReading
 import io.github.open_carrier_data.check.core.RomFamily
 import io.github.open_carrier_data.check.owner.core.ApnResult
 import io.github.open_carrier_data.check.owner.core.CallsTested
@@ -32,6 +34,7 @@ import io.github.open_carrier_data.check.owner.core.StatusKind
 import io.github.open_carrier_data.check.owner.core.StatusSentence
 import io.github.open_carrier_data.check.owner.core.TestBasis
 import io.github.open_carrier_data.check.owner.core.Tone
+import io.github.open_carrier_data.check.owner.core.WifiCallingDetails
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -354,5 +357,53 @@ class OverviewTest {
                 assertFalse("no final full stop: $text", text.endsWith("."))
             }
         }
+    }
+
+    @Test
+    fun `the last headline is true when a feature is off but would work`() {
+        // The review of 2026-10-20: "All signed in" showed while VoLTE was off and only signed in when tested on.
+        val base = s20Tonight()
+        val state = base.copy(entries = base.entries.filterNot { it.entry.startsWith("volte:") } + record("volte:on", true, "ims_registered_with_service", false))
+        val ladders = Ladders.of(state, view)
+        val volte = ladders.first { it.feature == OwnerFeature.VOLTE }
+        assertEquals("Off, works when switched on", volte.text)
+        assertTrue(volte.wouldWork)
+        val status = StatusSentence.of(state, listOf(view), ladders)
+        assertEquals("Signed in on your phone's own settings; VoLTE is off and would work", status.headline)
+        assertEquals(StatusKind.SIGNED_IN, status.kind)
+        assertEquals(status.headline, SettingsSummary.line(state, privileged = true, sims = listOf(view)))
+        val two = state.copy(entries = state.entries.filterNot { it.entry.startsWith("vowifi:") } + record("vowifi:on", true, "ims_registered_with_service", false))
+        assertEquals("Signed in on your phone's own settings; VoLTE and Wi-Fi calling are off and would work", StatusSentence.of(two, listOf(view), Ladders.of(two, view)).headline)
+    }
+
+    @Test
+    fun `without a feature signed in the headline says so`() {
+        val off = RunResult("r", now - 60_000, scheduled = false, sim = key, features = listOf(FeatureResult(OwnerFeature.VOLTE, false, false, ocdOn)))
+        val state = OwnerState(rebootCleared = true, runs = listOf(off), lastResult = LastResult(now, "checked, nothing changed"))
+        val ladders = Ladders.of(state, view)
+        assertEquals("Off, not tested yet", ladders.first { it.feature == OwnerFeature.VOLTE }.text)
+        val status = StatusSentence.of(state, listOf(view), ladders)
+        assertEquals("Nothing signed in yet", status.headline)
+        assertEquals(Tone.NEUTRAL, status.tone)
+        val would = state.copy(entries = listOf(record("volte:on", true, "ims_registered_with_service", false)))
+        assertEquals("VoLTE is off and would work", StatusSentence.of(would, listOf(view), Ladders.of(would, view)).headline)
+    }
+
+    @Test
+    fun `the Wi-Fi calling details are in plain words`() {
+        assertEquals(listOf("No Wi-Fi calling connection seen", "No failed attempts"), WifiCallingDetails.lines(null))
+        assertEquals(listOf("Wi-Fi calling is connected", "No failed attempts"), WifiCallingDetails.lines(IwlanReading(tunnelUp = true)))
+        val refused = IwlanReading(tunnelUp = false, lastRefusal = "IWLAN_EPDG_SELECTOR_SERVER_SELECTION_FAILED", heldBackBy = IwlanHold.NETWORK_BACKOFF_TIMER, heldBackMinutes = 5)
+        assertEquals(
+            listOf(
+                "LIDL Connect: Wi-Fi calling isn't connected",
+                "LIDL Connect: Last failed attempt: the Wi-Fi calling server wasn't found",
+                "LIDL Connect: Held back for about 5 more minutes by the network's back-off timer",
+            ),
+            WifiCallingDetails.lines(refused, "LIDL Connect"),
+        )
+        assertEquals("some new error", WifiCallingDetails.cause("IWLAN_SOME_NEW_ERROR"))
+        val words = (WifiCallingDetails.lines(null) + WifiCallingDetails.lines(refused)).joinToString(" ").lowercase()
+        for (retired in listOf("refusal", "none", "tunnel", "iwlan_")) assertFalse(retired, retired in words)
     }
 }

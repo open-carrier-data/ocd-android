@@ -4,7 +4,12 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
 import android.telephony.SubscriptionManager
+import io.github.open_carrier_data.check.BuildConfig
+import io.github.open_carrier_data.check.core.DeviceInfo
 import io.github.open_carrier_data.check.core.OcdBundle
+import io.github.open_carrier_data.check.core.OcdProfile
+import io.github.open_carrier_data.check.owner.core.ImsStack
+import io.github.open_carrier_data.check.owner.core.ReportCell
 import io.github.open_carrier_data.check.owner.core.CallsTested
 import io.github.open_carrier_data.check.owner.core.OwnerFeature
 import io.github.open_carrier_data.check.phone.CallTestStore
@@ -174,6 +179,36 @@ class OwnerData(private val context: Context, private val store: StateStore) {
          * feature and network: the ladder's last rung. The screen and the
          * Settings entry read the same list, so they say the same.
          */
+        /**
+         * The facts the test report names for a run on [sim] (README
+         * "Uploads"): the phone and its software, the IMS stack, the SIM's SPN
+         * and the GID1 prefix of the OCD [profile] it matched (never its whole
+         * GID1), the app version and the data release. [pulledTag]: the
+         * release whose files the run used; null when it used the bundled
+         * snapshot.
+         */
+        fun reportCell(context: Context, device: DeviceInfo, sim: OwnerSim?, profile: OcdProfile?, pulledTag: String?, bundle: OcdBundle): ReportCell {
+            val gid1 = sim?.identity?.gid1
+            return ReportCell(
+                model = device.model,
+                codename = device.codename,
+                androidMajor = device.androidMajor,
+                romFamily = device.romFamily.wire,
+                buildType = Build.TYPE.orEmpty(),
+                imsStack = ImsStack.of(VideoStatic.imsPackages(context)),
+                spn = sim?.identity?.spn?.trim()?.takeIf { it.isNotEmpty() },
+                gid1Prefix = profile?.match?.gid1Prefixes
+                    ?.firstOrNull { prefix -> gid1 != null && gid1.startsWith(prefix, ignoreCase = true) }
+                    ?.uppercase()?.takeIf { HEX.matches(it) },
+                appVersion = BuildConfig.VERSION_NAME,
+                dataRelease = pulledTag ?: bundle.source.releaseTag,
+                dataDigest = bundle.source.dataDigest.orEmpty(),
+                dataSource = if (pulledTag != null) "pulled" else "bundled",
+            )
+        }
+
+        private val HEX = Regex("[0-9A-F]{1,20}")
+
         fun callsTested(context: Context): List<CallsTested> =
             runCatching { CallTestStore(context).load().t2 }.getOrDefault(emptyList())
                 .filter { it.model == Build.MODEL }

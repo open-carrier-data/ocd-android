@@ -4,17 +4,11 @@ import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.owner.core.ApnColumns
 import io.github.open_carrier_data.check.owner.core.ApnConf
 import io.github.open_carrier_data.check.owner.core.ApnMatch
-import io.github.open_carrier_data.check.owner.core.FeatureResult
-import io.github.open_carrier_data.check.owner.core.IssueReport
-import io.github.open_carrier_data.check.owner.core.OcdAnswer
-import io.github.open_carrier_data.check.owner.core.OwnerFeature
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.PhoneApnRow
 import io.github.open_carrier_data.check.owner.core.ReleaseCheck
 import io.github.open_carrier_data.check.owner.core.ReleaseException
 import io.github.open_carrier_data.check.owner.core.ReleaseSource
-import io.github.open_carrier_data.check.owner.core.RunResult
-import io.github.open_carrier_data.check.owner.core.SimKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -24,10 +18,9 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
-import java.net.URLDecoder
 import java.security.MessageDigest
 
-/** The release check, the APN rows and the issue report. */
+/** The release check, the APN rows and the state file. (The issue report: ReportSchemaTest.) */
 class DataTest {
     @get:Rule
     val tmp = TemporaryFolder()
@@ -135,32 +128,6 @@ class DataTest {
         assertEquals(rows[0].key, parsed.single().key)
         assertEquals(emptyList<PhoneApnRow>(), PhoneApnRow.parseQuery("No result found.\n"))
         assertNull(PhoneApnRow.parseQuery("Error while accessing provider"))
-    }
-
-    private fun run() = RunResult(
-        id = "r1", startedMs = 1_792_408_702_000L, scheduled = false, sim = SimKey(3, "26202", 2397), simName = "LIDL Connect",
-        profileId = "open.26202.aaaaaaaaaaaa", releaseTag = "data-2026.10", device = "SM-G981B (x1s)", stack = "LineageOS, Android 16, userdebug",
-        features = listOf(
-            FeatureResult(OwnerFeature.VOLTE, false, false, OcdAnswer(true, "device_record", recordSource = "samsung_omc", recordStack = "stock", sameStack = false), onWorks = true, onReason = "ims_registered_with_service", best = true, applied = true),
-            FeatureResult(OwnerFeature.VOWIFI, true, false, OcdAnswer(true, "carrier_profile"), offWorks = true, best = null),
-        ),
-    )
-
-    @Test
-    fun `the issue URL is prefilled for OCD's carrier-data form and passes the privacy scan`() {
-        val url = IssueReport.url(run())!!
-        assertTrue(url.startsWith("https://github.com/open-carrier-data/open-carrier-data/issues/new?template=wrong-or-missing-carrier-data.yml&title="))
-        val decoded = URLDecoder.decode(url, "UTF-8")
-        assertTrue(decoded, "carrier=LIDL Connect" in decoded)
-        assertTrue(decoded, "country=Germany" in decoded)
-        assertTrue(decoded, "| VoLTE | off | on (device_record, samsung_omc/stock)" in decoded)
-        assertTrue(url.length <= IssueReport.MAX_URL)
-    }
-
-    @Test
-    fun `an identifier in the report stops the URL`() {
-        assertNull(IssueReport.url(run().copy(simName = "LIDL 262021234567890")))
-        assertNull(IssueReport.url(run().copy(simName = "sip:+491700000000@ims")))
     }
 
     @Test

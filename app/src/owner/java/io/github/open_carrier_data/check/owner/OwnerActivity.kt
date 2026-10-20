@@ -2,6 +2,7 @@ package io.github.open_carrier_data.check.owner
 
 import android.Manifest
 import android.app.Application
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -10,6 +11,7 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -26,7 +28,9 @@ import io.github.open_carrier_data.check.owner.core.LogEvent
 import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.QuietPlan
+import io.github.open_carrier_data.check.owner.core.ReleaseSource
 import io.github.open_carrier_data.check.owner.core.SimView
+import io.github.open_carrier_data.check.owner.core.WifiCallingDetails
 import io.github.open_carrier_data.check.owner.core.update
 import io.github.open_carrier_data.check.ui.MainActivity
 import io.github.open_carrier_data.check.ui.OcdCheckTheme
@@ -188,17 +192,9 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
                     val registry = phone.registryText()
                     val iwlan = phone.iwlanServiceText() ?: return@runCatching null
                     val qns = phone.qnsText()
-                    OwnerData.sims(context).flatMap { sim ->
-                        val r = IwlanDumps.reading(registry, iwlan, qns, sim.slot)
-                        val tunnel = when (r?.tunnelUp) {
-                            true -> "up"
-                            false -> "down"
-                            null -> "not seen"
-                        }
-                        listOf(
-                            "Slot ${sim.slot + 1}: Wi-Fi calling tunnel $tunnel",
-                            "Slot ${sim.slot + 1}: last refusal ${r?.lastRefusal ?: "none"}",
-                        )
+                    val sims = OwnerData.sims(context)
+                    sims.flatMap { sim ->
+                        WifiCallingDetails.lines(IwlanDumps.reading(registry, iwlan, qns, sim.slot), sim.name.takeIf { sims.size > 1 })
                     }
                 } finally {
                     handle.close()
@@ -235,7 +231,45 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
-    fun issueUrl(): String? = store.read().runs.lastOrNull { it.features.isNotEmpty() }?.let(IssueReport::url)
+    /**
+     * The prefilled "OCD Check report" issue of the last finished test, or
+     * null when the privacy scan holds it back. A run recorded before the
+     * report cell existed is named with this phone as it is now, and with the
+     * SIM's SPN and GID1 prefix only when that SIM is still in.
+     */
+    fun report(open: (IssueReport.Prefilled?) -> Unit) = viewModelScope.launch {
+        val context = getApplication<Application>()
+        val prefilled = withContext(Dispatchers.IO) {
+            runCatching {
+                val run = store.read().runs.lastOrNull { it.features.isNotEmpty() } ?: return@runCatching null
+                val cell = run.cell ?: run.sim?.let { key ->
+                    val data = OwnerData(context, store)
+                    val bundle = data.bundle()
+                    val sim = OwnerData.sims(context).firstOrNull { it.subId == key.subId && it.identity.mccmnc == key.mccmnc }
+                    val profile = bundle.profiles.firstOrNull { it.profileId == run.profileId }
+                    val pulled = run.releaseTag?.takeIf { ReleaseSource.TAG.matches(it) && data.currentDir() != null }
+                    OwnerData.reportCell(context, OwnerWorker.device(context), sim, profile, pulled, bundle)
+                } ?: return@runCatching null
+                IssueReport.prefill(run, cell, OwnerData.callsTested(context))
+            }.getOrNull()
+        }
+        if (prefilled != null) {
+            // The owner build's own trace of what it opened, for the owner's checks; the report holds no identifier.
+            val url = prefilled.url
+            val parts = url.chunked(LOG_CHUNK)
+            Log.i(REPORT_TAG, "report ${prefilled.hash}, URL ${url.length} characters in ${parts.size} parts")
+            parts.forEachIndexed { index, part -> Log.i(REPORT_TAG, "part ${index + 1}/${parts.size}: $part") }
+            store.update {
+                it.logged(System.currentTimeMillis(), "report", "opened the prefilled OCD Check report ${prefilled.hash}; nothing is sent until the owner submits it")
+            }
+        }
+        open(prefilled)
+    }
+
+    companion object {
+        const val REPORT_TAG = "OcdCheckReport"
+        private const val LOG_CHUNK = 3_000
+    }
 }
 
 /**
@@ -282,14 +316,19 @@ class OwnerActivity : ComponentActivity() {
         }
     }
 
-    private fun openIssue() {
-        val url = viewModel.issueUrl()
-        if (url == null) {
-            // The button waits for a finished test, so a missing report is the privacy check's.
-            android.widget.Toast.makeText(this, "Report held back: it may contain private data", android.widget.Toast.LENGTH_LONG).show()
-            return
+    private fun openIssue() = viewModel.report { prefilled ->
+        if (prefilled == null) {
+            // The button waits for a finished test, so a missing report is the privacy check's or the release's.
+            android.widget.Toast.makeText(this, "Report held back: it may contain private data, or the test has no data release", android.widget.Toast.LENGTH_LONG).show()
+            return@report
         }
-        // Opens the prefilled form; the owner reads it and submits it himself.
-        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        // Opens the prefilled form; the owner reads it and submits it himself. The app sends nothing.
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(prefilled.url)))
+            // The bot's comment gives the same hash for the same text.
+            android.widget.Toast.makeText(this, "Report ${prefilled.hash.take(19)}…", android.widget.Toast.LENGTH_LONG).show()
+        } catch (e: ActivityNotFoundException) {
+            android.widget.Toast.makeText(this, "No browser to open the report", android.widget.Toast.LENGTH_LONG).show()
+        }
     }
 }
