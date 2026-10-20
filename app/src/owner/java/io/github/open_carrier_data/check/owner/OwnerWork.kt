@@ -25,6 +25,7 @@ import io.github.open_carrier_data.check.core.RomFamily
 import io.github.open_carrier_data.check.owner.core.ApnResult
 import io.github.open_carrier_data.check.owner.core.LastResult
 import io.github.open_carrier_data.check.owner.core.Notices
+import io.github.open_carrier_data.check.owner.core.ObservedReports
 import io.github.open_carrier_data.check.owner.core.OcdAnswer
 import io.github.open_carrier_data.check.owner.core.OwnerFeature
 import io.github.open_carrier_data.check.owner.core.OwnerPhone
@@ -186,7 +187,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             // The data release, once a day, on Wi-Fi.
             if (look.wifiConnected == true && (state.lastPullAtMs == null || now - state.lastPullAtMs!! >= PULL_EVERY_MS)) {
                 store.update { it.copy(lastPullAtMs = now) }
-                runCatching { OwnerData(context, store).pull() }
+                runCatching { OwnerData(context, store).pull(verbose = false) }
                     .onSuccess { line -> if (!line.startsWith("up to date")) store.update { it.logged(now, "pull", "background: $line") } }
                     .onFailure { e -> quietLog(store, "pull", "background pull failed: ${e.message?.take(120)}") }
             }
@@ -215,12 +216,20 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             store.update { s -> checks.flatMap { QuietPlan.observedRecords(it, basis, now) }.fold(s) { acc, r -> acc.recorded(r) } }
             if (checks.any { it.missingKeeps.isNotEmpty() }) OwnerScheduler.cleanup(context, policy = ExistingWorkPolicy.KEEP)
             state = store.read()
+            // Others' reports for each SIM's own cell: they only move an entry earlier (read only when there are any).
+            val observed = state.observed
+            val reports = if (observed?.pointers.isNullOrEmpty()) {
+                emptyMap()
+            } else {
+                OwnerData.observedCells(context, device(context), sims, data.bundle()).associate { (sim, cell) -> sim.key to ObservedReports.forCell(observed, cell) }
+            }
             val plan = QuietPlan.plan(
                 checks, state.entries, basis, now,
                 known = state.runs.mapNotNull { it.sim }.toSet(),
                 onOnly = (state.onOnlyUntilMs ?: 0) > now,
                 nightUsed = state.trialNight == QuietWindow.nightOf(nowLocal),
                 undone = state.undone,
+                reports = reports,
             )
             val ims = checks.joinToString { "slot ${it.sim.slot + 1}: ${it.imsLine}" }
             if (plan.all.isEmpty()) {

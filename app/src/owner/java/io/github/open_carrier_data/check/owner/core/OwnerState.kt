@@ -218,6 +218,14 @@ data class OwnerState(
     val undone: List<UndoneEntry> = emptyList(),
     /** The private pointer ledger: how often each entry passed or failed here, by what pointed at it ([PointerLedger]). */
     val ledger: List<LedgerRow> = emptyList(),
+    /**
+     * Others' reports from the last observed/summary.json that passed its
+     * checks ([ObservedReports]): they only move this phone's entries earlier
+     * in the night's rotation. A failed fetch keeps it.
+     */
+    val observed: ObservedInfo? = null,
+    /** The hashes of the reports the owner opened ("Open report on GitHub"): his own reports are not others'. */
+    val reportsOpened: List<String> = emptyList(),
 ) {
     val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
 
@@ -241,6 +249,7 @@ data class OwnerState(
     companion object {
         const val MAX_LOG = 400
         const val MAX_RUNS = 30
+        const val MAX_OPENED = 100
         private val wire = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
         fun decode(text: String): OwnerState = wire.decodeFromString(serializer(), text)

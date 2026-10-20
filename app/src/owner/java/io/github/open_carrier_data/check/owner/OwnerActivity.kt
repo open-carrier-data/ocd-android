@@ -25,6 +25,8 @@ import io.github.open_carrier_data.check.owner.core.CallsTested
 import io.github.open_carrier_data.check.owner.core.IssueReport
 import io.github.open_carrier_data.check.owner.core.IwlanDumps
 import io.github.open_carrier_data.check.owner.core.LogEvent
+import io.github.open_carrier_data.check.owner.core.ObservedCell
+import io.github.open_carrier_data.check.owner.core.ObservedReports
 import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.QuietPlan
@@ -56,6 +58,8 @@ data class OwnerUi(
     val calls: List<CallsTested> = emptyList(),
     /** OCD's access point names for each SIM (by subscription ID) in the pulled release; missing: not known. */
     val apnCandidates: Map<Int, Int> = emptyMap(),
+    /** One plain line per entry others reported working or contested on this phone's cell ([ObservedReports.lines]). */
+    val reportLines: List<String> = emptyList(),
     /** The data release the app ships ("2026.10"), shown when none is pulled. */
     val bundledTag: String? = null,
     /** Steps of the owner's or the night's test still to run. */
@@ -98,6 +102,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         val wm = WorkManager.getInstance(context)
         val state = store.read()
         val run = withContext(Dispatchers.IO) { runCatching { wm.getWorkInfosForUniqueWork(OwnerScheduler.RUN).get() }.getOrNull() }.orEmpty()
+        val keys = withContext(Dispatchers.IO) { candidates(state, sims) }
         _ui.value = _ui.value.copy(
             loaded = true,
             gate = gate,
@@ -105,22 +110,38 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             sims = sims,
             simViews = views,
             calls = calls,
-            apnCandidates = withContext(Dispatchers.IO) { candidates(state, sims) },
+            apnCandidates = keys.mapValues { it.value.size },
+            reportLines = withContext(Dispatchers.IO) { runCatching { reportLines(state, sims, keys) }.getOrDefault(emptyList()) },
             stepsToGo = OwnerScheduler.pending(run),
         )
     }
 
-    private var candidateCache: Pair<String, Map<Int, Int>>? = null
+    private var candidateCache: Pair<String, Map<Int, Set<String>>>? = null
 
-    /** How many access point names OCD's pulled release has for each SIM; read once per release and SIM set. */
-    private fun candidates(state: OwnerState, sims: List<OwnerSim>?): Map<Int, Int> {
+    /** The keys of OCD's access point names in the pulled release for each SIM; read once per release and SIM set. */
+    private fun candidates(state: OwnerState, sims: List<OwnerSim>?): Map<Int, Set<String>> {
         val data = OwnerData(getApplication(), store)
         val tag = state.release?.tag?.takeIf { data.currentDir() != null } ?: return emptyMap()
         val key = tag + sims.orEmpty().joinToString { "${it.subId}/${it.identity.mccmnc}" }
         candidateCache?.takeIf { it.first == key }?.let { return it.second }
-        val counts = sims.orEmpty().mapNotNull { sim -> runCatching { sim.subId to QuietPlan.apnCandidates(data.apnRows(sim), sim).size }.getOrNull() }.toMap()
-        candidateCache = key to counts
-        return counts
+        val keys = sims.orEmpty().mapNotNull { sim -> runCatching { sim.subId to QuietPlan.apnCandidates(data.apnRows(sim), sim).map { it.key }.toSet() }.getOrNull() }.toMap()
+        candidateCache = key to keys
+        return keys
+    }
+
+    private var cellCache: Pair<String, List<Pair<OwnerSim, ObservedCell>>>? = null
+
+    /** Details' lines on others' reports for each SIM's own cell; the cells are read once per data release and SIM set. */
+    private fun reportLines(state: OwnerState, sims: List<OwnerSim>?, apnKeys: Map<Int, Set<String>>): List<String> {
+        if (state.observed?.pointers.isNullOrEmpty() || sims.isNullOrEmpty()) return emptyList()
+        val context = getApplication<Application>()
+        val key = (state.release?.tag ?: "bundled") + sims.joinToString { "${it.subId}/${it.identity.mccmnc}" }
+        val cells = cellCache?.takeIf { it.first == key }?.second
+            ?: OwnerData.observedCells(context, OwnerWorker.device(context), sims, OwnerData(context, store).bundle()).also { cellCache = key to it }
+        val simCells = cells.map { (sim, cell) ->
+            ObservedReports.SimCell(sim.key, sim.name, cell, QuietPlan.FEATURE_ENTRIES.toSet() + apnKeys[sim.subId].orEmpty().map(QuietPlan::apnEntry))
+        }
+        return ObservedReports.lines(simCells, state, System.currentTimeMillis())
     }
 
     private fun say(text: String) {
@@ -259,8 +280,10 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             val parts = url.chunked(LOG_CHUNK)
             Log.i(REPORT_TAG, "report ${prefilled.hash}, URL ${url.length} characters in ${parts.size} parts")
             parts.forEachIndexed { index, part -> Log.i(REPORT_TAG, "part ${index + 1}/${parts.size}: $part") }
+            // The hash also tells the owner's own report in OCD's observed/summary.json from others' reports.
             store.update {
-                it.logged(System.currentTimeMillis(), "report", "opened the prefilled OCD Check report ${prefilled.hash}; nothing is sent until the owner submits it")
+                it.copy(reportsOpened = (it.reportsOpened - prefilled.hash + prefilled.hash).takeLast(OwnerState.MAX_OPENED))
+                    .logged(System.currentTimeMillis(), "report", "opened the prefilled OCD Check report ${prefilled.hash}; nothing is sent until the owner submits it")
             }
         }
         open(prefilled)

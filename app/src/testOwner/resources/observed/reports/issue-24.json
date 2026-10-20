@@ -1,0 +1,54 @@
+{
+  "issue": 24,
+  "reported_on": "2026-10-05",
+  "report_sha256": "sha256:d86784badec1a31c97e8265f4c83dabf2a349ded2aa713707025b4ec438b969e",
+  "release": "data-2026.10",
+  "status": "counted",
+  "status_reasons": [],
+  "verification": "unverified",
+  "report": {
+    "schema": "ocd-check-test-report",
+    "schema_version": 1,
+    "app": {
+      "name": "OCD Check",
+      "build": "owner",
+      "version": "0.3.0-owner"
+    },
+    "tested_on": "2026-10-20",
+    "release": {
+      "tag": "data-2026.10",
+      "data_digest": "sha256:36d5f7ebb084a1a915c4961f8a5f3a11c70150b0fca7f68ccc050ffbe3989d37"
+    },
+    "data_source": "pulled",
+    "device": {
+      "model": "SM-G981B",
+      "codename": "x1s",
+      "android_major": 15,
+      "rom_family": "lineageos",
+      "build_type": "userdebug",
+      "ims_stack": "phh_ims"
+    },
+    "sim": {
+      "mccmnc": "26202",
+      "android_carrier_id": 2397,
+      "spn": "LIDL Connect"
+    },
+    "ocd_profile": "open.26202.8cebd7550c67",
+    "results": [
+      {
+        "entry": "volte:off",
+        "ocd": false,
+        "phone": false,
+        "how": "tested",
+        "result": "works",
+        "call_types": [
+          {
+            "test": "with_feature_off",
+            "network": "lte"
+          }
+        ],
+        "restored": true
+      }
+    ]
+  }
+}
