@@ -6,6 +6,7 @@ import io.github.open_carrier_data.check.owner.core.LiveOverride
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.RunResult
 import io.github.open_carrier_data.check.owner.core.SettingsSummary
+import io.github.open_carrier_data.check.owner.core.SimView
 import io.github.open_carrier_data.check.owner.core.QuietSchedule
 import io.github.open_carrier_data.check.owner.core.retrying
 import kotlinx.coroutines.runBlocking
@@ -32,20 +33,22 @@ class BackgroundTest {
     }
 
     @Test
-    fun `the Settings summary says what is kept, the last result and missing access`() {
+    fun `the Settings summary is the screen's status sentence`() {
         val sim = OwnerFixtures.SIM.key
+        val view = SimView(0, sim.subId, sim.mccmnc, "LIDL Connect")
         val kept = LiveOverride(0, sim, "carrier_volte_available_bool", true, Hold.KEPT, now)
         val run = RunResult("r1", startedMs = now, scheduled = false)
-        assertEquals("Phone's own carrier settings · not tested yet", SettingsSummary.line(OwnerState(), privileged = true, format = format))
-        assertEquals("1 kept · last test T$now", SettingsSummary.line(OwnerState(overrides = listOf(kept), runs = listOf(run)), privileged = true, format = format))
-        // The last result wins over the run date: a light check, a night test.
+        assertEquals("Not checked yet", SettingsSummary.line(OwnerState(), privileged = true, sims = listOf(view)))
+        assertEquals("1 improvement active: VoLTE switched on", SettingsSummary.line(OwnerState(overrides = listOf(kept), runs = listOf(run)), privileged = true, sims = listOf(view)))
+        // A light check that found nothing to change: everything works as the phone has it.
         val checked = OwnerState(runs = listOf(run), lastResult = LastResult(now + day, "checked, nothing changed"))
-        assertEquals("Phone's own carrier settings · T${now + day}: checked, nothing changed", SettingsSummary.line(checked, privileged = true, format = format))
+        assertEquals("Everything works with your phone's own settings", SettingsSummary.line(checked, privileged = true, sims = listOf(view)))
         assertEquals(
-            "Test running · not tested yet · no privileged access",
-            SettingsSummary.line(OwnerState(overrides = listOf(kept.copy(hold = Hold.TRIAL))), privileged = false, format = format),
+            "A test is running. No system access",
+            SettingsSummary.line(OwnerState(overrides = listOf(kept.copy(hold = Hold.TRIAL))), privileged = false, sims = listOf(view)),
         )
-        assertTrue("Stopped" in SettingsSummary.line(OwnerState(stop = "revert_not_proven"), privileged = true, format = format))
+        assertTrue("failed" in SettingsSummary.line(OwnerState(stop = "revert_not_proven"), privileged = true, sims = listOf(view)))
+        assertTrue("·" !in SettingsSummary.line(checked, privileged = false, sims = listOf(view)))
     }
 
     @Test

@@ -1,6 +1,8 @@
 package io.github.open_carrier_data.check.owner
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.telephony.SubscriptionManager
 import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.owner.core.ApnConf
 import io.github.open_carrier_data.check.owner.core.OcdApnRow
@@ -10,6 +12,7 @@ import io.github.open_carrier_data.check.owner.core.ReleaseCheck
 import io.github.open_carrier_data.check.owner.core.ReleaseException
 import io.github.open_carrier_data.check.owner.core.ReleaseInfo
 import io.github.open_carrier_data.check.owner.core.ReleaseSource
+import io.github.open_carrier_data.check.owner.core.SimView
 import io.github.open_carrier_data.check.owner.core.StateStore
 import io.github.open_carrier_data.check.owner.core.update
 import io.github.open_carrier_data.check.phone.PhoneReader
@@ -161,6 +164,20 @@ class OwnerData(private val context: Context, private val store: StateStore) {
                 OwnerSim(choice.slotIndex, choice.subId, identity, sim.carrierName ?: sim.spn ?: identity.mccmnc, sim.carrierId)
             }
         }
+
+        /**
+         * The active SIMs as Settings names them ("LIDL Connect"), from the
+         * subscription list only: no carrier config is read, so the Settings
+         * entry's summary can ask for it. Null: not readable.
+         */
+        @SuppressLint("MissingPermission")
+        fun simViews(context: Context): List<SimView>? = runCatching {
+            val manager = context.getSystemService(SubscriptionManager::class.java) ?: return null
+            manager.activeSubscriptionInfoList.orEmpty().filter { it.simSlotIndex >= 0 }.sortedBy { it.simSlotIndex }.map { info ->
+                val name = listOf(info.displayName, info.carrierName).firstOrNull { !it.isNullOrBlank() }?.toString() ?: "SIM ${info.simSlotIndex + 1}"
+                SimView(info.simSlotIndex, info.subscriptionId, info.mccString.orEmpty() + info.mncString.orEmpty(), name)
+            }
+        }.getOrNull()
     }
 }
 
