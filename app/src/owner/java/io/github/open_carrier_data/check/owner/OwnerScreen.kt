@@ -19,6 +19,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -40,9 +41,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -53,7 +53,9 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -66,9 +68,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
@@ -77,25 +81,29 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.collapse
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.expand
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.DeviceFontFamilyName
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.open_carrier_data.check.owner.core.CheckedLine
 import io.github.open_carrier_data.check.owner.core.FeatureLadder
-import io.github.open_carrier_data.check.owner.core.Hold
+import io.github.open_carrier_data.check.owner.core.HeaderNotes
 import io.github.open_carrier_data.check.owner.core.Ladders
+import io.github.open_carrier_data.check.owner.core.LeftoversLine
 import io.github.open_carrier_data.check.owner.core.MobileDataLine
-import io.github.open_carrier_data.check.owner.core.Rung
 import io.github.open_carrier_data.check.owner.core.ScheduleLine
 import io.github.open_carrier_data.check.owner.core.SimView
+import io.github.open_carrier_data.check.owner.core.Status
+import io.github.open_carrier_data.check.owner.core.StatusKind
 import io.github.open_carrier_data.check.owner.core.StatusSentence
 import io.github.open_carrier_data.check.owner.core.Tone
 import java.text.DateFormat
@@ -107,6 +115,7 @@ import kotlin.math.abs
 class OwnerActions(
     val back: () -> Unit,
     val testNow: (TestOptions) -> Unit,
+    val stopTest: () -> Unit,
     val revertAll: () -> Unit,
     val pull: () -> Unit,
     val setSchedule: (Boolean) -> Unit,
@@ -120,7 +129,7 @@ class OwnerActions(
     val openCheck: () -> Unit,
 )
 
-/** The test options in Details; "Test now" and "Test again" both use them. Off values run at night on their own. */
+/** The options under "When you tap Test now" in Details. Off values run at night on their own. */
 data class TestOptions(val offs: Boolean = false, val voice: Boolean = false, val apns: Boolean = true)
 
 /**
@@ -173,16 +182,11 @@ private val DOT = 12.dp
 private val SEGMENT = 14.dp
 private val LADDER_WIDTH = DOT * 4 + SEGMENT * 3
 
-/** Animations off in the system (Remove animations, or the animator scale at 0): the screen then moves nothing. */
-@Composable
-private fun reducedMotion(): Boolean {
-    val context = LocalContext.current
-    return remember {
-        runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
-    }
-}
+/** Settings' card corners (LineageOS 23): large on the outside of a group, small between its items. */
+private val OUTER = 20.dp
+private val INNER = 4.dp
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OwnerScreen(ui: OwnerUi, actions: OwnerActions) {
     val snackbar = remember { SnackbarHostState() }
@@ -200,23 +204,28 @@ fun OwnerScreen(ui: OwnerUi, actions: OwnerActions) {
     val base = MaterialTheme.typography
     val typography = remember(base) { deviceTypography(context, base) }
     MaterialTheme(colorScheme = MaterialTheme.colorScheme, typography = typography, shapes = MaterialTheme.shapes) {
+        // Settings' page colour behind, its item colour on the cards (measured on LineageOS 23).
+        val page = MaterialTheme.colorScheme.surfaceContainer
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("Open Carrier Data") },
+                    // Settings' positions: the back circle and the title sit further in than Material's defaults.
+                    title = { Text("Open Carrier Data", Modifier.padding(start = 12.dp)) },
                     navigationIcon = {
                         // Settings' own back button: the arrow in a tonal circle.
                         IconButton(
                             onClick = actions.back,
-                            colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                            modifier = Modifier.padding(start = 16.dp),
+                            colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceBright),
                         ) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                     },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = page, scrolledContainerColor = page),
                 )
             },
             snackbarHost = { SnackbarHost(snackbar) },
-            containerColor = MaterialTheme.colorScheme.surface,
+            containerColor = page,
         ) { padding ->
             Column(
                 Modifier
@@ -230,6 +239,15 @@ fun OwnerScreen(ui: OwnerUi, actions: OwnerActions) {
                 if (ui.loaded) OwnerContent(ui, options, { options = it }, actions, reduced)
             }
         }
+    }
+}
+
+/** Animations off in the system (Remove animations, or the animator scale at 0): the screen then moves nothing. */
+@Composable
+private fun reducedMotion(): Boolean {
+    val context = LocalContext.current
+    return remember {
+        runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }.getOrDefault(false)
     }
 }
 
@@ -271,89 +289,80 @@ private fun deviceTypography(context: Context, base: Typography): Typography {
     )
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun OwnerContent(ui: OwnerUi, options: TestOptions, setOptions: (TestOptions) -> Unit, actions: OwnerActions, reduced: Boolean) {
     // The subscription list names the SIMs as Settings does; without it, the runner's own list.
     val sims = ui.simViews ?: ui.sims?.map { SimView(it.slot, it.subId, it.identity.mccmnc, it.name) }
     val ladders = sims.orEmpty().associateWith { Ladders.of(ui.state, it, ui.calls) }
-    val status = StatusSentence.of(ui.state, sims, ladders.values.flatten(), running = ui.stepsToGo > 0)
-    StatusHeader(ui, sims, status.headline, options, actions)
+    val running = ui.stepsToGo > 0
+    // The SIM of the run under way: its record has no end yet.
+    val testing = ui.state.runs.lastOrNull { it.endedMs == null }?.sim?.let { key -> sims.orEmpty().firstOrNull { it.owns(key) } }
+    val status = StatusSentence.of(ui.state, sims, ladders.values.flatten(), running = running, testing = testing)
+    StatusHeader(ui, sims, status, options, actions)
 
-    for ((sim, rows) in ladders) {
-        Section(if (ladders.size > 1) "Calls and messages on ${sim.name}" else "Calls and messages") {
-            Text(
-                "Each row shows how far it got: ${Rung.entries.joinToString(", ") { it.plain.lowercase() }}.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 4.dp),
-            )
-            rows.forEach { ladder ->
-                key(sim.slot, ladder.feature) { FeatureRow(ladder, reduced) }
+    // Before the first check and without a SIM there is nothing to show yet: the headline and Test now are the page.
+    if (status.kind != StatusKind.NO_SIM && status.kind != StatusKind.NOT_CHECKED) {
+        val two = ladders.size > 1
+        for ((sim, rows) in ladders) {
+            SectionTitle(if (two) "Calls and messages on ${sim.name}" else "Calls and messages")
+            Group {
+                rows.filterNot { it.unsupported }.forEach { ladder ->
+                    item { key(sim.slot, ladder.feature) { FeatureRow(ladder, reduced) } }
+                }
+            }
+            Ladders.unsupportedLine(rows)?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+                )
+            }
+        }
+        for (sim in sims.orEmpty()) {
+            SectionTitle(if (two) "Mobile data on ${sim.name}" else "Mobile data")
+            Group {
+                item { Summary(MobileDataLine.of(ui.state, sim, ui.apnCandidates[sim.subId]), Modifier.padding(16.dp)) }
             }
         }
     }
-    for (sim in sims.orEmpty()) {
-        Section(if (sims.orEmpty().size > 1) "Mobile data on ${sim.name}" else "Mobile data") {
-            Text(MobileDataLine.of(ui.state, sim, ui.apnCandidates[sim.subId]), style = MaterialTheme.typography.bodyLarge)
-        }
-    }
 
-    Spacer(Modifier.padding(top = 20.dp))
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .heightIn(min = 56.dp)
-            .toggleable(value = ui.state.scheduleOn, role = Role.Switch, onValueChange = actions.setSchedule)
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    var open by rememberSaveable { mutableStateOf(false) }
+    Spacer(Modifier.padding(top = 24.dp))
+    Group {
+        item {
+            SwitchRow("Test automatically", ScheduleLine.of(ui.state.scheduleOn), ui.state.scheduleOn, actions.setSchedule)
+        }
+        item { DetailsRow(open, reduced) { open = it } }
+    }
+    AnimatedVisibility(
+        visible = open,
+        enter = if (reduced) EnterTransition.None else expandVertically(tween(220)) + fadeIn(tween(220)),
+        exit = if (reduced) ExitTransition.None else shrinkVertically(tween(200)) + fadeOut(tween(160)),
     ) {
-        Column(Modifier.weight(1f)) {
-            SectionTitle("Automatic checks")
-            Text(
-                ScheduleLine.of(ui.state.scheduleOn, ui.scheduleRegistered),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(Modifier.width(16.dp))
-        Switch(checked = ui.state.scheduleOn, onCheckedChange = null)
+        Column(Modifier.fillMaxWidth()) { DetailsContent(ui, options, setOptions, actions) }
     }
-
-    Section("Carrier data") {
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            val release = ui.state.release
-            Text(
-                release?.tag?.removePrefix("data-")?.let { "Open Carrier Data $it" } ?: "Open Carrier Data 2026.10, built in",
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.align(Alignment.CenterVertically),
-            )
-            OutlinedButton(onClick = actions.pull) { Text("Check for update") }
-        }
-    }
-
-    DetailsSection(ui, options, setOptions, actions, reduced)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StatusHeader(ui: OwnerUi, sims: List<SimView>?, headline: String, options: TestOptions, actions: OwnerActions) {
+private fun StatusHeader(ui: OwnerUi, sims: List<SimView>?, status: Status, options: TestOptions, actions: OwnerActions) {
     val context = LocalContext.current
     val zone = remember { ZoneId.systemDefault() }
     val timeFormat = remember { android.text.format.DateFormat.getTimeFormat(context) }
     val dateFormat = remember { android.text.format.DateFormat.getMediumDateFormat(context) }
-    val checked = CheckedLine.of(
-        ui.state, sims, ui.stepsToGo, System.currentTimeMillis(), zone,
+    val line = CheckedLine.of(
+        status, ui.state, sims, ui.stepsToGo, System.currentTimeMillis(), zone,
         time = { timeFormat.format(Date(it)) },
         date = { dateFormat.format(Date(it)) },
+        scheduleOn = ui.state.scheduleOn,
+        canTest = ui.canTest,
     )
     Text(
-        headline,
+        status.headline,
         style = MaterialTheme.typography.headlineSmall,
-        color = MaterialTheme.colorScheme.onSurface,
+        // Only a change or a problem takes its colour; the ladder carries the rest.
+        color = if (status.tone == Tone.CHANGED || status.tone == Tone.PROBLEM) StatusColors.text(status.tone) else MaterialTheme.colorScheme.onSurface,
         modifier = Modifier
             .padding(top = 8.dp)
             .semantics {
@@ -361,92 +370,158 @@ private fun StatusHeader(ui: OwnerUi, sims: List<SimView>?, headline: String, op
                 liveRegion = LiveRegionMode.Polite
             },
     )
-    Text(
-        checked,
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 8.dp),
-    )
-    val gate = ui.gate
-    val notes = buildList {
-        if (ui.state.stop != null) {
-            add(Tone.PROBLEM to "Open Carrier Data stopped changing settings because something didn't go back as expected. Read the log in Details, then allow changes again.")
-        }
-        if (gate != null && !gate.canWrite) {
-            add(
-                Tone.NEUTRAL to if (!gate.ownerPhone) {
-                    "This phone can only be checked here; Open Carrier Data changes settings only on the owner's phone."
-                } else {
-                    "Tests can't run right now: Open Carrier Data has no system access. Details says why."
-                },
-            )
-        }
-        if (!ui.state.rebootCleared) add(Tone.NEUTRAL to "Changes wait for the first-use check in Details.")
+    line?.let {
+        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
     }
-    notes.forEach { (tone, text) ->
+    HeaderNotes.of(ui.state, ui.gate?.canWrite, ui.gate?.ownerPhone).forEach { (tone, text) ->
         Text(text, style = MaterialTheme.typography.bodyMedium, color = StatusColors.text(tone), modifier = Modifier.padding(top = 8.dp))
     }
-    FlowRow(
-        Modifier.padding(top = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Button(onClick = { actions.testNow(options) }, enabled = ui.canTest) { Text("Test now") }
-        if (ui.state.anyLive) OutlinedButton(onClick = actions.revertAll) { Text("Revert all") }
-        if (ui.state.stop != null) OutlinedButton(onClick = actions.clearStop) { Text("Allow changes again") }
+    // At most one filled button: the action the state calls for.
+    val running = ui.stepsToGo > 0
+    val paused = ui.state.stop != null
+    val undo = ui.state.anyLive && !running && !paused
+    val test = ui.canTest
+    if (running || paused || undo || test) {
+        FlowRow(
+            Modifier.padding(top = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            when {
+                running -> OutlinedButton(onClick = actions.stopTest) { Text("Stop test") }
+                paused -> Button(onClick = actions.clearStop) { Text("Resume changes") }
+                else -> {
+                    if (undo) Button(onClick = actions.revertAll) { Text("Undo changes") }
+                    if (test) FilledTonalButton(onClick = { actions.testNow(options) }) { Text("Test now") }
+                }
+            }
+        }
     }
 }
 
+/** A section's title above its card, in Settings' style and inset. */
 @Composable
-private fun SectionTitle(title: String, modifier: Modifier = Modifier) {
+private fun SectionTitle(title: String) {
     Text(
         title,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
-        modifier = modifier.semantics { heading() },
+        modifier = Modifier
+            .padding(start = 16.dp, end = 16.dp, top = 28.dp, bottom = 8.dp)
+            .semantics { heading() },
     )
 }
 
-/** A Settings-like open section: a plain heading and its content, set apart by space only. */
+/** The items of one card group, as Settings draws them. */
+private class GroupScope {
+    val items = mutableListOf<@Composable () -> Unit>()
+    fun item(content: @Composable () -> Unit) {
+        items += content
+    }
+}
+
+/** Settings' card group: items 2dp apart in the item colour, larger corners on the outside. */
 @Composable
-private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(top = 28.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        SectionTitle(title, Modifier.padding(bottom = 4.dp))
-        content()
+private fun Group(build: GroupScope.() -> Unit) {
+    val items = GroupScope().apply(build).items
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        items.forEachIndexed { i, content ->
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(groupShape(i, items.size))
+                    .background(MaterialTheme.colorScheme.surfaceBright),
+            ) { content() }
+        }
+    }
+}
+
+private fun groupShape(index: Int, count: Int): Shape {
+    val top: Dp = if (index == 0) OUTER else INNER
+    val bottom: Dp = if (index == count - 1) OUTER else INNER
+    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
+}
+
+@Composable
+private fun Summary(text: String, modifier: Modifier = Modifier) {
+    Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
+}
+
+@Composable
+private fun Title(text: String, modifier: Modifier = Modifier) {
+    Text(text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface, modifier = modifier)
+}
+
+/** A Settings switch row: title, summary, the switch at the end; the whole row toggles. */
+@Composable
+private fun SwitchRow(title: String, summary: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 72.dp)
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Title(title)
+            summary?.let { Summary(it) }
+        }
+        Spacer(Modifier.width(16.dp))
+        Switch(checked = checked, onCheckedChange = null)
+    }
+}
+
+/** A full-width tool row: title and an optional summary; the whole row is the button. */
+@Composable
+private fun ToolRow(title: String, summary: String? = null, enabled: Boolean = true, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+        )
+        summary?.let { Summary(it) }
     }
 }
 
 /**
- * One feature: its name, then the ladder with the status beside it (under
- * it at large font sizes, where the ladder also grows). TalkBack reads the
- * row as one sentence.
+ * One feature as a Settings list item: the name, the status under it, and
+ * the ladder at the end, so the ladders of all rows form one column. At large
+ * font sizes the ladder goes under the status and grows with the text.
+ * TalkBack reads the row as one sentence.
  */
 @Composable
 private fun FeatureRow(ladder: FeatureLadder, reduced: Boolean) {
     val fontScale = LocalDensity.current.fontScale
     val stacked = fontScale >= 1.3f
     val scale = fontScale.coerceIn(1f, 1.6f)
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clearAndSetSemantics { contentDescription = ladder.description }
-            .padding(vertical = 8.dp),
-    ) {
-        Text(ladder.feature.label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-        val status: @Composable () -> Unit = {
-            Text(ladder.text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val modifier = Modifier
+        .fillMaxWidth()
+        .heightIn(min = 72.dp)
+        .clearAndSetSemantics { contentDescription = ladder.description }
+        .padding(horizontal = 16.dp, vertical = 12.dp)
+    if (stacked) {
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Title(ladder.feature.label)
+            Summary(ladder.text)
+            EvidenceLadder(ladder, reduced, scale)
         }
-        if (stacked) {
-            Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                EvidenceLadder(ladder, reduced, scale)
-                status()
+    } else {
+        Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Title(ladder.feature.label)
+                Summary(ladder.text)
             }
-        } else {
-            Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                EvidenceLadder(ladder, reduced, scale)
-                Spacer(Modifier.width(12.dp))
-                status()
-            }
+            Spacer(Modifier.width(16.dp))
+            EvidenceLadder(ladder, reduced, scale)
         }
     }
 }
@@ -454,15 +529,16 @@ private fun FeatureRow(ladder: FeatureLadder, reduced: Boolean) {
 /**
  * The evidence ladder: one rung per kind of evidence, joined by segments,
  * filled in the status colour as far as the evidence goes and hollow after.
- * A feature that cannot work gets one grey cross. It fills once when a new
- * result comes in while the screen is open, never on load, and not at all
- * with animations off.
+ * Every ladder takes the width of four rungs, so a three-rung ladder lines up
+ * with the others. A feature that cannot work now gets one grey cross. It
+ * fills once when a new result comes in while the screen is open, never on
+ * load, and not at all with animations off.
  */
 @Composable
 private fun EvidenceLadder(ladder: FeatureLadder, reduced: Boolean, scale: Float = 1f) {
     val fill = StatusColors.graphic(ladder.tone)
+    // The unfilled rungs and track in outline: at least 3:1 against the card.
     val hollow = MaterialTheme.colorScheme.outline
-    val track = MaterialTheme.colorScheme.outlineVariant
     val target = ladder.reached.toFloat()
     val progress = remember { Animatable(target) }
     LaunchedEffect(target) {
@@ -487,7 +563,7 @@ private fun EvidenceLadder(ladder: FeatureLadder, reduced: Boolean, scale: Float
         val n = ladder.rungs.size
         for (i in 0 until n - 1) {
             val start = cx(i) + dot / 2
-            drawLine(track, Offset(start, cy), Offset(start + gap, cy), stroke)
+            drawLine(hollow, Offset(start, cy), Offset(start + gap, cy), stroke)
             val f = (p - (i + 1)).coerceIn(0f, 1f)
             if (f > 0f) drawLine(fill, Offset(start, cy), Offset(start + gap * f, cy), stroke)
         }
@@ -500,37 +576,27 @@ private fun EvidenceLadder(ladder: FeatureLadder, reduced: Boolean, scale: Float
     }
 }
 
-/** Details: closed by default; the chevron turns once on each toggle. */
+/** "Details" with its chevron: closed by default; TalkBack offers expand and collapse. */
 @Composable
-private fun DetailsSection(ui: OwnerUi, options: TestOptions, setOptions: (TestOptions) -> Unit, actions: OwnerActions, reduced: Boolean) {
-    var open by rememberSaveable { mutableStateOf(false) }
+private fun DetailsRow(open: Boolean, reduced: Boolean, setOpen: (Boolean) -> Unit) {
     val turn by animateFloatAsState(if (open) 180f else 0f, if (reduced) snap() else tween(200), label = "chevron")
-    Spacer(Modifier.padding(top = 20.dp))
     Row(
         Modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
-            .clickable(onClickLabel = if (open) "Hide details" else "Show details", role = Role.Button) { open = !open }
-            .semantics { stateDescription = if (open) "Expanded" else "Collapsed" }
-            .padding(vertical = 8.dp),
+            .clickable { setOpen(!open) }
+            .semantics {
+                if (open) {
+                    collapse { setOpen(false); true }
+                } else {
+                    expand { setOpen(true); true }
+                }
+            }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            SectionTitle("Details")
-            Text(
-                "Access, tests, report and log",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        Title("Details", Modifier.weight(1f))
         Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, modifier = Modifier.rotate(turn))
-    }
-    AnimatedVisibility(
-        visible = open,
-        enter = if (reduced) EnterTransition.None else expandVertically(tween(220)) + fadeIn(tween(220)),
-        exit = if (reduced) ExitTransition.None else shrinkVertically(tween(200)) + fadeOut(tween(160)),
-    ) {
-        Column(Modifier.fillMaxWidth()) { DetailsContent(ui, options, setOptions, actions) }
     }
 }
 
@@ -539,199 +605,125 @@ private fun DetailsSection(ui: OwnerUi, options: TestOptions, setOptions: (TestO
 private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestOptions) -> Unit, actions: OwnerActions) {
     val gate = ui.gate
     val state = ui.state
-    val dateTime = remember { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT) }
-    DetailBlock("Access") {
-        if (gate == null) {
-            Line("Reading…")
-        } else {
-            Line("Route: ${gate.route?.plain ?: "none"}")
-            Line(
-                "Privileged system app: " + when {
-                    !gate.privilegedGranted -> "no"
-                    gate.overrideApi == true -> "yes, permissions granted, overrideConfig reachable"
-                    else -> "permissions granted, but overrideConfig is not reachable"
-                },
-            )
-            // Shizuku is only the fallback when the privileged permissions are missing.
-            if (!gate.privilegedGranted) {
-                Line("Shizuku: ${if (!gate.shizukuRunning) "not running" else "running as ${if (gate.shizukuRoot) "root" else "shell"}${if (gate.shizukuPermitted) "" else ", not granted"}"}")
-            }
-            Line("Build type: ${gate.buildType}")
-            Line("Writes: ${if (gate.canWrite) "allowed" else "refused: ${gate.reason}"}")
-        }
-        val sims = ui.sims
-        Line(
-            "SIMs: " + when {
-                sims == null -> "reading…"
-                sims.isEmpty() -> "none, nothing to test"
-                else -> sims.joinToString { "slot ${it.slot + 1} ${it.name} (${it.identity.mccmnc})" }
-            },
-        )
-        Line("Data: ${state.release.line()}")
-        Line("Background: ${ui.weekly}")
-        Line("Last reconcile: ${state.lastCleanup ?: "not run yet"}")
-        state.stop?.let { Line("Stopped: $it", StatusColors.text(Tone.PROBLEM)) }
-        Buttons {
-            if (gate != null && !gate.privilegedGranted && gate.shizukuRunning && !gate.shizukuPermitted) {
-                OutlinedButton(onClick = actions.grantShizuku) { Text("Grant Shizuku access") }
-            }
-            if (state.stop != null) OutlinedButton(onClick = actions.clearStop) { Text("Allow changes again") }
+    val context = LocalContext.current
+    val zone = remember { ZoneId.systemDefault() }
+    val dateFormat = remember { android.text.format.DateFormat.getMediumDateFormat(context) }
+
+    SectionTitle("When you tap Test now")
+    Group {
+        item { SwitchRow("Also test switching features off", null, options.offs) { setOptions(options.copy(offs = it)) } }
+        item { SwitchRow("Include a call test", "2 minutes, you place the call", options.voice) { setOptions(options.copy(voice = it)) } }
+        item { SwitchRow("Test missing access point names", null, options.apns) { setOptions(options.copy(apns = it)) } }
+    }
+
+    SectionTitle("Tools")
+    Group {
+        item { ToolRow("Check without changing anything", onClick = actions.checkNow) }
+        item { ToolRow("Test calls", onClick = actions.openCheck) }
+        item { ToolRow("Show Wi-Fi calling details", ui.details?.joinToString("\n"), onClick = actions.readDetails) }
+        item { ToolRow("Remove leftovers", LeftoversLine.of(state.log, System.currentTimeMillis(), zone) { dateFormat.format(Date(it)) }, onClick = actions.cleanup) }
+        item {
+            ToolRow("Open report on GitHub", "Nothing is sent until you submit it", enabled = state.runs.any { it.features.isNotEmpty() }, onClick = actions.sendReport)
         }
     }
-    DetailBlock("Safety") {
-        Line(
-            "Tests and applies carrier settings on this phone. Never an emergency, e911, ECBM, WPS, TTY, RTT or iwlan key; never an " +
-                "emergency call; nothing changes in a call, in emergency callback mode, within 10 minutes of an emergency call, " +
-                "while roaming, or when the state cannot be read. Overrides are never persistent.",
-        )
-    }
-    if (!state.rebootCleared) {
-        DetailBlock("First use (round 25)") {
-            Line(
-                "1. Only after the S20 build's boot check, never together with another build change. " +
-                    "2. The first apply on the cable, with a lab --read before and after. " +
-                    "3. One override left live through a reboot must be gone afterwards; until then nothing is kept, " +
-                    "no off is tested and the night run changes nothing.",
-            )
-            Line("Check 3: ${if (state.rebootProbeAtMs != null) "override live; reboot now" else "not done"}")
-            Buttons {
-                OutlinedButton(onClick = actions.rebootProbe, enabled = gate?.canWrite == true && ui.sims?.isNotEmpty() == true && state.rebootProbeAtMs == null) {
-                    Text("Start check 3")
-                }
+
+    Spacer(Modifier.padding(top = 24.dp))
+    Group {
+        item {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+                    .padding(start = 16.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val tag = state.release?.tag?.removePrefix("data-") ?: ui.bundledTag
+                Title(if (tag != null) "Carrier data $tag" else "Carrier data", Modifier.weight(1f))
+                TextButton(onClick = actions.pull) { Text("Check for update") }
             }
         }
     }
-    DetailBlock("Test options") {
-        Line("Run: ${if (ui.stepsToGo > 0) "${ui.stepsToGo} step(s) to go" else "idle"}")
-        CheckRow("Test the off values too (otherwise the night tries them, one at a time)", options.offs) { setOptions(options.copy(offs = it)) }
-        CheckRow("Voice check: I place a call myself while a voice feature is off (2 minutes)", options.voice) { setOptions(options.copy(voice = it)) }
-        CheckRow("Test Open Carrier Data's internet APN rows the phone lacks", options.apns) { setOptions(options.copy(apns = it)) }
-        Buttons {
-            OutlinedButton(onClick = { actions.testNow(options) }, enabled = ui.canTest && state.runs.isNotEmpty()) { Text("Test again") }
-        }
-    }
-    DetailBlock("Last test") {
-        state.lastResult?.let { Line("${dateTime.format(Date(it.atMs))}: ${it.text}") }
-        val run = state.runs.lastOrNull()
-        if (run == null) {
-            Line("No test yet.")
-        } else {
-            Line("${if (run.background) "Night run" else "Run"}: ${run.simName ?: "-"} ${run.sim?.mccmnc ?: ""}, ${run.releaseTag ?: ""}${run.note?.let { ", $it" } ?: ""}")
-            run.plan?.let { Line("Due: $it") }
-            run.features.forEach { f ->
-                Line(
-                    "${f.feature.label}: phone ${f.baseline.onOff()}, OCD ${f.ocd.value.onOff()}, best ${f.best.onOff()}" +
-                        (if (f.applied) ", applied" else "") + (f.refused?.let { ", refused: $it" } ?: "") +
-                        (f.method?.let { ", measured by $it${if (f.freshRegister == true) " (fresh REGISTER over LTE)" else ""}" } ?: "") +
-                        (if (f.restored == false) ", baseline NOT back in time" else "") +
-                        (f.bestWhy?.let { " ($it)" } ?: ""),
-                )
-            }
-            run.apns.forEach { Line("APN ${it.label}: ${it.status}${it.dataWorks?.let { w -> if (w) ", data works" else ", no data" } ?: ""}") }
-        }
-        val kept = state.overrides.filter { it.hold == Hold.KEPT }.map { "slot ${it.slot + 1} ${it.key}=${it.value}, kept for ${it.sim.label}${it.why?.let { w -> ": $w" } ?: ""}" } +
-            state.apns.filter { it.hold == Hold.KEPT }.map { "APN ${it.label} kept as the preferred APN" } +
-            state.overrides.filter { it.hold == Hold.TRIAL }.map { "slot ${it.slot + 1} ${it.key}=${it.value}, under test" } +
-            state.apns.filter { it.hold == Hold.TRIAL }.map { "APN ${it.label} under test" }
-        Line("Live values: ${if (kept.isEmpty()) "none, the phone runs its own carrier settings" else kept.joinToString("; ")}")
-    }
-    DetailBlock("Wi-Fi calling details") {
-        Line("From the IWLAN and QNS dumps; the device log is never read.")
-        ui.details?.forEach { Line(it) }
-        Buttons { OutlinedButton(onClick = actions.readDetails) { Text("Read Wi-Fi calling details") } }
-    }
-    DetailBlock("Report") {
-        Line("Opens the last test as a prefilled report on GitHub. You read it and send it yourself; the app sends nothing.")
-        Buttons { OutlinedButton(onClick = actions.sendReport, enabled = state.runs.any { it.features.isNotEmpty() }) { Text("Send report") } }
-    }
-    DetailBlock("Tools") {
-        Buttons {
-            OutlinedButton(onClick = actions.checkNow) { Text("Check without changing anything") }
-            OutlinedButton(onClick = actions.cleanup) { Text("Check for leftovers") }
-            OutlinedButton(onClick = actions.openCheck) { Text("Open the read-only check") }
-        }
-    }
-    DetailBlock("Log") {
-        val time = remember { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT) }
-        val entries = state.log.takeLast(100).reversed()
-        if (entries.isEmpty()) {
-            Line("Nothing logged yet.")
-        } else {
-            SelectionContainer {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 360.dp)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(8.dp))
-                        .verticalScroll(rememberScrollState())
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    entries.forEach {
-                        Text(
-                            "${time.format(Date(it.atMs))} ${it.kind}: ${it.text}",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
+
+    if (gate != null && !gate.canWrite) {
+        Spacer(Modifier.padding(top = 24.dp))
+        Group {
+            item {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Title("No system access: ${gate.plainReason ?: "unknown reason"}")
+                    if (!gate.privilegedGranted && gate.shizukuRunning && !gate.shizukuPermitted) {
+                        Button(onClick = actions.grantShizuku, modifier = Modifier.padding(top = 12.dp)) { Text("Grant Shizuku access") }
                     }
                 }
             }
         }
     }
+
+    if (!state.rebootCleared) {
+        SectionTitle("Restart check")
+        Group {
+            item {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Summary("Confirms a restart clears test settings. Until then, nothing is kept")
+                    if (state.rebootProbeAtMs != null) {
+                        Text("Now restart your phone", style = MaterialTheme.typography.bodyLarge, color = StatusColors.text(Tone.CHANGED), modifier = Modifier.padding(top = 8.dp))
+                    }
+                    OutlinedButton(
+                        onClick = actions.rebootProbe,
+                        enabled = gate?.canWrite == true && ui.sims?.isNotEmpty() == true && state.rebootProbeAtMs == null,
+                        modifier = Modifier.padding(top = 12.dp),
+                    ) { Text("Start restart check") }
+                }
+            }
+        }
+    }
+
+    SectionTitle("Safety")
+    Group {
+        item {
+            Summary(
+                "Never touches emergency calling. Nothing changes during a call, while roaming, or within 10 minutes of an emergency call. " +
+                    "Undo changes always brings back your phone's own settings",
+                Modifier.padding(16.dp),
+            )
+        }
+    }
+
+    SectionTitle("Log")
+    Group { item { Log(state) } }
 }
 
+/** The newest 20 entries inline, the rest behind "Show all"; selectable, so a line can be copied. */
 @Composable
-private fun DetailBlock(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Text(
-            title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(top = 12.dp, bottom = 2.dp).semantics { heading() },
-        )
-        content()
+private fun Log(state: io.github.open_carrier_data.check.owner.core.OwnerState) {
+    var all by rememberSaveable { mutableStateOf(false) }
+    val time = remember { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT) }
+    val newest = state.log.reversed()
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = if (newest.size > LOG_SHOWN && !all) 4.dp else 16.dp)) {
+        if (newest.isEmpty()) {
+            Summary("Nothing logged yet")
+        } else {
+            SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    (if (all) newest else newest.take(LOG_SHOWN)).forEach {
+                        Text(
+                            "${time.format(Date(it.atMs))} ${it.kind}: ${it.text}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            if (newest.size > LOG_SHOWN && !all) {
+                TextButton(onClick = { all = true }) { Text("Show all") }
+            }
+        }
     }
 }
 
-@Composable
-private fun Line(text: String, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
-    Text(text, style = MaterialTheme.typography.bodyMedium, color = color)
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun Buttons(content: @Composable () -> Unit) {
-    FlowRow(
-        Modifier.padding(top = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(0.dp),
-    ) { content() }
-}
-
-@Composable
-private fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .toggleable(value = checked, role = Role.Checkbox, onValueChange = onChange),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Checkbox(checked = checked, onCheckedChange = null)
-        Spacer(Modifier.width(12.dp))
-        Text(label, style = MaterialTheme.typography.bodyMedium)
-    }
-}
+private const val LOG_SHOWN = 20
 
 private val TestOptionsSaver = androidx.compose.runtime.saveable.listSaver<TestOptions, Boolean>(
     save = { listOf(it.offs, it.voice, it.apns) },
     restore = { TestOptions(it[0], it[1], it[2]) },
 )
-
-private fun Boolean?.onOff(): String = when (this) {
-    true -> "on"
-    false -> "off"
-    null -> "-"
-}

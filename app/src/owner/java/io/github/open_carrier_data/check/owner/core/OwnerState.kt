@@ -59,6 +59,13 @@ data class LiveApn(
     val tableHash: String? = null,
 )
 
+/**
+ * A change the owner undid ("Undo changes"): the night does not keep it again
+ * for that SIM. "Test now" clears the list, since the owner then asks for a test.
+ */
+@Serializable
+data class UndoneEntry(val sim: SimKey, val entry: String, val atMs: Long)
+
 /** The last finished check or test, one line, for the Settings entry and the owner screen. */
 @Serializable
 data class LastResult(val atMs: Long, val text: String, val changed: Boolean = false, val failed: Boolean = false)
@@ -174,6 +181,8 @@ data class OwnerState(
     val onOnlyUntilMs: Long? = null,
     /** The night (its local date) whose one change was made already. */
     val trialNight: String? = null,
+    /** What the owner undid; the night skips these entries for their SIM ([QuietPlan.plan]). */
+    val undone: List<UndoneEntry> = emptyList(),
 ) {
     val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
 

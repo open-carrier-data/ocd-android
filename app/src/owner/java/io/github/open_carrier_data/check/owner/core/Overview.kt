@@ -6,11 +6,14 @@ import java.time.temporal.ChronoUnit
 
 /*
  * The owner screen and the Settings entry in plain words (the redesign of
- * 2026-10-20): the status sentence at the top, one evidence ladder per
- * feature, and the lines for mobile data, the automatic checks and the last
- * check. Pure functions over the state the owner build keeps; the technical
- * record stays in the state, the screen's Details and the log, and nothing
- * here changes the phone.
+ * 2026-10-20 and its review): the headline at the top, one evidence ladder
+ * per feature, and the lines for mobile data and the automatic tests. Pure
+ * functions over the state the owner build keeps; the technical record stays
+ * in the state, the report and the log, and nothing here changes the phone.
+ *
+ * Vocabulary: "check" is read-only, "test" changes a setting for a while,
+ * "changes" are what Open Carrier Data keeps, and the way back is always
+ * "Undo changes". Mobile data uses Android's own "access point names".
  */
 
 /** One active SIM as the screen names it: the name Settings shows, and what ties it to the state's records. */
@@ -35,8 +38,10 @@ enum class Tone { WORKS, CHANGED, PROBLEM, NOT_POSSIBLE, NEUTRAL }
 
 /**
  * One feature's row: how far the evidence goes ([reached] of [rungs]), the
- * colour it takes, the status in plain words, and the same for TalkBack.
- * A feature that cannot work shows a single mark instead of a ladder.
+ * colour it takes and the status in plain words. A feature that cannot work
+ * now shows a single mark instead of a ladder ([notPossible]); one that never
+ * works on this phone ([unsupported]: the modem, the IMS stack) leaves the
+ * list for one footer line. [kept]: the value Open Carrier Data keeps, if any.
  */
 data class FeatureLadder(
     val feature: OwnerFeature,
@@ -44,11 +49,12 @@ data class FeatureLadder(
     val reached: Int,
     val tone: Tone,
     val text: String,
-    val spoken: String,
     val notPossible: Boolean = false,
+    val unsupported: Boolean = false,
+    val kept: Boolean? = null,
 ) {
-    /** The row's content description, for example "VoLTE: signed in, calls not tested yet". */
-    val description: String get() = "${feature.label}: $spoken"
+    /** The row for TalkBack, for example "VoLTE: signed in, calls untested, step 3 of 4". */
+    val description: String get() = "${feature.label}: ${text.replaceFirstChar { it.lowercase() }}, step $reached of ${rungs.size}"
 }
 
 object Ladders {
@@ -109,98 +115,145 @@ object Ladders {
         val callsTested = feature in CALL_TESTED && calls.any { it.feature == feature && (it.mccmnc == null || it.mccmnc == sim.mccmnc) }
         val reached = listOf(networkOffers, switchOn == true, signedIn, callsTested).take(rungs.size).takeWhile { it }.count()
 
-        fun ladder(tone: Tone, text: String, spoken: String) = FeatureLadder(feature, rungs, reached, tone, text, spoken)
-        fun notPossible(text: String, spoken: String) = FeatureLadder(feature, rungs, 0, Tone.NOT_POSSIBLE, text, spoken, notPossible = true)
+        fun ladder(tone: Tone, text: String) = FeatureLadder(feature, rungs, reached, tone, text, kept = kept)
+        fun notPossible(text: String) = FeatureLadder(feature, rungs, 0, Tone.NOT_POSSIBLE, text, notPossible = true, kept = kept)
 
         val worksText = when {
             rungs.size < Rung.entries.size -> "Signed in"
             callsTested -> "Works, calls tested"
-            else -> "Signed in, calls not tested yet"
-        }
-        val worksSpoken = when {
-            rungs.size < Rung.entries.size -> "signed in"
-            callsTested -> "signed in, calls tested"
-            else -> "signed in, calls not tested yet"
+            else -> "Signed in, calls untested"
         }
         return when {
-            staticReason != null -> {
-                val why = if (staticReason == "device_not_capable") "modem" else "software"
-                notPossible("Not possible on this phone ($why)", "not possible on this phone because of its $why")
-            }
-            trial -> ladder(Tone.CHANGED, "Being tested now", "being tested now")
-            kept == true && onWorks == false -> ladder(Tone.PROBLEM, "Switched on by Open Carrier Data, but not signed in", "switched on by Open Carrier Data, but not signed in")
-            kept == true -> ladder(Tone.CHANGED, "Switched on by Open Carrier Data", "switched on by Open Carrier Data, ${if (signedIn) worksSpoken else "not checked yet"}")
-            kept == false -> ladder(Tone.CHANGED, "Switched off by Open Carrier Data", "switched off by Open Carrier Data")
-            switchOn == true && onWorks == true -> ladder(Tone.WORKS, worksText, worksSpoken)
-            switchOn == true && onWorks == false -> ladder(Tone.PROBLEM, "Switched on, but not signed in", "switched on, but not signed in")
-            switchOn == true -> ladder(Tone.NEUTRAL, "Switched on, not checked yet", "switched on, not checked yet")
+            // The reason (modem or software) goes to the report and the log only.
+            staticReason != null -> FeatureLadder(feature, rungs, 0, Tone.NOT_POSSIBLE, "Not supported on this phone", notPossible = true, unsupported = true)
+            trial -> ladder(Tone.CHANGED, "Testing now")
+            kept == true && onWorks == false -> ladder(Tone.PROBLEM, "Switched on by Open Carrier Data, not signed in")
+            kept == true -> ladder(Tone.CHANGED, "Switched on by Open Carrier Data")
+            kept == false -> ladder(Tone.CHANGED, "Switched off by Open Carrier Data")
+            switchOn == true && onWorks == true -> ladder(Tone.WORKS, worksText)
+            switchOn == true && onWorks == false -> ladder(Tone.PROBLEM, "On, but not signed in")
+            switchOn == true -> ladder(Tone.NEUTRAL, "On, not checked yet")
             switchOn == false -> when {
-                onWorks == true -> ladder(Tone.NEUTRAL, "Off, works when switched on", "switched off, works when switched on")
-                onReason == NETWORK_BLOCK -> notPossible("Not offered by your network here", "not offered by your network here")
-                onReason == USER_SWITCH_BLOCK -> ladder(Tone.NEUTRAL, "Off in your call settings", "switched off in your call settings")
-                on?.works == false -> notPossible("Didn't sign in when tested", "switched off, it didn't sign in when tested")
-                onReason in NEEDS_WIFI -> ladder(Tone.NEUTRAL, "Off, tested when Wi-Fi is on", "switched off, tested when Wi-Fi is on")
-                else -> ladder(Tone.NEUTRAL, "Off, not tested yet", if (networkOffers) "network offers it, switched off, not tested yet" else "switched off, not tested yet")
+                onWorks == true -> ladder(Tone.NEUTRAL, "Off, works when switched on")
+                onReason == NETWORK_BLOCK -> notPossible("Not offered by your network")
+                onReason == USER_SWITCH_BLOCK -> ladder(Tone.NEUTRAL, "Off in your call settings")
+                on?.works == false -> notPossible("Didn't sign in when tested")
+                onReason in NEEDS_WIFI -> ladder(Tone.NEUTRAL, "Off, test needs Wi-Fi")
+                else -> ladder(Tone.NEUTRAL, "Off, not tested yet")
             }
-            else -> ladder(Tone.NEUTRAL, "Not checked yet", "not checked yet")
+            else -> ladder(Tone.NEUTRAL, "Not checked yet")
         }
+    }
+
+    /**
+     * The muted line after the rows for the features that never work on this
+     * phone, for example "Video calling and VoNR aren't supported on this
+     * phone"; null when there are none.
+     */
+    fun unsupportedLine(ladders: List<FeatureLadder>): String? {
+        val names = ladders.filter { it.unsupported }.map { it.feature.label }.distinct()
+        if (names.isEmpty()) return null
+        return "${joinAnd(names)} ${if (names.size == 1) "isn't" else "aren't"} supported on this phone"
     }
 }
 
-/** The sentence at the top of the screen and under the Settings entry, and the colour it means. */
-data class Status(val tone: Tone, val headline: String)
+/** Which of the headlines applies; the line under it and the buttons follow from it. */
+enum class StatusKind { NO_SIM, PAUSED, FAILED, RUNNING, KEPT_BROKEN, KEPT, OWN_NOT_SIGNED_IN, NOT_CHECKED, WORKS, SIGNED_IN }
+
+/** The headline at the top of the screen and under the Settings entry, and the colour it means. */
+data class Status(val tone: Tone, val headline: String, val kind: StatusKind)
 
 object StatusSentence {
     /**
-     * In this order: no SIM; a stop event; a failed check; a test running; the
-     * changes Open Carrier Data keeps; a feature the phone has on that is not
-     * signed in; nothing checked yet; else everything works. [sims] null: not
-     * readable (the SIM list is then not judged).
+     * In this order: no SIM; paused (a stop event); a failed test; a test
+     * running; a change Open Carrier Data keeps that isn't signed in; the
+     * changes it keeps; a feature the phone has on that isn't signed in;
+     * nothing checked yet; else everything works or is signed in. [sims]
+     * null: not readable (the SIM list is then not judged). [testing]: the
+     * SIM a running test is on, named only when 2 SIMs are active.
      */
-    fun of(state: OwnerState, sims: List<SimView>?, ladders: List<FeatureLadder>, running: Boolean = false): Status {
-        val kept = keptChanges(state)
-        val problems = ladders.filter { it.tone == Tone.PROBLEM }.map { it.feature.label }.distinct()
+    fun of(state: OwnerState, sims: List<SimView>?, ladders: List<FeatureLadder>, running: Boolean = false, testing: SimView? = null): Status {
+        val problems = ladders.filter { it.tone == Tone.PROBLEM }
+        val broken = problems.filter { it.kept == true }.map { it.feature.label }.distinct()
+        val own = problems.filter { it.kept == null }.map { it.feature.label }.distinct()
         val checked = state.runs.isNotEmpty() || state.entries.isNotEmpty() || state.lastResult != null
+        val keptAny = state.overrides.any { it.hold == Hold.KEPT } || state.apns.any { it.hold == Hold.KEPT }
         return when {
-            sims != null && sims.isEmpty() -> Status(Tone.NEUTRAL, "No SIM card, so there's nothing to check")
-            state.stop != null -> Status(Tone.PROBLEM, "A check failed — changes are paused")
-            state.lastResult?.failed == true -> Status(Tone.PROBLEM, "A check failed — reverted")
-            running || state.liveTrial() -> Status(Tone.CHANGED, "A test is running")
-            kept.isNotEmpty() -> Status(Tone.CHANGED, improvements(kept))
-            problems.isNotEmpty() -> Status(
+            sims != null && sims.isEmpty() -> Status(Tone.NEUTRAL, "No SIM card", StatusKind.NO_SIM)
+            state.stop != null -> Status(Tone.PROBLEM, "Changes paused: a setting didn't go back", StatusKind.PAUSED)
+            state.lastResult?.failed == true -> Status(Tone.PROBLEM, "A test failed — your own settings are back", StatusKind.FAILED)
+            running || state.liveTrial() -> {
+                val name = testing?.name?.takeIf { sims.orEmpty().size > 1 }
+                Status(Tone.CHANGED, if (name != null) "Testing $name" else "Testing", StatusKind.RUNNING)
+            }
+            broken.isNotEmpty() -> Status(
                 Tone.PROBLEM,
-                "Your phone uses its own settings, but ${and(problems)} ${if (problems.size == 1) "isn't" else "aren't"} signed in",
+                "Open Carrier Data switched on ${joinAnd(broken)}, but ${if (broken.size == 1) "it isn't" else "they aren't"} signed in",
+                StatusKind.KEPT_BROKEN,
             )
-            !checked -> Status(Tone.NEUTRAL, "Not checked yet")
+            keptAny -> Status(Tone.CHANGED, changed(state), StatusKind.KEPT)
+            own.isNotEmpty() -> Status(Tone.PROBLEM, "${joinAnd(own)} ${if (own.size == 1) "isn't" else "aren't"} signed in", StatusKind.OWN_NOT_SIGNED_IN)
+            !checked -> Status(Tone.NEUTRAL, "Not checked yet", StatusKind.NOT_CHECKED)
             // "Works" needs passed call tests (README, LB4); registration alone reads "signed in".
             ladders.filter { !it.notPossible && it.reached > 0 }.let { live ->
                 live.isNotEmpty() && live.all { it.reached >= it.rungs.size }
-            } -> Status(Tone.WORKS, "Everything works with your phone's own settings")
-            else -> Status(Tone.WORKS, "Everything is signed in with your phone's own settings")
+            } -> Status(Tone.WORKS, "All working on your phone's own settings", StatusKind.WORKS)
+            else -> Status(Tone.WORKS, "All signed in on your phone's own settings", StatusKind.SIGNED_IN)
         }
     }
 
-    /** What Open Carrier Data keeps on the phone, one plain item each. */
-    fun keptChanges(state: OwnerState): List<String> =
-        state.overrides.filter { it.hold == Hold.KEPT }.map { "${OwnerFeature.ofKey(it.key)?.label ?: it.key} switched ${if (it.value) "on" else "off"}" } +
-            state.apns.filter { it.hold == Hold.KEPT }.map { "mobile data entry added" }
-
-    private fun improvements(kept: List<String>): String {
-        val names = kept.distinct()
-        val count = "${kept.size} ${if (kept.size == 1) "improvement" else "improvements"} active"
-        return if (names.size <= 2) "$count: ${and(names)}" else count
+    /**
+     * "Open Carrier Data switched on VoLTE and Wi-Fi calling", "…switched on
+     * VoLTE and added an access point name", or with 3 or more items
+     * "Open Carrier Data changed 3 settings". The access point names count as
+     * one item.
+     */
+    private fun changed(state: OwnerState): String {
+        val kept = state.overrides.filter { it.hold == Hold.KEPT }
+        val on = kept.filter { it.value }.map { label(it.key) }.distinct()
+        val off = kept.filter { !it.value }.map { label(it.key) }.distinct()
+        val apns = state.apns.filter { it.hold == Hold.KEPT }.map { it.sim to it.apnKey }.distinct().size
+        val items = on.size + off.size + if (apns > 0) 1 else 0
+        if (items >= 3) return "Open Carrier Data changed $items settings"
+        val parts = listOfNotNull(
+            on.takeIf { it.isNotEmpty() }?.let { "switched on ${joinAnd(it)}" },
+            off.takeIf { it.isNotEmpty() }?.let { "switched off ${joinAnd(it)}" },
+            apns.takeIf { it > 0 }?.let { "added ${accessPointNames(it, article = true)}" },
+        )
+        return "Open Carrier Data ${joinAnd(parts)}"
     }
 
-    private fun and(items: List<String>): String = when (items.size) {
-        0 -> ""
-        1 -> items[0]
-        else -> items.dropLast(1).joinToString(", ") + " and " + items.last()
+    /**
+     * What Open Carrier Data keeps on the phone, one plain item each, for the
+     * notification: "VoLTE switched on", "2 access point names added".
+     */
+    fun keptChanges(state: OwnerState): List<String> {
+        val features = state.overrides.filter { it.hold == Hold.KEPT }.map { "${label(it.key)} switched ${if (it.value) "on" else "off"}" }.distinct()
+        val apns = state.apns.filter { it.hold == Hold.KEPT }.map { it.sim to it.apnKey }.distinct().size
+        return features + listOfNotNull(apns.takeIf { it > 0 }?.let { "${accessPointNames(it)} added" })
     }
+
+    private fun label(key: String): String = OwnerFeature.ofKey(key)?.label ?: key
 }
 
-/** The line under the status sentence: when the phone was last checked, and on which SIM. */
+/** "1 access point name" (or "an access point name"), "2 access point names". */
+internal fun accessPointNames(n: Int, article: Boolean = false): String = when {
+    n == 1 && article -> "an access point name"
+    n == 1 -> "1 access point name"
+    else -> "$n access point names"
+}
+
+/** "A", "A and B", "A, B and C". */
+internal fun joinAnd(items: List<String>): String = when (items.size) {
+    0 -> ""
+    1 -> items[0]
+    else -> items.dropLast(1).joinToString(", ") + " and " + items.last()
+}
+
+/** The line under the headline: what to do next, or when the phone was last checked. Null: no line. */
 object CheckedLine {
     fun of(
+        status: Status,
         state: OwnerState,
         sims: List<SimView>?,
         stepsToGo: Int,
@@ -208,13 +261,26 @@ object CheckedLine {
         zone: ZoneId,
         time: (Long) -> String,
         date: (Long) -> String,
-    ): String {
-        val names = sims.orEmpty().map { it.name }.distinct().let { if (it.size <= 1) it.firstOrNull() else it.dropLast(1).joinToString(", ") + " and " + it.last() }
-        if (sims != null && sims.isEmpty()) return "Put a SIM card in to check its calling and data settings."
-        if (stepsToGo > 0) return "Testing${names?.let { " on $it" } ?: ""}, $stepsToGo ${if (stepsToGo == 1) "step" else "steps"} to go."
+        scheduleOn: Boolean,
+        canTest: Boolean,
+    ): String? {
         val last = listOfNotNull(state.lastCheckAtMs, state.lastResult?.atMs, state.runs.lastOrNull()?.endedMs).maxOrNull()
-            ?: return "Open Carrier Data checks on its own at night. Tap Test now to check right away."
-        return "Checked ${whenWord(last, nowMs, zone, time, date)}${names?.let { " on $it" } ?: ""}."
+        val checked = last?.let { "Checked ${whenWord(it, nowMs, zone, time, date)}" }
+        return when {
+            status.kind == StatusKind.NO_SIM -> "Insert a SIM card to check it"
+            stepsToGo > 0 -> "$stepsToGo ${if (stepsToGo == 1) "step" else "steps"} to go"
+            status.kind == StatusKind.NOT_CHECKED -> when {
+                !canTest -> null
+                scheduleOn -> "Tap Test now, or wait until tonight"
+                else -> "Tap Test now to start"
+            }
+            status.kind == StatusKind.FAILED -> if (scheduleOn) "Nothing to do. It tries again tonight" else "Nothing to do"
+            status.kind == StatusKind.KEPT_BROKEN -> "Tap Undo changes to go back"
+            status.kind == StatusKind.OWN_NOT_SIGNED_IN && canTest && checked != null -> "$checked. Tap Test now to look for a fix"
+            checked == null -> null
+            sims.orEmpty().size > 1 -> "$checked on ${joinAnd(sims.orEmpty().map { it.name }.distinct())}"
+            else -> checked
+        }
     }
 
     /** "today at 1:41 PM", "last night at 3:12 AM", "tonight at 3:12 AM", "yesterday at …", or the date. */
@@ -234,11 +300,24 @@ object CheckedLine {
     private const val NIGHT_ENDS = 6
 }
 
-/** The "Mobile data" line: OCD's internet entries for the SIM, against the phone's APN list. */
+/** The coloured notes under the headline line, each with its tone. */
+object HeaderNotes {
+    /** [canWrite], [ownerPhone]: the access gate; null while it is read. */
+    fun of(state: OwnerState, canWrite: Boolean?, ownerPhone: Boolean?): List<Pair<Tone, String>> = buildList {
+        // The boot pass does not revert a leftover while paused (every write path checks the stop flag), so a restart alone does not clear it.
+        if (state.stop != null) add(Tone.PROBLEM to "See the log in Details before resuming")
+        if (canWrite == false) {
+            add(Tone.NEUTRAL to if (ownerPhone == false) "This phone can be checked, not changed" else "Tests can't run: no system access. See Details")
+        }
+        if (!state.rebootCleared) add(Tone.NEUTRAL to "Nothing is kept until the restart check in Details is done")
+    }
+}
+
+/** The "Mobile data" line: OCD's access point names for the SIM, against the phone's list. */
 object MobileDataLine {
     private val ON_PHONE = setOf("present", OwnerRunner.SAME_AS_PHONE_ROW)
 
-    /** [candidates]: how many entries OCD's pulled release has for the SIM ([QuietPlan.apnCandidates]); null when not known. */
+    /** [candidates]: how many OCD's pulled release has for the SIM ([QuietPlan.apnCandidates]); null when not known. */
     fun of(state: OwnerState, sim: SimView, candidates: Int? = null): String {
         val records = state.entries.filter { sim.owns(it.sim) && it.entry.startsWith(EntryRecord.APN + ":") }
         val statuses: Map<String, String> = if (records.isNotEmpty()) {
@@ -252,39 +331,49 @@ object MobileDataLine {
         val onPhone = statuses.count { (key, status) -> key !in added && status in ON_PHONE }
         val untested = total - onPhone - added.size
         return when {
-            total == 0 && candidates == 0 -> "Open Carrier Data has no entries for this SIM."
-            total == 0 -> "Not checked yet. Test now checks them too."
+            total == 0 && candidates == 0 -> "No access point names for this SIM"
+            total == 0 -> "Not checked yet"
             added.isNotEmpty() -> buildString {
-                append(entries(added.size)).append(" added by Open Carrier Data.")
-                if (onPhone > 0) append(" ").append(if (onPhone == 1) "1 more is" else "$onPhone more are").append(" already on your phone.")
-                if (untested > 0) append(" ").append(notTested(untested))
+                append("Open Carrier Data added ").append(accessPointNames(added.size, article = true))
+                if (onPhone > 0) append(". ").append(onPhone).append(if (onPhone == 1) " was" else " were").append(" already on your phone")
+                if (untested > 0) append(", ").append(untested).append(" not tested yet")
             }
-            untested == 0 && total == 1 -> "The Open Carrier Data entry is already on your phone."
-            untested == 0 -> "All $total Open Carrier Data entries are already on your phone."
-            onPhone == 0 -> "${entries(total).replaceFirstChar { it.uppercase() }} from Open Carrier Data, not tested yet."
-            else -> "$onPhone of $total Open Carrier Data entries are already on your phone. ${notTested(untested)}"
+            untested == 0 && total == 1 -> "The access point name is on your phone"
+            untested == 0 -> "All $total access point names are on your phone"
+            onPhone == 0 -> "${accessPointNames(total)}, not tested yet"
+            else -> "$onPhone of $total access point names are on your phone, $untested not tested yet"
         }
     }
-
-    private fun entries(n: Int) = if (n == 1) "1 entry" else "$n entries"
-    private fun notTested(n: Int) = if (n == 1) "The other one hasn't been tested yet." else "The other $n haven't been tested yet."
 }
 
-/** The "Automatic checks" line. */
-object ScheduleLine {
-    fun of(on: Boolean, registered: Boolean): String = when {
-        !on -> "Off. Open Carrier Data checks only when you tap Test now."
-        !registered -> "Starting up. Checks quietly at night while charging."
-        else -> "Checks quietly at night while charging. Next check: tonight."
+/** The summary of "Remove leftovers": the last cleanup pass, from the log ("None found today", "Removed 1 today"). */
+object LeftoversLine {
+    private val TRIALS = Regex("(\\d+) leftover trial")
+
+    fun of(log: List<LogEvent>, nowMs: Long, zone: ZoneId, date: (Long) -> String): String {
+        val last = log.lastOrNull { it.kind == "cleanup" } ?: return "Not run yet"
+        val day = CheckedLine.whenWord(last.atMs, nowMs, zone, { "" }, date).substringBefore(" at ").let { if (it == "tonight" || it == "last night") "today" else it }
+        val text = last.text
+        val removed = TRIALS.findAll(text).sumOf { it.groupValues[1].toInt() } + Regex("APN trial [^;]*: removed").findAll(text).count()
+        return when {
+            "refused" in text || "waits" in text || "FAILED" in text -> "Not finished $day. See the log"
+            removed > 0 -> "Removed $removed $day"
+            else -> "None found $day"
+        }
     }
 }
 
-/** The Settings entry's summary: the screen's status sentence. */
+/** The summary of the "Test automatically" switch. */
+object ScheduleLine {
+    fun of(on: Boolean): String = if (on) "At night while charging; keeps what works better" else "Only when you tap Test now"
+}
+
+/** The Settings entry's summary: the screen's headline, built with the call tests as on the screen. */
 object SettingsSummary {
     fun line(state: OwnerState, privileged: Boolean, sims: List<SimView>?, calls: List<CallsTested> = emptyList()): String {
         val ladders = sims.orEmpty().flatMap { Ladders.of(state, it, calls) }
         val headline = StatusSentence.of(state, sims, ladders).headline
-        return if (privileged) headline else "$headline. No system access"
+        return if (privileged) headline else "$headline. Can't change settings"
     }
 }
 

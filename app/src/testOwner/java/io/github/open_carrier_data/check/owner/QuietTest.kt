@@ -24,6 +24,7 @@ import io.github.open_carrier_data.check.owner.core.ServerSighting
 import io.github.open_carrier_data.check.owner.core.ServerStart
 import io.github.open_carrier_data.check.owner.core.SimCheck
 import io.github.open_carrier_data.check.owner.core.TestBasis
+import io.github.open_carrier_data.check.owner.core.UndoneEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -151,6 +152,17 @@ class QuietTest {
     }
 
     @Test
+    fun `a change the owner undid is not planned again for that SIM`() {
+        val old = basis.copy(app = "0.3.0-owner(3)/2/2")
+        val records = changes.map { record(it, now - 3 * day, b = old) }
+        val undone = listOf(UndoneEntry(sim.key, "volte:on", now - day))
+        val plan = QuietPlan.plan(listOf(check()), records, basis, now, known = setOf(sim.key), undone = undone)
+        assertTrue(plan.line, plan.entries.none { it.entry == "volte:on" })
+        val other = listOf(UndoneEntry(sim.key.copy(subId = 99), "volte:on", now - day))
+        assertTrue("another SIM's undo does not count", QuietPlan.plan(listOf(check()), records, basis, now, known = setOf(sim.key), undone = other).entries.any { it.entry == "volte:on" })
+    }
+
+    @Test
     fun `two failures in a row pause an entry for four weeks`() {
         val records = changes.map { record(it, now - 20 * day) }.map { if (it.entry == "volte:on") it.copy(works = null, failures = 2, atMs = now - 2 * day) else it }
         val plan = QuietPlan.plan(listOf(check()), records, basis, now, known = setOf(sim.key))
@@ -182,12 +194,18 @@ class QuietTest {
         assertNull("a re-apply after boot is routine", Notices.of(OwnerState(overrides = listOf(keep)), OwnerState(overrides = listOf(keep.copy(sinceMs = now + 1)))))
         val added = Notices.of(OwnerState(), OwnerState(overrides = listOf(keep)))!!
         assertFalse(added.failed)
-        assertEquals("VoLTE on kept on slot 1", added.text)
-        assertEquals("VoLTE back to the phone's own value on slot 1", Notices.of(OwnerState(overrides = listOf(keep)), OwnerState())!!.text)
+        assertEquals("Carrier settings changed", added.title)
+        assertEquals("VoLTE switched on", added.text)
+        assertEquals("VoLTE back to your own setting", Notices.of(OwnerState(overrides = listOf(keep)), OwnerState())!!.text)
         val stopped = Notices.of(OwnerState(), OwnerState(stop = "revert_not_proven on slot 0"))!!
         assertTrue(stopped.failed)
-        val failed = Notices.of(OwnerState(), OwnerState(entries = listOf(record("volte:on", now, works = null, failures = 1))))!!
-        assertTrue(failed.text, "volte:on did not finish cleanly" in failed.text)
+        assertEquals("Changes paused: a setting didn't go back", stopped.title)
+        val after = OwnerState(entries = listOf(record("volte:on", now, works = null, failures = 1)))
+        val failed = Notices.of(OwnerState(), after)!!
+        assertEquals("A test failed — your own settings are back", failed.title)
+        assertEquals("the plain feature name, never the entry key", "VoLTE", failed.text)
+        assertTrue("the run's record keeps the technical line", Notices.failures(OwnerState(), after).single().startsWith("volte:on did not finish cleanly"))
+        assertEquals("VoLTE switched on, 2 access point names added", Notices.changed(listOf("VoLTE switched on", "access point name added", "access point name added")).text)
     }
 
     @Test

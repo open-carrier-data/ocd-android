@@ -760,6 +760,12 @@ class OwnerRunner(
     /** One-tap revert-all: every override of every slot with a SIM, and every APN row. Waits for a call to end. */
     suspend fun revertAll(sims: List<OwnerSim>): String {
         val notes = mutableListOf<String>()
+        // The owner's undo is remembered: the night does not keep the same values again for these SIMs.
+        store.update { s ->
+            val undone = s.overrides.filter { it.hold == Hold.KEPT }.mapNotNull { o -> OwnerFeature.ofKey(o.key)?.let { UndoneEntry(o.sim, QuietPlan.entry(it, o.value), phone.nowMs()) } } +
+                s.apns.filter { it.hold == Hold.KEPT }.map { UndoneEntry(it.sim, QuietPlan.apnEntry(it.apnKey), phone.nowMs()) }
+            s.copy(undone = (s.undone.filterNot { u -> undone.any { it.sim == u.sim && it.entry == u.entry } } + undone).takeLast(MAX_UNDONE))
+        }
         if (store.read().wifiOffSinceMs != null) {
             store.update { it.copy(wifiOffSinceMs = null) }
             notes += "an old Wi-Fi-off record was dropped"
@@ -812,6 +818,9 @@ class OwnerRunner(
 
     companion object {
         const val FIRST_USE_PENDING = "first_use_reboot_check_pending"
+
+        /** How many undone changes are remembered. */
+        const val MAX_UNDONE = 40
 
         /** VoLTE not tested: IMS runs over Wi-Fi and LTE offers no voice path for the measurement. */
         const val IMS_ON_WIFI = "ims_on_wifi"

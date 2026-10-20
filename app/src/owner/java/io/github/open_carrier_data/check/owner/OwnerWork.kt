@@ -220,6 +220,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 known = state.runs.mapNotNull { it.sim }.toSet(),
                 onOnly = (state.onOnlyUntilMs ?: 0) > now,
                 nightUsed = state.trialNight == QuietWindow.nightOf(nowLocal),
+                undone = state.undone,
             )
             val ims = checks.joinToString { "slot ${it.sim.slot + 1}: ${it.imsLine}" }
             if (plan.all.isEmpty()) {
@@ -383,19 +384,10 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         val id = inputData.getString(KEY_RUN)
         val run = store.read().runs.firstOrNull { it.id == id } ?: return Result.success()
         val ended = run.copy(endedMs = System.currentTimeMillis())
-        val notice = if (ended.changes.isNotEmpty() || ended.failures.isNotEmpty()) {
-            io.github.open_carrier_data.check.owner.core.Notice(
-                title = if (ended.failures.isNotEmpty()) "Open Carrier Data: needs a look" else "Open Carrier Data: carrier settings changed",
-                text = (ended.failures + ended.changes).joinToString("; "),
-                failed = ended.failures.isNotEmpty(),
-            )
-        } else {
-            null
-        }
-        val line = RunSummary.line(ended, notice)
+        val line = RunSummary.line(ended)
         store.update { it.withRun(ended).copy(lastResult = LastResult(System.currentTimeMillis(), line, changed = ended.changes.isNotEmpty(), failed = ended.failures.isNotEmpty())) }
         // Failures were told when they happened; the changes are told now.
-        if (ended.changes.isNotEmpty()) OwnerNotifications.notice(applicationContext, notice!!)
+        if (ended.changes.isNotEmpty()) OwnerNotifications.notice(applicationContext, Notices.changed(ended.changes))
         return Result.success()
     }
 
@@ -528,6 +520,22 @@ object OwnerScheduler {
         WorkManager.getInstance(context).enqueueUniqueWork(CLEANUP, policy, request)
     }
 
+    /**
+     * The owner's "Stop test": cancels the queued and running steps (a
+     * cancelled step reverts its trial, [OwnerWorker]), ends the run's record,
+     * and queues the cleanup for whatever is left. Changes Open Carrier Data
+     * keeps stay; "Undo changes" removes those.
+     */
+    fun stopTests(context: Context) {
+        WorkManager.getInstance(context).cancelUniqueWork(RUN)
+        val now = System.currentTimeMillis()
+        FileStateStore(context).update { s ->
+            s.runs.filter { it.endedMs == null }.fold(s) { acc, run -> acc.withRun(run.copy(endedMs = now, note = "stopped by the owner")) }
+                .logged(now, "run", "the owner stopped the test")
+        }
+        cleanup(context, policy = ExistingWorkPolicy.KEEP)
+    }
+
     fun revertAll(context: Context) {
         WorkManager.getInstance(context).enqueueUniqueWork(
             REVERT_ALL, ExistingWorkPolicy.KEEP,
@@ -640,6 +648,8 @@ object OwnerScheduler {
         var chain = WorkManager.getInstance(context).beginUniqueWork(RUN, ExistingWorkPolicy.KEEP, steps.first())
         for (next in steps.drop(1)) chain = chain.then(next)
         chain.enqueue()
+        // The owner asks for a test: what he undid may be kept again if it tests better.
+        store.update { it.copy(undone = emptyList()) }
         store.update { it.logged(System.currentTimeMillis(), "run", "queued run $runId: ${sims.size} SIM(s), ${steps.size - 1} steps${if (offs) ", off values too" else ", on values only"}") }
         return "queued run $runId"
     }

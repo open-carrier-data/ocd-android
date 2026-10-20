@@ -68,6 +68,8 @@ data class BundleSource(
     @SerialName("data_digest") val dataDigest: String? = null,
     @SerialName("lookup_schema_version") val lookupSchemaVersion: Int? = null,
     @SerialName("resolution_order") val resolutionOrder: String,
+    /** The data release the snapshot was built from ("data-2026.10"), when the build names it. */
+    @SerialName("release_tag") val releaseTag: String? = null,
 )
 
 /** Text from the "Limits to read before you ship" section of OCD's README, shipped with the data. */
