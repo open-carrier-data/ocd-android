@@ -391,6 +391,8 @@ class RunnerTest {
         assertTrue(summary, "proven" in summary)
         assertFalse(phone.store.state.anyLive)
         assertTrue(phone.overrides.isNullOrEmpty())
+        // Undo is remembered: the night does not keep VoLTE on again for this SIM.
+        assertEquals(listOf(sim.key to "volte:on"), phone.store.state.undone.map { it.sim to it.entry })
     }
 
     private val ocdRow = OcdApnRow(mapOf("mcc" to "262", "mnc" to "02", "apn" to "internet.lidl", "type" to "default,supl", "protocol" to "IPV4V6", "carrier" to "LIDL Internet"))

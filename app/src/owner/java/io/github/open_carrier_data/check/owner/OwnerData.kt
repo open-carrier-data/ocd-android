@@ -2,8 +2,12 @@ package io.github.open_carrier_data.check.owner
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Build
 import android.telephony.SubscriptionManager
 import io.github.open_carrier_data.check.core.OcdBundle
+import io.github.open_carrier_data.check.owner.core.CallsTested
+import io.github.open_carrier_data.check.owner.core.OwnerFeature
+import io.github.open_carrier_data.check.phone.CallTestStore
 import io.github.open_carrier_data.check.owner.core.ApnConf
 import io.github.open_carrier_data.check.owner.core.OcdApnRow
 import io.github.open_carrier_data.check.owner.core.OwnerSim
@@ -166,6 +170,26 @@ class OwnerData(private val context: Context, private val store: StateStore) {
         }
 
         /**
+         * The read-only check's call tests (T2 passes) on this phone model, by
+         * feature and network: the ladder's last rung. The screen and the
+         * Settings entry read the same list, so they say the same.
+         */
+        fun callsTested(context: Context): List<CallsTested> =
+            runCatching { CallTestStore(context).load().t2 }.getOrDefault(emptyList())
+                .filter { it.model == Build.MODEL }
+                .mapNotNull { pass -> OwnerFeature.ofWire(pass.feature.wire)?.let { CallsTested(it, pass.homeMccMnc) } }
+
+        /**
+         * The data release the app ships ("2026.10"), for when none is pulled.
+         * Read from the bundled data: its release tag when it names one, else
+         * the month of its commit (the release tags are named after it).
+         */
+        fun bundledTag(context: Context): String? = runCatching {
+            val source = context.assets.open(OcdBundle.ASSET_NAME).use(OcdBundle::readGzip).source
+            source.releaseTag?.removePrefix("data-") ?: source.commitDate.take(7).replace('-', '.')
+        }.getOrNull()
+
+        /**
          * The active SIMs as Settings names them ("LIDL Connect"), from the
          * subscription list only: no carrier config is read, so the Settings
          * entry's summary can ask for it. Null: not readable.
@@ -181,5 +205,3 @@ class OwnerData(private val context: Context, private val store: StateStore) {
     }
 }
 
-/** The release line for the screen. */
-fun ReleaseInfo?.line(): String = this?.let { "$tag (commit ${commit.take(8)}, ${dataDigest.take(19)}…, checks through $checksThrough)" } ?: "none pulled; the bundled data-2026.10 snapshot is used"

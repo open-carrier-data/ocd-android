@@ -1,21 +1,9 @@
 package io.github.open_carrier_data.check.owner.core
 
-/**
- * The owner build's background as plain functions: what the screen and the
- * Settings entry say about it, and when the owner hears of it at all.
+/*
+ * The owner build's background as plain functions: what the notifications
+ * say about it, and when the owner hears of it at all.
  */
-object QuietSchedule {
-    /** The schedule line on the owner screen. */
-    fun line(on: Boolean, registered: Boolean, state: OwnerState, nowMs: Long, format: (Long) -> String): String = when {
-        !on -> "off"
-        !registered -> "on, not registered yet (registered at the next boot or when this screen opens)"
-        else -> buildString {
-            append("on: a light check whenever the phone lies unused; trials at night (02:00 to 05:00) on the charger, screen off an hour, one feature a night")
-            state.lastCheckAtMs?.let { append("; last check ").append(format(it)) }
-            state.onOnlyUntilMs?.takeIf { it > nowMs }?.let { append("; only on values until ").append(format(it)).append(" (new ROM build or data release)") }
-        }
-    }
-}
 
 /** A notification the owner gets: only when a value changed on the phone or something failed. */
 data class Notice(val title: String, val text: String, val failed: Boolean)
@@ -26,50 +14,66 @@ data class Notice(val title: String, val text: String, val failed: Boolean)
  * trial that changed nothing, a re-apply after boot, a deferral, an
  * interruption); a normal notification when a kept value came or went, or
  * when something failed (a stop event, a baseline that did not come back).
- * A live trial or keep shows only as the quiet notification with "Revert all".
+ * A live trial or keep shows only as the quiet notification with "Stop test"
+ * or "Undo changes". Titles never repeat the app's name: the notification
+ * header shows it.
  */
 object Notices {
+    const val CHANGED_TITLE = "Carrier settings changed"
+    const val FAILED_TITLE = "A test failed — your own settings are back"
+    const val PAUSED_TITLE = "Changes paused: a setting didn't go back"
+
     private fun kept(state: OwnerState): Set<Triple<Int, String, Boolean>> =
         state.overrides.filter { it.hold == Hold.KEPT }.map { Triple(it.slot, it.key, it.value) }.toSet()
 
-    private fun keptApns(state: OwnerState): Set<Pair<String, String>> =
-        state.apns.filter { it.hold == Hold.KEPT }.map { it.apnKey to it.label }.toSet()
+    private fun keptApns(state: OwnerState): Set<String> =
+        state.apns.filter { it.hold == Hold.KEPT }.map { it.apnKey }.toSet()
 
-    /** The changes between two states, as lines. */
+    /** The changes between two states, one plain item each ("VoLTE switched on", "access point name added"). */
     fun changes(before: OwnerState, after: OwnerState): List<String> = buildList {
-        for ((slot, key, value) in kept(after) - kept(before)) add("${label(key)} ${if (value) "on" else "off"} kept on slot ${slot + 1}")
+        for ((_, key, value) in kept(after) - kept(before)) add("${label(key)} switched ${if (value) "on" else "off"}")
         for ((slot, key, _) in kept(before) - kept(after)) {
-            if (kept(after).none { it.first == slot && it.second == key }) add("${label(key)} back to the phone's own value on slot ${slot + 1}")
+            if (kept(after).none { it.first == slot && it.second == key }) add("${label(key)} back to your own setting")
         }
-        for ((_, label) in keptApns(after) - keptApns(before)) add("APN $label kept as the preferred APN")
-        for ((key, label) in keptApns(before) - keptApns(after)) if (keptApns(after).none { it.first == key }) add("APN $label removed")
+        repeat((keptApns(after) - keptApns(before)).size) { add("access point name added") }
+        repeat((keptApns(before) - keptApns(after)).size) { add("access point name removed") }
     }
 
+    /** What failed, for the run's record and the log (technical). */
     fun failures(before: OwnerState, after: OwnerState): List<String> = buildList {
         if (after.stop != null && after.stop != before.stop) add("stopped: ${after.stop.take(120)}")
-        val newFailures = after.entries.filter { e -> e.failures > 0 && before.entries.none { it.sim == e.sim && it.entry == e.entry && it.atMs == e.atMs } }
-        for (e in newFailures) add("${e.entry} did not finish cleanly (${e.outcome})")
+        for (e in newFailures(before, after)) add("${e.entry} did not finish cleanly (${e.outcome})")
     }
+
+    private fun newFailures(before: OwnerState, after: OwnerState): List<EntryRecord> =
+        after.entries.filter { e -> e.failures > 0 && before.entries.none { it.sim == e.sim && it.entry == e.entry && it.atMs == e.atMs } }
+
+    /** The notification for changes, the items joined: "VoLTE switched on, access point name added". */
+    fun changed(items: List<String>): Notice = Notice(CHANGED_TITLE, plainList(items), failed = false)
 
     /** Null for routine work. */
     fun of(before: OwnerState, after: OwnerState): Notice? {
-        val failed = failures(before, after)
+        if (after.stop != null && after.stop != before.stop) return Notice(PAUSED_TITLE, "See the log in Details before resuming", failed = true)
+        val failed = newFailures(before, after).map { e -> e.feature?.label ?: "Access point name" }.distinct()
+        if (failed.isNotEmpty()) return Notice(FAILED_TITLE, joinAnd(failed), failed = true)
         val changed = changes(before, after)
-        if (failed.isEmpty() && changed.isEmpty()) return null
-        return Notice(
-            title = if (failed.isNotEmpty()) "Open Carrier Data: needs a look" else "Open Carrier Data: carrier settings changed",
-            text = (failed + changed).joinToString("; "),
-            failed = failed.isNotEmpty(),
-        )
+        return if (changed.isEmpty()) null else changed(changed)
+    }
+
+    private fun plainList(items: List<String>): String {
+        val counted = items.groupingBy { it }.eachCount().map { (item, n) ->
+            if (n > 1 && item.startsWith("access point name ")) "$n access point names ${item.substringAfterLast(' ')}" else item
+        }
+        return counted.joinToString(", ").replaceFirstChar { it.uppercase() }
     }
 
     private fun label(key: String): String = OwnerFeature.ofKey(key)?.label ?: key
 }
 
-/** The one line a finished run leaves for the Settings entry. */
+/** The one line a finished run leaves in the state and the log: what changed or failed, else what it tested. */
 object RunSummary {
-    fun line(run: RunResult, notice: Notice?): String {
-        if (notice != null) return notice.text
+    fun line(run: RunResult): String {
+        if (run.failures.isNotEmpty() || run.changes.isNotEmpty()) return (run.failures + run.changes).joinToString("; ")
         val what = (run.features.map { it.feature.label } + if (run.apns.any { it.status == "inserted" }) listOf("APN rows") else emptyList()).distinct()
         val refused = run.features.mapNotNull { it.refused }.filterNot { it.startsWith(RunInterrupted.INTERRUPTED) }
         return buildString {

@@ -11,8 +11,9 @@ import io.github.open_carrier_data.check.owner.core.SettingsSummary
 
 /**
  * The live summary under "Open Carrier Data" in Settings > Network &
- * internet, the owner screen's status sentence ("Everything is signed in with
- * your phone's own settings", "1 improvement active: VoLTE switched on"):
+ * internet, the owner screen's headline ("All signed in on your phone's own
+ * settings", "Open Carrier Data switched on VoLTE"), built with the call
+ * tests as on the screen:
  * Settings calls `getDynamicSummary` on this authority (the
  * `com.android.settings.summary_uri` meta-data of [OwnerActivity]). It
  * answers only the system (Settings runs as the system uid), root, the
@@ -28,9 +29,9 @@ class OwnerSettingsProvider : ContentProvider() {
         val context = context ?: return null
         return when (method) {
             METHOD_SUMMARY -> {
-                // The owner screen's status sentence, as plain as on the screen.
+                // The owner screen's headline, from the same records and call tests.
                 val line = runCatching {
-                    SettingsSummary.line(FileStateStore(context).read(), OwnerAccess.privilegedGranted(context), OwnerData.simViews(context))
+                    SettingsSummary.line(FileStateStore(context).read(), OwnerAccess.privilegedGranted(context), OwnerData.simViews(context), OwnerData.callsTested(context))
                 }.getOrDefault("Carrier settings checks")
                 Bundle().apply { putString(KEY_SUMMARY, line) }
             }

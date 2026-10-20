@@ -36,13 +36,17 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -80,15 +84,26 @@ import io.github.open_carrier_data.check.core.UserToggleRecord
 import io.github.open_carrier_data.check.phone.SettingsScreens
 import io.github.open_carrier_data.check.phone.ShizukuStatus
 
+/** [toCallTest]: opened for the call test (the owner build's "Test calls"); the screen scrolls to it once it shows. */
 @Composable
-fun CheckScreen(viewModel: CheckViewModel) {
+fun CheckScreen(viewModel: CheckViewModel, toCallTest: Boolean = false) {
     val state by viewModel.state.collectAsState()
+    val scroll = rememberScrollState()
+    var callTestY by remember { mutableStateOf<Int?>(null) }
+    var scrolled by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(callTestY) {
+        val y = callTestY
+        if (toCallTest && !scrolled && y != null) {
+            scrolled = true
+            scroll.animateScrollTo(y)
+        }
+    }
     Scaffold { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scroll)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -121,7 +136,7 @@ fun CheckScreen(viewModel: CheckViewModel) {
                     ConnectionsSection(state)
                     DeepCheckSection(state, viewModel)
                     SwitchSection(state, viewModel)
-                    CallTestSection(state, viewModel)
+                    Column(Modifier.onGloballyPositioned { callTestY = it.positionInParent().y.toInt() }) { CallTestSection(state, viewModel) }
                     OcdSection(state, bundle)
                 }
             }

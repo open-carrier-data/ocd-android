@@ -2,8 +2,11 @@ package io.github.open_carrier_data.check.owner
 
 import android.Manifest
 import android.app.Application
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -19,14 +22,12 @@ import androidx.work.WorkManager
 import io.github.open_carrier_data.check.owner.core.CallsTested
 import io.github.open_carrier_data.check.owner.core.IssueReport
 import io.github.open_carrier_data.check.owner.core.IwlanDumps
-import io.github.open_carrier_data.check.owner.core.OwnerFeature
+import io.github.open_carrier_data.check.owner.core.LogEvent
 import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.QuietPlan
-import io.github.open_carrier_data.check.owner.core.QuietSchedule
 import io.github.open_carrier_data.check.owner.core.SimView
 import io.github.open_carrier_data.check.owner.core.update
-import io.github.open_carrier_data.check.phone.CallTestStore
 import io.github.open_carrier_data.check.ui.MainActivity
 import io.github.open_carrier_data.check.ui.OcdCheckTheme
 import kotlinx.coroutines.Dispatchers
@@ -37,8 +38,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
-import java.text.DateFormat
-import java.util.Date
 
 data class OwnerUi(
     /** The first read is done: until then the screen shows no status, so nothing moves on load. */
@@ -51,21 +50,20 @@ data class OwnerUi(
     val simViews: List<SimView>? = null,
     /** The read-only check's T2 passes on this phone model. */
     val calls: List<CallsTested> = emptyList(),
-    /** OCD's internet entries for each SIM (by subscription ID) in the pulled release; missing: not known. */
+    /** OCD's access point names for each SIM (by subscription ID) in the pulled release; missing: not known. */
     val apnCandidates: Map<Int, Int> = emptyMap(),
-    /** The schedule in the technical words of the Details. */
-    val weekly: String = "not read",
-    /** Whether the hourly quiet job is registered with WorkManager. */
-    val scheduleRegistered: Boolean = false,
+    /** The data release the app ships ("2026.10"), shown when none is pulled. */
+    val bundledTag: String? = null,
     /** Steps of the owner's or the night's test still to run. */
     val stepsToGo: Int = 0,
     val message: String? = null,
     /** Counts the messages, so the same text shown twice is shown twice. */
     val messageId: Long = 0,
-    /** Wi-Fi calling details from the IWLAN and QNS dumps, read when the owner asks; never the device log. */
+    /** Wi-Fi calling details from the IWLAN dump, read when the owner asks; never the device log. */
     val details: List<String>? = null,
 ) {
-    val canTest: Boolean get() = gate?.canWrite == true && sims?.isNotEmpty() == true && stepsToGo == 0
+    /** Test now may start: system access, a SIM, nothing running, not paused. */
+    val canTest: Boolean get() = gate?.canWrite == true && sims?.isNotEmpty() == true && stepsToGo == 0 && state.stop == null
 }
 
 class OwnerViewModel(app: Application) : AndroidViewModel(app) {
@@ -74,6 +72,11 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     val ui: StateFlow<OwnerUi> = _ui
 
     init {
+        // The bundled data is large; read its tag apart, so the first screen does not wait for it.
+        viewModelScope.launch {
+            val tag = withContext(Dispatchers.IO) { OwnerData.bundledTag(getApplication()) }
+            _ui.value = _ui.value.copy(bundledTag = tag)
+        }
         viewModelScope.launch {
             while (isActive) {
                 refresh()
@@ -87,19 +90,9 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         val gate = withContext(Dispatchers.Default) { OwnerAccess.gate(context) }
         val sims = runCatching { OwnerData.sims(context) }.getOrNull()
         val views = withContext(Dispatchers.IO) { OwnerData.simViews(context) }
-        val calls = withContext(Dispatchers.IO) {
-            runCatching { CallTestStore(context).load().t2 }.getOrDefault(emptyList())
-                .filter { it.model == Build.MODEL }
-                .mapNotNull { pass -> OwnerFeature.ofWire(pass.feature.wire)?.let { CallsTested(it, pass.homeMccMnc) } }
-        }
+        val calls = withContext(Dispatchers.IO) { OwnerData.callsTested(context) }
         val wm = WorkManager.getInstance(context)
         val state = store.read()
-        val info = withContext(Dispatchers.IO) {
-            runCatching { wm.getWorkInfosForUniqueWork(OwnerScheduler.QUIET).get() }.getOrNull()
-        }?.firstOrNull { !it.state.isFinished }
-        val weekly = QuietSchedule.line(state.scheduleOn, info != null, state, System.currentTimeMillis()) {
-            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it))
-        }
         val run = withContext(Dispatchers.IO) { runCatching { wm.getWorkInfosForUniqueWork(OwnerScheduler.RUN).get() }.getOrNull() }.orEmpty()
         _ui.value = _ui.value.copy(
             loaded = true,
@@ -109,15 +102,13 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             simViews = views,
             calls = calls,
             apnCandidates = withContext(Dispatchers.IO) { candidates(state, sims) },
-            weekly = weekly,
-            scheduleRegistered = info != null,
             stepsToGo = OwnerScheduler.pending(run),
         )
     }
 
     private var candidateCache: Pair<String, Map<Int, Int>>? = null
 
-    /** How many internet entries OCD's pulled release has for each SIM; read once per release and SIM set. */
+    /** How many access point names OCD's pulled release has for each SIM; read once per release and SIM set. */
     private fun candidates(state: OwnerState, sims: List<OwnerSim>?): Map<Int, Int> {
         val data = OwnerData(getApplication(), store)
         val tag = state.release?.tag?.takeIf { data.currentDir() != null } ?: return emptyMap()
@@ -132,23 +123,61 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = _ui.value.copy(message = text, messageId = _ui.value.messageId + 1)
     }
 
-    fun pull() {
-        OwnerScheduler.pull(getApplication(), force = false)
-        say("Checking for an update. Every file is verified before it's used.")
+    /** Checks for a new data release, then says how it went: up to date, updated, offline, or failed. */
+    fun pull() = viewModelScope.launch {
+        val context = getApplication<Application>()
+        val startedMs = System.currentTimeMillis()
+        val before = store.read().release?.tag
+        OwnerScheduler.pull(context, force = false)
+        if (!online(context)) {
+            say("No connection. It updates when you're online")
+            return@launch
+        }
+        say("Checking for an update")
+        // The pull runs as work; its log line says how it ended.
+        repeat(90) {
+            delay(1_000)
+            val state = store.read()
+            val ended: LogEvent? = state.log.lastOrNull { it.atMs >= startedMs && (it.kind == "pull" || (it.kind == "error" && it.text.startsWith("pull:"))) }
+            if (ended != null) {
+                val after = state.release?.tag
+                say(
+                    when {
+                        ended.kind == "error" -> "Couldn't check for an update. See the log in Details"
+                        after != null && after != before -> "Updated to ${after.removePrefix("data-")}"
+                        else -> "Up to date"
+                    },
+                )
+                refresh()
+                return@launch
+            }
+        }
     }
 
+    private fun online(context: Context): Boolean = runCatching {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        cm.getNetworkCapabilities(cm.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+    }.getOrDefault(true)
+
+    /** Starts a test. The headline turns to "Testing" (TalkBack hears it), so only a failure to start is said. */
     fun test(offs: Boolean, voiceCheck: Boolean, apns: Boolean) = viewModelScope.launch {
-        val line = OwnerScheduler.runTests(getApplication(), offs = offs, voiceCheckMs = if (voiceCheck) 120_000 else 0, apns = apns)
-        say(if (line.startsWith("queued")) "Test started. Your own settings come back after each step." else "No SIM card, so there's nothing to test.")
+        val line = runCatching { OwnerScheduler.runTests(getApplication(), offs = offs, voiceCheckMs = if (voiceCheck) 120_000 else 0, apns = apns) }.getOrNull()
+        if (line?.startsWith("queued") != true) say("Couldn't start the test")
+        refresh()
+    }
+
+    fun stopTest() = viewModelScope.launch {
+        OwnerScheduler.stopTests(getApplication())
+        say("Test stopped")
         refresh()
     }
 
     fun checkNow() {
         OwnerScheduler.checkNow(getApplication())
-        say("Checking now, without changing anything.")
+        say("Checking")
     }
 
-    /** Wi-Fi calling's state from the dumps (no device log, so Android asks for nothing). */
+    /** Wi-Fi calling's state from the IWLAN dump (no device log, so Android asks for nothing). */
     fun details() = viewModelScope.launch {
         val context = getApplication<Application>()
         val lines = withContext(Dispatchers.IO) {
@@ -157,40 +186,41 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
                 try {
                     val phone = handle.phone
                     val registry = phone.registryText()
-                    val iwlan = phone.iwlanServiceText()
+                    val iwlan = phone.iwlanServiceText() ?: return@runCatching null
                     val qns = phone.qnsText()
                     OwnerData.sims(context).flatMap { sim ->
                         val r = IwlanDumps.reading(registry, iwlan, qns, sim.slot)
+                        val tunnel = when (r?.tunnelUp) {
+                            true -> "up"
+                            false -> "down"
+                            null -> "not seen"
+                        }
                         listOf(
-                            "Slot ${sim.slot + 1}: IMS tunnel over Wi-Fi ${when (r?.tunnelUp) { true -> "up"; false -> "down"; null -> "not seen" }}",
-                            "Slot ${sim.slot + 1}: QNS qualifies ${IwlanDumps.qualifiedForIms(qns, sim.slot) ?: "-"} for IMS; Wi-Fi restrictions ${IwlanDumps.restrictions(qns, sim.slot).ifEmpty { listOf("none") }.joinToString()}",
-                            "Slot ${sim.slot + 1}: last IWLAN refusal ${r?.lastRefusal ?: "none"}${if (r?.selectionFailed == true) " (the ePDG selector found no server)" else ""}",
+                            "Slot ${sim.slot + 1}: Wi-Fi calling tunnel $tunnel",
+                            "Slot ${sim.slot + 1}: last refusal ${r?.lastRefusal ?: "none"}",
                         )
-                    } + listOfNotNull(
-                        "IWLAN dump unreadable (PACKAGE_USAGE_STATS missing?)".takeIf { iwlan == null },
-                        "QNS dump unreadable".takeIf { qns == null },
-                    )
+                    }
                 } finally {
                     handle.close()
                 }
-            }.getOrElse { listOf("not readable: ${it.message}") }
+            }.getOrNull() ?: listOf("Wi-Fi calling details can't be read")
         }
         _ui.value = _ui.value.copy(details = lines)
     }
 
     fun revertAll() {
         OwnerScheduler.revertAll(getApplication())
-        say("Putting your phone's own settings back.")
+        say("Undoing changes")
     }
 
     fun rebootProbe() {
         OwnerScheduler.rebootProbe(getApplication())
-        say("Reboot check queued: VoLTE is set to the value it has and left live. Reboot when the log says so.")
+        say("Restart check started")
     }
 
     fun cleanup() {
         OwnerScheduler.cleanup(getApplication())
-        say("Looking for leftovers.")
+        say("Removing leftovers")
     }
 
     fun setSchedule(on: Boolean) = viewModelScope.launch {
@@ -201,7 +231,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearStop() = viewModelScope.launch {
         store.update { it.copy(stop = null).logged(System.currentTimeMillis(), "stop", "the owner cleared the stop flag") }
-        say("Changes are allowed again.")
+        say("Changes resumed")
         refresh()
     }
 
@@ -210,11 +240,10 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
 
 /**
  * The owner screen, opened from Settings > Network & internet > Open Carrier
- * Data (the build has no launcher icon): the status in one sentence, the
- * evidence ladder of each feature, mobile data, the automatic checks, the
- * carrier data, and in Details the access, test options, Wi-Fi calling
- * details, the report, the tools and the log ([OwnerScreen]). Everything
- * here also runs without it, in the background.
+ * Data (the build has no launcher icon): the headline, the evidence ladder of
+ * each feature, mobile data, the automatic tests, and in Details the test
+ * options, the tools, the carrier data, the safety notes and the log
+ * ([OwnerScreen]). Everything here also runs without it, in the background.
  */
 class OwnerActivity : ComponentActivity() {
     private val viewModel: OwnerViewModel by viewModels()
@@ -232,8 +261,9 @@ class OwnerActivity : ComponentActivity() {
         val actions = OwnerActions(
             back = ::finish,
             testNow = { viewModel.test(it.offs, it.voice, it.apns) },
+            stopTest = { viewModel.stopTest() },
             revertAll = viewModel::revertAll,
-            pull = viewModel::pull,
+            pull = { viewModel.pull() },
             setSchedule = { viewModel.setSchedule(it) },
             checkNow = viewModel::checkNow,
             cleanup = viewModel::cleanup,
@@ -242,7 +272,7 @@ class OwnerActivity : ComponentActivity() {
             clearStop = { viewModel.clearStop() },
             grantShizuku = { runCatching { Shizuku.requestPermission(4713) } },
             sendReport = ::openIssue,
-            openCheck = { startActivity(Intent(this, MainActivity::class.java)) },
+            openCheck = { startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_CALL_TEST, true)) },
         )
         setContent {
             OcdCheckTheme {
@@ -255,7 +285,8 @@ class OwnerActivity : ComponentActivity() {
     private fun openIssue() {
         val url = viewModel.issueUrl()
         if (url == null) {
-            android.widget.Toast.makeText(this, "There's no finished test to report yet, or the privacy check held the report back.", android.widget.Toast.LENGTH_LONG).show()
+            // The button waits for a finished test, so a missing report is the privacy check's.
+            android.widget.Toast.makeText(this, "Report held back: it may contain private data", android.widget.Toast.LENGTH_LONG).show()
             return
         }
         // Opens the prefilled form; the owner reads it and submits it himself.

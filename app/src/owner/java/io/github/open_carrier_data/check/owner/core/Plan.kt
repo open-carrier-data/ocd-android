@@ -172,6 +172,7 @@ object QuietPlan {
      * tested before, so a SIM without records is "new" only when it is.
      * [onOnly]: after a ROM flash or a data release, off values wait.
      * [nightUsed]: tonight's change was made already; only reverts run.
+     * [undone]: changes the owner undid; never planned again for their SIM.
      */
     fun plan(
         checks: List<SimCheck>,
@@ -181,6 +182,7 @@ object QuietPlan {
         known: Set<SimKey> = emptySet(),
         onOnly: Boolean = false,
         nightUsed: Boolean = false,
+        undone: List<UndoneEntry> = emptyList(),
     ): Plan {
         val due = mutableListOf<PlannedEntry>()
         val reverts = mutableListOf<PlannedEntry>()
@@ -195,6 +197,7 @@ object QuietPlan {
             for (entry in FEATURE_ENTRIES + check.apnToTest.map(::apnEntry)) {
                 if (entry in check.observed || entry in check.static) continue
                 if (reverts.any { it.sim == key && it.entry == entry }) continue
+                if (undone.any { it.sim == key && it.entry == entry }) continue
                 val last = mine.lastOrNull { it.entry == entry }
                 val feature = OwnerFeature.ofWire(entry.substringBefore(':'))
                 val now = feature?.let { check.effective[it] }

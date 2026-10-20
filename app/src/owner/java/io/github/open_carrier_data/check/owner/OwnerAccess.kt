@@ -61,6 +61,8 @@ data class OwnerGate(
     val reason: String?,
     /** CarrierConfigManager.overrideConfig(int, PersistableBundle) found (the hidden-API check passed); null when not looked up. */
     val overrideApi: Boolean? = null,
+    /** [reason] in plain words for the screen ("No system access: …"); the technical one goes to the log. */
+    val plainReason: String? = null,
 ) {
     val canWrite: Boolean get() = route != null && reason == null
 }
@@ -134,7 +136,17 @@ object OwnerAccess {
             privileged -> "a privileged system app, but CarrierConfigManager.overrideConfig is not reachable (hidden-API allowlist), and Shizuku is not running"
             else -> "no route: not a privileged system app, and Shizuku is not running"
         }
-        return OwnerGate(route, ownerPhone, Build.TYPE, running, root, permitted, privileged, reason, overrideApi)
+        val plain = when {
+            reason == null -> null
+            !ownerPhone -> "this phone can't be changed"
+            !lineage -> "this phone's software ignores carrier settings"
+            running && !permitted -> "Shizuku hasn't allowed this app yet"
+            running && !root -> "Shizuku needs to run as root"
+            Build.TYPE == "user" -> "this build doesn't allow changes"
+            privileged -> "Android blocks the change"
+            else -> "not installed as a system app, and Shizuku isn't running"
+        }
+        return OwnerGate(route, ownerPhone, Build.TYPE, running, root, permitted, privileged, reason, overrideApi, plain)
     }
 
     /** Opens the route the gate picked, or throws. Close it with [OwnerPhoneHandle.close]. */
