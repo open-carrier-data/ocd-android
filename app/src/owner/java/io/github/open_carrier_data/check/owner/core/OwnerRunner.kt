@@ -4,6 +4,7 @@ import io.github.open_carrier_data.check.core.DeviceInfo
 import io.github.open_carrier_data.check.core.ImsService
 import io.github.open_carrier_data.check.core.LteVops
 import io.github.open_carrier_data.check.core.OcdBundle
+import io.github.open_carrier_data.check.core.Radio
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
@@ -62,8 +63,25 @@ class OwnerRunner(
 ) {
     private fun log(kind: String, text: String) = store.update { it.logged(phone.nowMs(), kind, text) }
 
-    /** Tests one feature on one SIM and applies its best working value. Never throws but for a cancelled worker; a refusal is in the result. */
-    suspend fun testFeature(sim: OwnerSim, feature: OwnerFeature, ocd: OcdAnswer, options: RunOptions): FeatureResult {
+    /**
+     * Tests one feature on one SIM and applies its best working value. Never
+     * throws but for a cancelled worker; a refusal is in the result. The
+     * result's entries go into the private pointer ledger.
+     */
+    suspend fun testFeature(sim: OwnerSim, feature: OwnerFeature, ocd: OcdAnswer, options: RunOptions): FeatureResult =
+        runFeature(sim, feature, ocd, options).also { ledger(sim, Pointers.entries(it, t2 = false)) }
+
+    /** Tests OCD's internet APN rows the phone lacks (see [runApns]); the results go into the pointer ledger. */
+    suspend fun testApns(sim: OwnerSim, rows: List<OcdApnRow>, options: RunOptions): List<ApnResult> =
+        runApns(sim, rows, options).also { results -> ledger(sim, results.mapNotNull(Pointers::apn)) }
+
+    private fun ledger(sim: OwnerSim, results: List<EntryResult>) {
+        if (results.isEmpty()) return
+        val cell = PointerLedger.cell(device, sim.key)
+        store.update { it.copy(ledger = PointerLedger.add(it.ledger, cell, results, phone.nowMs())) }
+    }
+
+    private suspend fun runFeature(sim: OwnerSim, feature: OwnerFeature, ocd: OcdAnswer, options: RunOptions): FeatureResult {
         val session = OwnerSession(phone, store, sim, device.model)
         val start = FeatureResult(feature, null, null, ocd)
         if (options.scheduled && !store.read().rebootCleared) return start.copy(refused = FIRST_USE_PENDING)
@@ -93,7 +111,7 @@ class OwnerRunner(
                     result = if (other) {
                         result.copy(onWorks = trial.works, onReason = trial.reason)
                     } else {
-                        result.copy(offWorks = trial.works, offReason = trial.reason, offVoiceMeasured = trial.voiceMeasured)
+                        result.copy(offWorks = trial.works, offReason = trial.reason, offVoiceMeasured = trial.voiceMeasured, offCallNetwork = trial.callNetwork)
                     }
                     result = result.copy(restored = trial.restored, sideVolteOn = trial.sideVolteOn ?: result.sideVolteOn)
                     if (trial.proof?.ok == false) return result.copy(refused = "revert_not_proven")
@@ -280,6 +298,8 @@ class OwnerRunner(
         val lostVoice: Boolean = false,
         val restored: Boolean? = null,
         val sideVolteOn: Boolean? = null,
+        /** The call network type of a call that went active during the trial. */
+        val callNetwork: String? = null,
     )
 
     /** One value on, settle, measure, revert with proof, see the baseline back. */
@@ -292,6 +312,7 @@ class OwnerRunner(
         var waited = 0L
         var verdict = Verdict(Outcome.WAIT, "not_yet")
         var voice: Boolean? = null
+        var callType: Int? = null
         var callSeen = false
         var voiceRegistered = false
         var videoSeen = false
@@ -305,7 +326,10 @@ class OwnerRunner(
             if (o.ims.registered == true && ImsService.MMTEL_VIDEO in o.ims.services) videoSeen = true
             if (o.callActive) {
                 callSeen = true
-                if (o.callNetworkType != null) voice = true
+                if (o.callNetworkType != null) {
+                    voice = true
+                    callType = o.callNetworkType
+                }
             }
             if (o.callActive && !(feature.voice && !value && options.voiceCheckMs > 0)) {
                 // A call that starts during a test stops it; the revert waits for the call to end.
@@ -343,6 +367,7 @@ class OwnerRunner(
                 if (o.callActive) callSeen = true
                 if (o.callNetworkType != null) {
                     voice = true
+                    callType = o.callNetworkType
                     break
                 }
                 if (callSeen && !o.callActive) break
@@ -367,7 +392,10 @@ class OwnerRunner(
         }
         if (reason == IMS_STACK_NO_VIDEO) log("trial", "video_calling=true: IMS registered for voice for ${options.settleMs / 1000} s but never with video; not supported by this IMS stack")
         val restored = if (proof?.ok == true && verdict.reason != "call_started") restored(session, base, options) else null
-        return Trial(works, reason, voice, proof, lostVoice = voice == false, restored = restored, sideVolteOn = sideVolteOn)
+        return Trial(
+            works, reason, voice, proof, lostVoice = voice == false, restored = restored, sideVolteOn = sideVolteOn,
+            callNetwork = callType?.let(Radio::wire),
+        )
     }
 
     /**
@@ -474,7 +502,7 @@ class OwnerRunner(
     }
 
     /** OCD's internet APN rows for the SIM the phone lacks: insert, prefer, measure, remove unless data works only with it. */
-    suspend fun testApns(sim: OwnerSim, rows: List<OcdApnRow>, options: RunOptions): List<ApnResult> {
+    private suspend fun runApns(sim: OwnerSim, rows: List<OcdApnRow>, options: RunOptions): List<ApnResult> {
         if (!options.apns) return emptyList()
         if (options.scheduled && !store.read().rebootCleared) return listOf(ApnResult("all rows", "", FIRST_USE_PENDING))
         val session = OwnerSession(phone, store, sim, device.model)

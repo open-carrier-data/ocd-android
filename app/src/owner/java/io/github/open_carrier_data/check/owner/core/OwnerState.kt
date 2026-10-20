@@ -101,6 +101,8 @@ data class FeatureResult(
     /** What the same change also showed: Wi-Fi calling's service gone (VoLTE's measurement), VoLTE over LTE (Wi-Fi calling off). */
     val sideVowifiOff: Boolean? = null,
     val sideVolteOn: Boolean? = null,
+    /** The call network type ([io.github.open_carrier_data.check.core.Radio.wire]) of the owner's call that went active with the feature off. */
+    val offCallNetwork: String? = null,
 )
 
 @Serializable
@@ -111,6 +113,35 @@ data class ApnResult(
     val status: String,
     val dataWorks: Boolean? = null,
     val kept: Boolean = false,
+)
+
+/**
+ * What the test report needs to name the run's cell (round 19: device ×
+ * carrier profile × stack), recorded when the run starts. Typed values only:
+ * the SPN as the SIM shows it, and the GID1 prefix of the OCD profile it
+ * matched, never the SIM's whole GID1. Null in runs before 2026-10-20; the
+ * report then reads the same phone as it is now.
+ */
+@Serializable
+data class ReportCell(
+    val model: String,
+    val codename: String,
+    val androidMajor: Int,
+    /** [io.github.open_carrier_data.check.core.RomFamily.wire]. */
+    val romFamily: String,
+    /** Build.TYPE: user, userdebug or eng. */
+    val buildType: String,
+    /** [ImsStack]: phh_ims, samsung_ims, other or not_known. */
+    val imsStack: String,
+    val spn: String? = null,
+    val gid1Prefix: String? = null,
+    val appVersion: String,
+    /** The data release the OCD values came from; null for a bundled snapshot that names none (the bot finds it by its digest). */
+    val dataRelease: String? = null,
+    /** The release's data digest (sha256:...), which the public bot checks against the release tag. */
+    val dataDigest: String,
+    /** pulled or bundled. */
+    val dataSource: String,
 )
 
 @Serializable
@@ -135,6 +166,8 @@ data class RunResult(
     /** What the run changed on the phone and what failed, told at its end ([Notices]). */
     val changes: List<String> = emptyList(),
     val failures: List<String> = emptyList(),
+    /** The phone, software and SIM facts the test report names. */
+    val cell: ReportCell? = null,
 )
 
 @Serializable
@@ -183,6 +216,8 @@ data class OwnerState(
     val trialNight: String? = null,
     /** What the owner undid; the night skips these entries for their SIM ([QuietPlan.plan]). */
     val undone: List<UndoneEntry> = emptyList(),
+    /** The private pointer ledger: how often each entry passed or failed here, by what pointed at it ([PointerLedger]). */
+    val ledger: List<LedgerRow> = emptyList(),
 ) {
     val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
 

@@ -157,10 +157,13 @@ class ImsRegistrationWatch private constructor(private val mmtel: ImsMmTelManage
 object VideoStatic {
     const val IMS_SERVICE = "android.telephony.ims.ImsService"
 
+    /** The packages that implement Android's ImsService; empty when not readable. */
+    fun imsPackages(context: Context): List<String> = runCatching {
+        context.packageManager.queryIntentServices(android.content.Intent(IMS_SERVICE), 0).map { it.serviceInfo.packageName }
+    }.getOrDefault(emptyList())
+
     fun reasons(context: Context): List<String> = buildList {
-        val stacks = runCatching {
-            context.packageManager.queryIntentServices(android.content.Intent(IMS_SERVICE), 0).map { it.serviceInfo.packageName }
-        }.getOrDefault(emptyList())
+        val stacks = imsPackages(context)
         if (stacks.any { it.startsWith("me.phh.ims") }) add("ims_stack_phh_no_video")
         val flag = runCatching {
             val res = android.content.res.Resources.getSystem()

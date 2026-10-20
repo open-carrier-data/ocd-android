@@ -396,6 +396,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         state.runs.firstOrNull { it.id == runId }?.let { return it }
         val device = device(applicationContext)
         val profile = sim?.let { Matcher.resolve(bundle, it.identity).mostSpecific }
+        val pulled = OwnerData(applicationContext, store).currentDir()?.let { state.release?.tag }
         val run = RunResult(
             id = runId,
             startedMs = System.currentTimeMillis(),
@@ -408,6 +409,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             stack = "${device.romFamily.plain}, Android ${device.androidMajor}, ${Build.TYPE}",
             background = background,
             plan = inputData.getString(KEY_PLAN),
+            cell = OwnerData.reportCell(applicationContext, device, sim, profile, pulled, bundle),
         )
         store.update { it.withRun(run) }
         return run

@@ -100,6 +100,7 @@ import io.github.open_carrier_data.check.owner.core.FeatureLadder
 import io.github.open_carrier_data.check.owner.core.HeaderNotes
 import io.github.open_carrier_data.check.owner.core.Ladders
 import io.github.open_carrier_data.check.owner.core.LeftoversLine
+import io.github.open_carrier_data.check.owner.core.PointerLedger
 import io.github.open_carrier_data.check.owner.core.MobileDataLine
 import io.github.open_carrier_data.check.owner.core.ScheduleLine
 import io.github.open_carrier_data.check.owner.core.SimView
@@ -642,6 +643,15 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
                 val tag = state.release?.tag?.removePrefix("data-") ?: ui.bundledTag
                 Title(if (tag != null) "Carrier data $tag" else "Carrier data", Modifier.weight(1f))
                 TextButton(onClick = actions.pull) { Text("Check for update") }
+            }
+        }
+        // The private pointer ledger: how often the entries tested here passed, by what pointed at them.
+        PointerLedger.summary(state.ledger)?.let { line ->
+            item {
+                Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.Center) {
+                    Title("Tested on this phone")
+                    Summary(line)
+                }
             }
         }
     }

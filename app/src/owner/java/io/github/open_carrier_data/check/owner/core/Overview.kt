@@ -1,5 +1,6 @@
 package io.github.open_carrier_data.check.owner.core
 
+import io.github.open_carrier_data.check.core.IwlanReading
 import java.time.Instant
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
@@ -52,6 +53,10 @@ data class FeatureLadder(
     val notPossible: Boolean = false,
     val unsupported: Boolean = false,
     val kept: Boolean? = null,
+    /** The effective switch; null when not known yet. */
+    val switchedOn: Boolean? = null,
+    /** Off on the phone, but it signed in when tested on. */
+    val wouldWork: Boolean = false,
 ) {
     /** The row for TalkBack, for example "VoLTE: signed in, calls untested, step 3 of 4". */
     val description: String get() = "${feature.label}: ${text.replaceFirstChar { it.lowercase() }}, step $reached of ${rungs.size}"
@@ -115,8 +120,9 @@ object Ladders {
         val callsTested = feature in CALL_TESTED && calls.any { it.feature == feature && (it.mccmnc == null || it.mccmnc == sim.mccmnc) }
         val reached = listOf(networkOffers, switchOn == true, signedIn, callsTested).take(rungs.size).takeWhile { it }.count()
 
-        fun ladder(tone: Tone, text: String) = FeatureLadder(feature, rungs, reached, tone, text, kept = kept)
-        fun notPossible(text: String) = FeatureLadder(feature, rungs, 0, Tone.NOT_POSSIBLE, text, notPossible = true, kept = kept)
+        fun ladder(tone: Tone, text: String, wouldWork: Boolean = false) =
+            FeatureLadder(feature, rungs, reached, tone, text, kept = kept, switchedOn = switchOn, wouldWork = wouldWork)
+        fun notPossible(text: String) = FeatureLadder(feature, rungs, 0, Tone.NOT_POSSIBLE, text, notPossible = true, kept = kept, switchedOn = switchOn)
 
         val worksText = when {
             rungs.size < Rung.entries.size -> "Signed in"
@@ -134,7 +140,7 @@ object Ladders {
             switchOn == true && onWorks == false -> ladder(Tone.PROBLEM, "On, but not signed in")
             switchOn == true -> ladder(Tone.NEUTRAL, "On, not checked yet")
             switchOn == false -> when {
-                onWorks == true -> ladder(Tone.NEUTRAL, "Off, works when switched on")
+                onWorks == true -> ladder(Tone.NEUTRAL, "Off, works when switched on", wouldWork = true)
                 onReason == NETWORK_BLOCK -> notPossible("Not offered by your network")
                 onReason == USER_SWITCH_BLOCK -> ladder(Tone.NEUTRAL, "Off in your call settings")
                 on?.works == false -> notPossible("Didn't sign in when tested")
@@ -168,7 +174,7 @@ object StatusSentence {
      * In this order: no SIM; paused (a stop event); a failed test; a test
      * running; a change Open Carrier Data keeps that isn't signed in; the
      * changes it keeps; a feature the phone has on that isn't signed in;
-     * nothing checked yet; else everything works or is signed in. [sims]
+     * nothing checked yet; else what is signed in ([signedIn]). [sims]
      * null: not readable (the SIM list is then not judged). [testing]: the
      * SIM a running test is on, named only when 2 SIMs are active.
      */
@@ -198,9 +204,33 @@ object StatusSentence {
             ladders.filter { !it.notPossible && it.reached > 0 }.let { live ->
                 live.isNotEmpty() && live.all { it.reached >= it.rungs.size }
             } -> Status(Tone.WORKS, "All working on your phone's own settings", StatusKind.WORKS)
-            else -> Status(Tone.WORKS, "All signed in on your phone's own settings", StatusKind.SIGNED_IN)
+            else -> signedIn(ladders)
         }
     }
+
+    /**
+     * The last headline, true for every feature with a result: "All signed
+     * in on your phone's own settings" only when each of them is on and
+     * signed in. A feature that is off but signed in when tested on is named
+     * ("Signed in on your phone's own settings; VoLTE is off and would
+     * work"); one that is off or on without a result drops the "All".
+     */
+    private fun signedIn(ladders: List<FeatureLadder>): Status {
+        val shown = ladders.filter { !it.notPossible }
+        val signed = shown.filter { it.reached >= SIGNED_IN_RUNGS }
+        val gaps = shown.filter { it.switchedOn != null && it.reached < SIGNED_IN_RUNGS }
+        if (gaps.isEmpty()) return Status(Tone.WORKS, "All signed in on your phone's own settings", StatusKind.SIGNED_IN)
+        val would = gaps.filter { it.wouldWork }.map { it.feature.label }.distinct()
+        val off = would.takeIf { it.isNotEmpty() }?.let { "${joinAnd(it)} ${if (it.size == 1) "is" else "are"} off and would work" }
+        return when {
+            signed.isNotEmpty() -> Status(Tone.WORKS, listOfNotNull("Signed in on your phone's own settings", off).joinToString("; "), StatusKind.SIGNED_IN)
+            off != null -> Status(Tone.NEUTRAL, off.replaceFirstChar { it.uppercase() }, StatusKind.SIGNED_IN)
+            else -> Status(Tone.NEUTRAL, "Nothing signed in yet", StatusKind.SIGNED_IN)
+        }
+    }
+
+    /** The ladder's rungs up to "Signed in". */
+    private val SIGNED_IN_RUNGS = Rung.SIGNED_IN.ordinal + 1
 
     /**
      * "Open Carrier Data switched on VoLTE and Wi-Fi calling", "…switched on
@@ -379,3 +409,42 @@ object SettingsSummary {
 
 /** A live trial on any slot: a test is under way. */
 private fun OwnerState.liveTrial(): Boolean = overrides.any { it.hold == Hold.TRIAL } || apns.any { it.hold == Hold.TRIAL }
+
+/**
+ * "Show Wi-Fi calling details" in plain words (the review of 2026-10-20: not
+ * "tunnel up" or "last refusal none"): whether Wi-Fi calling is connected,
+ * the last connection attempt that failed and why, and a wait Android holds
+ * it back for. [name]: the SIM's name, given only with two SIMs.
+ */
+object WifiCallingDetails {
+    private val CAUSES = mapOf(
+        "IWLAN_EPDG_SELECTOR_SERVER_SELECTION_FAILED" to "the Wi-Fi calling server wasn't found",
+        "IWLAN_DNS_RESOLUTION_NAME_FAILURE" to "the Wi-Fi calling server's name wasn't found",
+        "IWLAN_DNS_RESOLUTION_TIMEOUT" to "looking up the Wi-Fi calling server took too long",
+        "IWLAN_IKE_PROTOCOL_EXCEPTION" to "the network refused the secure connection",
+        "IWLAN_IKE_NETWORK_LOST_EXCEPTION" to "the Wi-Fi connection dropped while connecting",
+        "IWLAN_IKE_INTERNAL_IO_EXCEPTION" to "the secure connection couldn't be set up",
+        "IWLAN_NETWORK_FAILURE" to "a network error",
+        "IWLAN_TUNNEL_NOT_FOUND" to "the connection was gone",
+        "IWLAN_SIM_NOT_READY_EXCEPTION" to "the SIM wasn't ready",
+        "IWLAN_IKE_DPD_TIMEOUT" to "the connection stopped answering",
+    )
+
+    fun lines(reading: IwlanReading?, name: String? = null): List<String> {
+        val prefix = name?.let { "$it: " }.orEmpty()
+        val connection = when (reading?.tunnelUp) {
+            true -> "Wi-Fi calling is connected"
+            false -> "Wi-Fi calling isn't connected"
+            null -> "No Wi-Fi calling connection seen"
+        }
+        val attempt = reading?.lastRefusal?.let { "Last failed attempt: ${cause(it)}" } ?: "No failed attempts"
+        val wait = reading?.heldBackBy?.let { by ->
+            val minutes = reading.heldBackMinutes?.let { " for about $it more minute${if (it == 1L) "" else "s"}" }.orEmpty()
+            "Held back$minutes by ${by.plain}"
+        }
+        return listOfNotNull(connection, attempt, wait).map { prefix + it }
+    }
+
+    /** A known cause in words; another one as the words of its code ("IWLAN_SOME_ERROR" is "some error"). */
+    fun cause(code: String): String = CAUSES[code] ?: code.removePrefix("IWLAN_").lowercase().replace('_', ' ')
+}
