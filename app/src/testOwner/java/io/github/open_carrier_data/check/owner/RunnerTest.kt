@@ -99,6 +99,17 @@ class RunnerTest {
     }
 
     @Test
+    fun `an on-values run keeps what the VoLTE measurement showed about Wi-Fi calling off`() = runBlocking {
+        val phone = imsOnWifiPhone()
+        val onOnly = fast.copy(testOffs = false, basis = basis)
+        runner(phone).testFeature(sim, OwnerFeature.VOLTE, ocdOn, onOnly)
+        runner(phone).testFeature(sim, OwnerFeature.VOWIFI, ocdOn, onOnly)
+        val entries = phone.store.state.entries.associateBy { it.entry }
+        assertEquals("the side result stays", true, entries.getValue("vowifi:off").works)
+        assertEquals("VoLTE off is still to try", null, entries.getValue("volte:off").works)
+    }
+
+    @Test
     fun `without LTE voice the VoLTE measurement is not made, and nothing changes`() = runBlocking {
         val phone = imsOnWifiPhone().apply { lteVops = false }
         val result = runner(phone).testFeature(sim, OwnerFeature.VOLTE, ocdOn, fast)

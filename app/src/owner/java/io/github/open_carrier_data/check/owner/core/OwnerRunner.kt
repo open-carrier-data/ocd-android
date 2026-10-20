@@ -132,7 +132,14 @@ class OwnerRunner(
     /** LTE in service with voice over PS offered and VoLTE switched on: the voice path while Wi-Fi calling is off. */
     private fun lteVoicePath(o: Observation): Boolean = o.onLte && o.lteVops == LteVops.SUPPORTED && o.switch(OwnerFeature.VOLTE) == true
 
-    private fun voiceOverLte(o: Observation): Boolean = o.ims.registered == true && o.ims.transport?.isWifi == false && ImsService.MMTEL in o.ims.services
+    /**
+     * IMS settled on a bearer: the IMS data connection and the registration
+     * itself agree. On the S20 (2026-10-20) the data connection was back on
+     * Wi-Fi 1 s after a revert, while PHH re-registered over Wi-Fi 24 s later.
+     */
+    private fun settled(o: Observation): Boolean = o.ims.registered == true && o.ims.transport != null && o.registrationOnPdn
+
+    private fun voiceOverLte(o: Observation): Boolean = settled(o) && o.ims.transport?.isWifi == false && ImsService.MMTEL in o.ims.services
 
     /**
      * VoLTE's baseline while IMS runs over Wi-Fi (the report of 2026-10-20):
@@ -162,7 +169,7 @@ class OwnerRunner(
                 waited += options.pollMs
                 o = session.observe()
             }
-            val leftWifi = !(o.ims.registered == true && o.ims.transport?.isWifi == true)
+            val leftWifi = o.ims.registered == false || (settled(o) && o.ims.transport?.isWifi == false)
             // IMS still on Wi-Fi: the stack did not move, so VoLTE is not measured (not "not working").
             val works = if (leftWifi) Evidence.working(OwnerFeature.VOLTE, o) else null
             val fresh = watch?.events()?.any { it.registered && it.transportType == ImsApi.TRANSPORT_WWAN && it.atMs >= changeAt }
@@ -194,8 +201,9 @@ class OwnerRunner(
      * as a failure of the entry ([QuietPlan] pauses it after two).
      */
     private suspend fun restored(session: OwnerSession, before: Observation, options: RunOptions): Boolean {
+        // The registration itself must be back, not only its data connection.
         fun same(o: Observation) = o.ims.registered == before.ims.registered &&
-            (before.ims.registered != true || (o.ims.transport?.isWifi == before.ims.transport?.isWifi && o.ims.services.containsAll(before.ims.services)))
+            (before.ims.registered != true || (settled(o) && o.ims.transport?.isWifi == before.ims.transport?.isWifi && o.ims.services.containsAll(before.ims.services)))
         var waited = 0L
         var o = session.observe()
         while (!same(o) && waited < options.restoreMs) {

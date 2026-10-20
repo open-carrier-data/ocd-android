@@ -164,12 +164,30 @@ open class FakePhone(
         else -> EmergencyApi(ecbm = ecbm, inEmergencyCall = false, emergencySmsMode = emergencySms)
     }
 
+    /**
+     * The registration lags its data connection: after IMS moves, the API
+     * reports the old transport for this many reads (PHH on the S20,
+     * 2026-10-20: 24 s back to Wi-Fi).
+     */
+    var registrationLag = 0
+    private var lagLeft = 0
+    private var apiTransport: Int? = null
+
     override suspend fun imsApi(slot: Int, subId: Int): ImsApi? {
         if (!privileged) return null
         val ims = ims()
+        val now = if (!ims.registered) -1 else if (ims.onWifi) ImsApi.TRANSPORT_WLAN else ImsApi.TRANSPORT_WWAN
+        if (apiTransport != null && apiTransport != now && lagLeft == 0 && registrationLag > 0) lagLeft = registrationLag
+        val reported = if (lagLeft > 0 && apiTransport != null) {
+            lagLeft--
+            apiTransport!!
+        } else {
+            now.also { apiTransport = it }
+        }
+        if (lagLeft == 0) apiTransport = now
         return ImsApi(
             registrationState = if (ims.registered) ImsApi.REGISTERED else ImsApi.NOT_REGISTERED,
-            transportType = if (!ims.registered) -1 else if (ims.onWifi) ImsApi.TRANSPORT_WLAN else ImsApi.TRANSPORT_WWAN,
+            transportType = reported,
             voice = ims.voice,
             video = ims.video,
             sms = ims.sms,

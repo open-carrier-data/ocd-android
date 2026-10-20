@@ -267,7 +267,9 @@ object QuietPlan {
         val other = !baseline
         val works = if (other) r.onWorks else r.offWorks
         val reason = if (other) r.onReason else r.offReason
-        if (reason != null) {
+        // A "not now" never overwrites a result of the same basis (a side result of the same run, say).
+        val decided = existing.any { it.sim == sim && it.entry == entry(feature, other) && it.works != null && it.basis == basis }
+        if (reason != null && !(reason in NOT_NOW && works == null && decided)) {
             val failed = r.restored == false
             out += EntryRecord(
                 sim, entry(feature, other), nowMs, basis, works, reason, effective,

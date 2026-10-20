@@ -147,6 +147,24 @@ class PrivilegedReadTest {
     }
 
     @Test
+    fun `IMS counts as moved only when the registration itself has, not only its data connection`() = runBlocking {
+        val phone = FakePhone().apply {
+            privileged = true
+            defaultApp = mapOf("carrier_volte_available_bool" to "true", "carrier_wfc_ims_available_bool" to "true")
+            imsOverWifi = true
+            wifi = true
+            registrationLag = 2
+        }
+        val result = OwnerRunner(phone, phone.store, s20).testFeature(sim, OwnerFeature.VOLTE, ocdOn, fast.copy(only = true))
+        assertEquals(true, result.baselineWorks)
+        assertEquals(true, result.restored)
+        val measured = phone.store.state.log.single { it.kind == "volte_method" && "registered over" in it.text }.text
+        assertTrue(measured, "after 0 s" !in measured)
+        val back = phone.store.state.log.single { it.kind == "restored" }.text
+        assertTrue(back, "after 0 s" !in back && "baseline back" in back)
+    }
+
+    @Test
     fun `a privileged run turns VoLTE on and keeps it`() = runBlocking {
         val phone = FakePhone().apply { privileged = true }
         val result = OwnerRunner(phone, phone.store, s20).testFeature(sim, OwnerFeature.VOLTE, ocdOn, fast)

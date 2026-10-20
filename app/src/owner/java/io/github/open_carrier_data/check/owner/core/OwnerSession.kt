@@ -198,11 +198,12 @@ class OwnerSession(
         val reg = RegistryParser.parse(registry.lineSequence(), simSlot)
         val api = phone.imsApi(slot, sim.subId)
         val aosp = api?.state() ?: phoneText?.let { AospImsParser.parse(it.lineSequence(), simSlot) }
+        val imsReading = AospImsParser.reading(aosp, reg, dumpRead = api != null || phoneText != null)
         // From the dumps, never the device log: reading logcat asks the owner for log access (2026-10-20).
         val iwlanReading = if (iwlan) IwlanDumps.reading(registry, phone.iwlanServiceText(), phone.qnsText(), slot) else IwlanRegistry.reading(registry, slot)
         return Observation(
             config = keys.mapNotNull { key -> effective[key]?.let { key to it } }.toMap(),
-            ims = AospImsParser.reading(aosp, reg, dumpRead = api != null || phoneText != null),
+            ims = imsReading,
             flags = api?.flags() ?: phoneText?.let { ImsFlags.parse(it, slot) } ?: ImsFlags(),
             ps = RegistrationParser.wwanPs(RegistryText.block(registry, slot)),
             lteVops = reg?.lteVops,
@@ -211,6 +212,7 @@ class OwnerSession(
             iwlan = iwlanReading,
             callActive = RegistryText.anyCallActive(registry),
             callNetworkType = reg?.call?.networkType?.takeIf { reg.call.foreground == PreciseCallState.ACTIVE },
+            registrationOnPdn = api == null || imsReading.registrationLogTransport == null,
         )
     }
 
