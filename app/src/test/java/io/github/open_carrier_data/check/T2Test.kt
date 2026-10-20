@@ -2,6 +2,8 @@ package io.github.open_carrier_data.check
 
 import io.github.open_carrier_data.check.Fixtures.readings
 import io.github.open_carrier_data.check.core.AudioAnswer
+import io.github.open_carrier_data.check.core.BearerProof
+import io.github.open_carrier_data.check.core.BearerReading
 import io.github.open_carrier_data.check.core.CallBearer
 import io.github.open_carrier_data.check.core.CallDirection
 import io.github.open_carrier_data.check.core.CallState
@@ -9,6 +11,7 @@ import io.github.open_carrier_data.check.core.CallTestLog
 import io.github.open_carrier_data.check.core.CallTestRecord
 import io.github.open_carrier_data.check.core.CallWatchSummary
 import io.github.open_carrier_data.check.core.ConfigOrigin
+import io.github.open_carrier_data.check.core.ImsTransport
 import io.github.open_carrier_data.check.core.T2
 import io.github.open_carrier_data.check.core.T2Feature
 import io.github.open_carrier_data.check.core.T2Record
@@ -23,9 +26,9 @@ import org.junit.Test
  * Round 23 LB3 (round 19's T2) as a pure rule, ported from OCD Lab's
  * `t2_assess` and its test `test_t2_assess_rules` (private
  * tools/test_ocd_lab.py, main 0d12145b), plus the app's narrower rules:
- * Wi-Fi calling only in airplane mode (round 19), the outgoing call measured
- * as outgoing, and one call per watch. LB4's wording: "registered" from the
- * deep check, "works on this phone" only with T2.
+ * the outgoing call measured as outgoing, and one call per watch; round 26's
+ * bearer proof in place of airplane mode. LB4's wording: "registered" from
+ * the deep check, "works on this phone" only with T2.
  */
 class T2Test {
     /** The lab's `call()` helper: one call of [direction] ("mo" or "mt") with [code] as its only call network type. */
@@ -39,8 +42,12 @@ class T2Test {
         secondLine: Boolean? = if (direction == "mt") true else null,
         airplane: Boolean? = true,
         calls: Int = 1,
+        /** The ims data connection and data RAT as they read during the call; by default they agree with [code]. */
+        pdn: List<ImsTransport> = if (code == 18) listOf(ImsTransport.IWLAN) else listOf(ImsTransport.LTE),
+        rat: String? = "lte",
     ): CallTestRecord {
         val incoming = direction == "mt"
+        val reading = BearerReading(code, pdn, rat)
         val watch = CallWatchSummary(
             samples = 10,
             statesSeen = listOfNotNull(CallState.IDLE, CallState.RINGING.takeIf { ringing }, CallState.OFFHOOK),
@@ -55,6 +62,9 @@ class T2Test {
             callNetworkType = code,
             bearer = CallBearer.of(code) ?: CallBearer.UNKNOWN,
             ended = true,
+            bearerAtActive = reading.takeIf { code != null },
+            bearerAtHangUp = reading,
+            bearerProof = BearerProof.of(active, reading.takeIf { code != null }, reading),
         )
         return CallTestRecord(
             date = "2026-10-19", model = "SM-G981B", codename = "x1s", romFamily = "lineageos", androidMajor = 16,
@@ -77,21 +87,45 @@ class T2Test {
     }
 
     @Test
-    fun `a failed call, a wrong or unread bearer, or a no on audio fails the feature (lab failed)`() {
+    fun `a failed call or a no on audio fails the feature (lab failed)`() {
         for ((calls, failed) in listOf(
-            listOf(call("mo", 18), call("mt", 13)) to "mo_wrong_bearer_18",
             listOf(call("mo", 13), call("mt", 13, active = false)) to "mt_call_did_not_connect",
             listOf(call("mo", 13, audio = AudioAnswer.NO), call("mt", 13)) to "mo_audio_no",
-            listOf(call("mo", null), call("mt", 13)) to "mo_wrong_bearer_none",
-            // LTE_CA (19) is not 13: the lab's T2 code is exact.
-            listOf(call("mo", 19), call("mt", 13)) to "mo_wrong_bearer_19",
-            listOf(call("mo", 13), call("mt", 16)) to "mt_wrong_bearer_16",
         )) {
             val result = T2.assess(T2Feature.VOLTE, calls)
             assertFalse(failed, result.passed)
             assertEquals(failed, result.failed)
             assertTrue(result.concluded)
         }
+    }
+
+    @Test
+    fun `round 26 - a bearer that is not proven or another bearer does not count and never fails`() {
+        for ((calls, why) in listOf(
+            listOf(call("mo", 18), call("mt", 13)) to "mo_other_bearer_18",
+            listOf(call("mo", null), call("mt", 13)) to "mo_bearer_not_proven",
+            // LTE_CA (19) is not 13: the lab's T2 code is exact.
+            listOf(call("mo", 19), call("mt", 13)) to "mo_other_bearer_19",
+            listOf(call("mo", 13), call("mt", 16)) to "mt_other_bearer_16",
+            // PHH's default 13 while the IMS data connection is on Wi-Fi: the call type alone is no proof.
+            listOf(call("mo", 13, pdn = listOf(ImsTransport.IWLAN)), call("mt", 13)) to "mo_bearer_not_proven",
+            // LTE with the data network on 5G, or not read.
+            listOf(call("mo", 13, rat = "nr"), call("mt", 13)) to "mo_bearer_not_proven",
+            listOf(call("mo", 13, rat = null), call("mt", 13)) to "mo_bearer_not_proven",
+            // Both transports connected (a handover in the middle).
+            listOf(call("mo", 13), call("mt", 13, pdn = listOf(ImsTransport.LTE, ImsTransport.IWLAN))) to "mt_bearer_not_proven",
+            listOf(call("mo", 13, pdn = emptyList()), call("mt", 13)) to "mo_bearer_not_proven",
+        )) {
+            val result = T2.assess(T2Feature.VOLTE, calls)
+            assertFalse(why, result.passed)
+            assertNull(why, result.failed)
+            assertFalse(why, result.concluded)
+            assertTrue("$why in ${result.notCounted}", why in result.notCounted)
+        }
+        // A watch from before round 26 has no proof: it does not count.
+        val old = call("mo", 13).let { it.copy(watch = it.watch.copy(bearerProof = null)) }
+        assertEquals(listOf("mo_bearer_not_proven"), T2.assess(T2Feature.VOLTE, listOf(old, call("mt", 13))).notCounted)
+        assertTrue("try again" in T2.assess(T2Feature.VOLTE, listOf(old, call("mt", 13))).plain)
     }
 
     @Test
@@ -119,13 +153,13 @@ class T2Test {
     }
 
     @Test
-    fun `Wi-Fi calling counts only in airplane mode (round 19), and an outgoing call must be measured as outgoing`() {
-        val noAirplane = T2.assess(T2Feature.VOWIFI, listOf(call("mo", 18, airplane = false), call("mt", 18)))
-        assertFalse(noAirplane.passed)
-        assertNull(noAirplane.failed)
-        assertEquals(listOf("mo_not_in_airplane_mode"), noAirplane.notCounted)
-        assertTrue("airplane mode" in noAirplane.plain)
-        // VoLTE has no such rule.
+    fun `Wi-Fi calling needs no airplane mode with the bearer proven (round 26), and an outgoing call must be measured as outgoing`() {
+        assertTrue(T2.assess(T2Feature.VOWIFI, listOf(call("mo", 18, airplane = false), call("mt", 18, airplane = false))).passed)
+        // Call type 18 with the IMS data connection on LTE: not proven.
+        val mixed = T2.assess(T2Feature.VOWIFI, listOf(call("mo", 18, pdn = listOf(ImsTransport.LTE)), call("mt", 18)))
+        assertFalse(mixed.passed)
+        assertNull(mixed.failed)
+        assertEquals(listOf("mo_bearer_not_proven"), mixed.notCounted)
         assertTrue(T2.assess(T2Feature.VOLTE, listOf(call("mo", 13, airplane = false), call("mt", 13, airplane = false))).passed)
         val rang = call("mo", 13).let { it.copy(watch = it.watch.copy(direction = CallDirection.INCOMING, ringingSeen = true)) }
         assertEquals(listOf("mo_not_outgoing"), T2.assess(T2Feature.VOLTE, listOf(rang, call("mt", 13))).notCounted)
@@ -133,16 +167,15 @@ class T2Test {
 
     @Test
     fun `the plain result names what happened and never the number`() {
-        val failed = T2.assess(T2Feature.VOLTE, listOf(call("mo", 18), call("mt", 13)))
-        assertEquals(
-            "T2 not passed for VoLTE: the outgoing call showed call network type 18, not 13 (4G (LTE)). A new test can start again.",
-            failed.plain,
-        )
+        val failed = T2.assess(T2Feature.VOLTE, listOf(call("mo", 13, audio = AudioAnswer.NO), call("mt", 13)))
+        assertEquals("T2 not passed for VoLTE: you said the audio of the outgoing call did not work. A new test can start again.", failed.plain)
+        val other = T2.assess(T2Feature.VOLTE, listOf(call("mo", 18), call("mt", 13)))
+        assertTrue(other.plain, "the outgoing call ran with call network type 18, not 13 (4G (LTE)); try again on 4G (LTE)" in other.plain)
         val waiting = T2.assess(T2Feature.VOLTE, listOf(call("mo", 13), call("mt", 13, mailbox = true)))
         assertTrue(waiting.plain, "mailbox call never counts as the incoming call" in waiting.plain)
         val passed = T2.assess(T2Feature.VOLTE, listOf(call("mo", 13), call("mt", 13)))
         assertEquals(
-            "T2 passed for VoLTE: an outgoing and an incoming call over 4G (LTE), call network type 13, audio confirmed.",
+            "T2 passed for VoLTE: an outgoing and an incoming call over 4G (LTE), call network type 13 with the bearer proven, audio confirmed.",
             passed.plain,
         )
     }

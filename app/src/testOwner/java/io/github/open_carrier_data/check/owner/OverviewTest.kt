@@ -1,10 +1,13 @@
 package io.github.open_carrier_data.check.owner
 
+import io.github.open_carrier_data.check.core.ProvenBearer
+
 import io.github.open_carrier_data.check.core.DeviceInfo
 import io.github.open_carrier_data.check.core.IwlanHold
 import io.github.open_carrier_data.check.core.IwlanReading
 import io.github.open_carrier_data.check.core.RomFamily
 import io.github.open_carrier_data.check.owner.core.ApnResult
+import io.github.open_carrier_data.check.owner.core.CallsLevel
 import io.github.open_carrier_data.check.owner.core.CallsTested
 import io.github.open_carrier_data.check.owner.core.CheckedLine
 import io.github.open_carrier_data.check.owner.core.EntryRecord
@@ -88,10 +91,10 @@ class OverviewTest {
         assertEquals(3, volte.reached)
         assertEquals(Rung.entries, volte.rungs)
         assertEquals("Signed in, calls untested", volte.text)
-        assertEquals("VoLTE: signed in, calls untested, step 3 of 4", volte.description)
+        assertEquals("VoLTE: signed in, calls untested, step 3 of 5", volte.description)
         assertEquals(3, wifi.reached)
-        assertEquals(4, wifi.rungs.size)
-        assertEquals("SMS over IMS has no call test, so no fourth rung", listOf(Rung.NETWORK_OFFERS, Rung.SWITCHED_ON, Rung.SIGNED_IN), sms.rungs)
+        assertEquals(5, wifi.rungs.size)
+        assertEquals("SMS over IMS has no calls, so no call rungs", listOf(Rung.NETWORK_OFFERS, Rung.SWITCHED_ON, Rung.SIGNED_IN), sms.rungs)
         assertEquals(3, sms.reached)
         assertEquals("Signed in", sms.text)
         assertTrue(video.notPossible)
@@ -107,14 +110,42 @@ class OverviewTest {
     }
 
     @Test
-    fun `a T2 pass fills the last rung, only for the SIM's network`() {
+    fun `round 26 - the ladder reads signed in, calls out, works, only for the SIM's network and the feature's bearer`() {
         val state = s20Tonight()
-        val passed = Ladders.of(OwnerFeature.VOLTE, state, view, listOf(CallsTested(OwnerFeature.VOLTE, "26202")))
-        assertEquals(4, passed.reached)
-        assertEquals("Works, calls tested", passed.text)
-        assertEquals("VoLTE: works, calls tested, step 4 of 4", passed.description)
+        assertEquals(listOf("Network offers it", "Switched on", "Signed in", "Calls out", "Calls both ways"), Rung.entries.map { it.plain })
+        val out = Ladders.of(OwnerFeature.VOLTE, state, view, listOf(CallsTested(OwnerFeature.VOLTE, "26202", CallsLevel.CALLS_OUT)))
+        assertEquals(4, out.reached)
+        assertEquals("Calls out work", out.text)
+        assertEquals("VoLTE: calls out work, step 4 of 5", out.description)
+        // "Calls out" never claims incoming calls; the packet-count note is for Details only.
+        assertFalse(Regex("(?i)incoming|both ways|works|audio").containsMatchIn(out.text))
+        val both = Ladders.of(OwnerFeature.VOLTE, state, view, listOf(CallsTested(OwnerFeature.VOLTE, "26202", CallsLevel.WORKS)))
+        assertEquals(5, both.reached)
+        assertEquals("Works: calls both ways", both.text)
+        assertEquals("VoLTE: works: calls both ways, step 5 of 5", both.description)
         assertEquals(3, Ladders.of(OwnerFeature.VOLTE, state, view, listOf(CallsTested(OwnerFeature.VOLTE, "26203"))).reached)
         assertEquals("a VoLTE pass is not Wi-Fi calling's", 3, Ladders.of(OwnerFeature.VOWIFI, state, view, listOf(CallsTested(OwnerFeature.VOLTE, "26202"))).reached)
+        // All working only with calls both ways on every call feature; calls out alone stays "signed in".
+        val ladders = Ladders.of(state, view, listOf(CallsTested(OwnerFeature.VOLTE, "26202", CallsLevel.CALLS_OUT), CallsTested(OwnerFeature.VOWIFI, "26202", CallsLevel.CALLS_OUT)))
+        assertEquals("All signed in on your phone's own settings", StatusSentence.of(state, listOf(view), ladders).headline)
+        for (ladder in ladders) assertFalse(ladder.text, "(audio from packet counts)" in ladder.text)
+    }
+
+    @Test
+    fun `a changed voice value kept for now says calls out first, then incoming not yet seen`() = runBlocking {
+        val phone = FakePhone().apply {
+            defaultApp = mapOf("carrier_volte_available_bool" to "true")
+            imsOverWifi = true
+            wifi = true
+        }
+        OwnerRunner(phone, phone.store, s20).testFeature(sim, OwnerFeature.VOWIFI, ocdOn, fast.copy(only = true))
+        val state = phone.store.state
+        val provisional = state.provisional.single()
+        assertEquals(OwnerFeature.VOWIFI, provisional.feature)
+        assertEquals(ProvenBearer.IWLAN, provisional.bearer)
+        assertEquals("Switched on by Open Carrier Data, calls out not checked yet", Ladders.of(OwnerFeature.VOWIFI, state, view).text)
+        val out = state.copy(provisional = listOf(provisional.copy(callsOutAtMs = phone.now)))
+        assertEquals("Switched on by Open Carrier Data, calls out work, incoming not yet seen", Ladders.of(OwnerFeature.VOWIFI, out, view).text)
     }
 
     @Test
@@ -124,9 +155,10 @@ class OverviewTest {
         val state = phone.store.state
         val volte = Ladders.of(OwnerFeature.VOLTE, state, view)
         assertEquals(Tone.CHANGED, volte.tone)
-        assertEquals("Switched on by Open Carrier Data", volte.text)
+        // Round 26: a changed voice value is kept for now; calls out comes first.
+        assertEquals("Switched on by Open Carrier Data, calls out not checked yet", volte.text)
         assertEquals(3, volte.reached)
-        assertEquals("VoLTE: switched on by Open Carrier Data, step 3 of 4", volte.description)
+        assertEquals("VoLTE: switched on by Open Carrier Data, calls out not checked yet, step 3 of 5", volte.description)
         val status = StatusSentence.of(state, listOf(view), Ladders.of(state, view))
         assertEquals(Tone.CHANGED, status.tone)
         assertEquals("Open Carrier Data switched on VoLTE", status.headline)

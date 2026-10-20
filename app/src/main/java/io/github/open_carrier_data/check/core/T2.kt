@@ -7,11 +7,20 @@ import kotlinx.serialization.Serializable
  * outgoing call and a measured incoming call from the person's second line,
  * both on the feature's bearer, and the person's yes on audio for both. This
  * ports OCD Lab's `t2_assess` (private tools/ocd_lab/lab_ocd.py, main
- * 0d12145b) to the app's stored call tests. The app adds three narrower
- * rules: Wi-Fi calling counts only with airplane mode on (round 19), the
- * outgoing call must be measured as outgoing, and a watch that saw more
+ * 0d12145b) to the app's stored call tests. The app adds two narrower rules:
+ * the outgoing call must be measured as outgoing, and a watch that saw more
  * than one call counts for nothing. A T2 result stays in the app's private
  * storage; it never becomes, withholds or ranks an OCD value.
+ *
+ * Round 26 (automatic check 2, rule changes 2 and 8): a call counts only
+ * with the bearer proof ([BearerProof]): its call type agrees with the ims
+ * data connection's transport, and for LTE with the data RAT, at ACTIVE and
+ * at hang-up. On PHH IMS 13 is the default call type, so the call type alone
+ * never counts. A call whose readings disagree, or that ran on another bearer,
+ * is "not counted, retry", never a failure. Wi-Fi calling no longer needs
+ * airplane mode: the bearer proof showing IWLAN at ACTIVE and at hang-up
+ * replaces it. In this read-only app the person's yes stays; there it can
+ * only make a pointer, never a status (round 26 rule change 1).
  */
 
 /** The features T2 covers, with the call network type their calls must show (lab T2_CALL_CODES). */
@@ -23,6 +32,9 @@ enum class T2Feature(val wire: String, val bearerCode: Int, val label: String, v
     /** OCD's capability key. */
     val capability: String get() = wire
 
+    /** The bearer the round 26 bearer proof must show. */
+    val provenBearer: ProvenBearer get() = if (this == VOWIFI) ProvenBearer.IWLAN else ProvenBearer.LTE
+
     /** The IMS transport a registration for this feature is on. */
     val transport: ImsTransport get() = if (this == VOWIFI) ImsTransport.IWLAN else ImsTransport.LTE
 }
@@ -32,7 +44,7 @@ data class T2Assessment(
     val feature: T2Feature,
     val outgoing: CallTestRecord?,
     val incoming: CallTestRecord?,
-    /** The first failure (lab `failed`): a call that did not go active, a wrong or unread bearer, or a "no" on audio. */
+    /** The first failure (lab `failed`): a call that did not go active, or a "no" on audio. A bearer never fails (round 26). */
     val failed: String?,
     /** Calls that count for nothing, with the reason (lab `not_counted`). */
     val notCounted: List<String>,
@@ -46,7 +58,7 @@ data class T2Assessment(
     val plain: String
         get() = when {
             passed -> "T2 passed for ${feature.label}: an outgoing and an incoming call over ${feature.bearerPlain}, " +
-                "call network type ${feature.bearerCode}, audio confirmed."
+                "call network type ${feature.bearerCode} with the bearer proven, audio confirmed."
             failed != null -> "T2 not passed for ${feature.label}: ${reason(failed)}. A new test can start again."
             else -> buildString {
                 append("T2 for ${feature.label}: ")
@@ -67,15 +79,16 @@ data class T2Assessment(
         val call = if (code.startsWith("mt_")) "the incoming call" else "the outgoing call"
         return when {
             code.endsWith("_call_did_not_connect") -> "$call did not go active"
-            "_wrong_bearer_" in code -> {
-                val seen = code.substringAfter("_wrong_bearer_")
+            code.endsWith("_bearer_not_proven") ->
+                "$call's bearer was not proven (the call type, the IMS data connection and the data network did not agree at ACTIVE and at hang-up); try again"
+            "_other_bearer_" in code -> {
+                val seen = code.substringAfter("_other_bearer_")
                 val types = if (seen == "none") "no call network type" else "call network type ${seen.replace('_', ' ')}"
-                "$call showed $types, not ${feature.bearerCode} (${feature.bearerPlain})"
+                "$call ran with $types, not ${feature.bearerCode} (${feature.bearerPlain}); try again on ${feature.bearerPlain}"
             }
             code.endsWith("_audio_no") -> "you said the audio of $call did not work"
             code.endsWith("_no_audio_answer") -> "$call had no yes on audio"
             code.endsWith("_several_calls") -> "$call's watch saw more than one call"
-            code.endsWith("_not_in_airplane_mode") -> "$call was made with airplane mode off; OCD's rules count Wi-Fi calling only in airplane mode with Wi-Fi on"
             code == "mo_not_outgoing" -> "the watch did not see an outgoing call"
             code == "mt_not_incoming" -> "the phone did not ring, so the watch did not see an incoming call"
             code == "mt_from_mailbox" -> "the incoming number was a mailbox short code; a mailbox call never counts as the incoming call"
@@ -89,15 +102,17 @@ object T2 {
     /**
      * Lab `t2_assess` for one feature over the calls of one T2 test.
      *
-     * - The outgoing call counts when it went active, every call network type
-     *   read during it is the feature's code (13 LTE for VoLTE, 18 IWLAN for
-     *   Wi-Fi calling), and the person said yes on audio.
+     * - The outgoing call counts when it went active, the bearer proof
+     *   passed for the feature's bearer (LTE for VoLTE, IWLAN for Wi-Fi
+     *   calling), every call network type read during it is the feature's
+     *   code, and the person said yes on audio.
      * - The incoming call counts on the same terms, and only when the phone
      *   rang, the incoming number was not a mailbox short code, and the
      *   person confirmed it came from their second line. A mailbox call
      *   proves downlink audio only and never counts as the incoming call.
-     * - A call that did not go active, a wrong or unread bearer, or a "no" on
-     *   audio fails the feature.
+     * - A call that did not go active, or a "no" on audio, fails the feature.
+     *   A bearer that is not proven, or proven to be another one, does not
+     *   count and asks for a retry (round 26).
      */
     fun assess(feature: T2Feature, calls: List<CallTestRecord>): T2Assessment {
         val code = feature.bearerCode
@@ -118,8 +133,18 @@ object T2 {
                 failed = failed ?: "${direction}_call_did_not_connect"
                 continue
             }
-            if (codes != setOf(code)) {
-                failed = failed ?: "${direction}_wrong_bearer_${codes.sorted().joinToString("_").ifEmpty { "none" }}"
+            // Round 26: the call type alone never counts; readings that disagree, or another bearer, ask for a retry.
+            if (codes.isNotEmpty() && codes != setOf(code)) {
+                notCounted += "${direction}_other_bearer_${codes.sorted().joinToString("_")}"
+                continue
+            }
+            val proof = watch.bearerProof
+            if (proof == null || !proof.counted) {
+                notCounted += "${direction}_bearer_not_proven"
+                continue
+            }
+            if (proof.bearer != feature.provenBearer) {
+                notCounted += "${direction}_other_bearer_${proof.bearer?.callNetworkType ?: "none"}"
                 continue
             }
             if (call.heard == AudioAnswer.NO) {
@@ -128,11 +153,6 @@ object T2 {
             }
             if (call.heard != AudioAnswer.YES) {
                 notCounted += "${direction}_no_audio_answer"
-                continue
-            }
-            // Round 19: Wi-Fi calling is tested in airplane mode with Wi-Fi on.
-            if (feature == T2Feature.VOWIFI && call.airplaneModeAtStart != true) {
-                notCounted += "${direction}_not_in_airplane_mode"
                 continue
             }
             if (direction == "mo") {

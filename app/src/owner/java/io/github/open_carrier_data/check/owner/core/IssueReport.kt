@@ -71,7 +71,8 @@ object IssueReport {
     fun results(run: RunResult, calls: List<CallsTested>): Pair<List<EntryResult>, Int> {
         val mccmnc = run.sim?.mccmnc
         val features = run.features.flatMap { f ->
-            val t2 = f.feature in Ladders.CALL_TESTED && calls.any { it.feature == f.feature && (it.mccmnc == null || it.mccmnc == mccmnc) }
+            // Round 26 rule change 1: T2 is the machine evidence of L3 (calls both ways), measured by this phone.
+            val t2 = f.feature in Ladders.CALL_TESTED && calls.any { it.feature == f.feature && it.level == CallsLevel.WORKS && (it.mccmnc == null || it.mccmnc == mccmnc) }
             Pointers.entries(f, t2)
         }
         val rows = run.apns.filter { it.apnKey.isNotEmpty() }
@@ -82,7 +83,7 @@ object IssueReport {
     /**
      * The pointer report of [run]. [cell] names the phone, software, SIM and
      * release (the run's own, or for older runs the same phone as it is now);
-     * [calls] are the read-only check's T2 passes on this phone model. Null
+     * [calls] are this phone's measured call levels (round 26; works is T2). Null
      * without a SIM, without a release digest, or without a result.
      */
     fun report(run: RunResult, cell: ReportCell, calls: List<CallsTested>, leaveOutApns: Int = 0): JsonObject? {

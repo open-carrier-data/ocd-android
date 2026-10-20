@@ -21,7 +21,13 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkManager
+import io.github.open_carrier_data.check.owner.core.CallLevels
+import io.github.open_carrier_data.check.owner.core.CallsOutMode
 import io.github.open_carrier_data.check.owner.core.CallsTested
+import io.github.open_carrier_data.check.owner.core.MmsProbe
+import io.github.open_carrier_data.check.owner.core.Retested
+import io.github.open_carrier_data.check.owner.core.SelfSms
+import io.github.open_carrier_data.check.owner.core.sameCard
 import io.github.open_carrier_data.check.owner.core.IssueReport
 import io.github.open_carrier_data.check.owner.core.IwlanDumps
 import io.github.open_carrier_data.check.owner.core.LogEvent
@@ -34,7 +40,6 @@ import io.github.open_carrier_data.check.owner.core.ReleaseSource
 import io.github.open_carrier_data.check.owner.core.SimView
 import io.github.open_carrier_data.check.owner.core.WifiCallingDetails
 import io.github.open_carrier_data.check.owner.core.update
-import io.github.open_carrier_data.check.ui.MainActivity
 import io.github.open_carrier_data.check.ui.OcdCheckTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -54,7 +59,7 @@ data class OwnerUi(
     val sims: List<OwnerSim>? = null,
     /** The same SIMs as Settings names them; null when the list is not readable. */
     val simViews: List<SimView>? = null,
-    /** The read-only check's T2 passes on this phone model. */
+    /** How far this phone's own measured calls went per feature and SIM (round 26: calls out, works). */
     val calls: List<CallsTested> = emptyList(),
     /** OCD's access point names for each SIM (by subscription ID) in the pulled release; missing: not known. */
     val apnCandidates: Map<Int, Int> = emptyMap(),
@@ -69,6 +74,12 @@ data class OwnerUi(
     val messageId: Long = 0,
     /** Wi-Fi calling details from the IWLAN dump, read when the owner asks; never the device log. */
     val details: List<String>? = null,
+    /** Round 26: "re-tested by OCD" from this phone's measured calls, and the last measured calls, in plain words. */
+    val retestedLines: List<String> = emptyList(),
+    val callLines: List<String> = emptyList(),
+    /** The MMS line per SIM ("not checked, the network no longer offers MMS", "access point reachable"). */
+    val mmsLines: List<String> = emptyList(),
+    val selfSmsLine: String? = null,
 ) {
     /** Test now may start: system access, a SIM, nothing running, not paused. */
     val canTest: Boolean get() = gate?.canWrite == true && sims?.isNotEmpty() == true && stepsToGo == 0 && state.stop == null
@@ -98,11 +109,14 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         val gate = withContext(Dispatchers.Default) { OwnerAccess.gate(context) }
         val sims = runCatching { OwnerData.sims(context) }.getOrNull()
         val views = withContext(Dispatchers.IO) { OwnerData.simViews(context) }
-        val calls = withContext(Dispatchers.IO) { OwnerData.callsTested(context) }
         val wm = WorkManager.getInstance(context)
         val state = store.read()
+        val calls = withContext(Dispatchers.IO) { OwnerData.callsTested(context, state) }
         val run = withContext(Dispatchers.IO) { runCatching { wm.getWorkInfosForUniqueWork(OwnerScheduler.RUN).get() }.getOrNull() }.orEmpty()
         val keys = withContext(Dispatchers.IO) { candidates(state, sims) }
+        val zone = java.time.ZoneId.systemDefault()
+        val now = System.currentTimeMillis()
+        val ended = withContext(Dispatchers.IO) { OwnerMms.ended(context) }
         _ui.value = _ui.value.copy(
             loaded = true,
             gate = gate,
@@ -110,6 +124,13 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             sims = sims,
             simViews = views,
             calls = calls,
+            retestedLines = Retested.current(state.retested, now).map { it.line(zone) },
+            callLines = state.calls.takeLast(3).reversed().map { CallLevels.line(it, zone) },
+            mmsLines = sims.orEmpty().map { sim ->
+                val line = MmsProbe.line(state.mms.lastOrNull { it.sim.sameCard(sim.key) }, MmsProbe.ended(ended, sim.identity.mccmnc), zone)
+                if (sims.orEmpty().size > 1) "${sim.name}: $line" else line
+            },
+            selfSmsLine = SelfSms.line(state.selfSms.lastOrNull(), zone),
             apnCandidates = keys.mapValues { it.value.size },
             reportLines = withContext(Dispatchers.IO) { runCatching { reportLines(state, sims, keys) }.getOrDefault(emptyList()) },
             stepsToGo = OwnerScheduler.pending(run),
@@ -246,6 +267,24 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    /** Round 26: the app's own mailbox call, live or as a dry run that only logs what it would dial. */
+    fun setCallsOutLive(on: Boolean) = viewModelScope.launch {
+        val mode = if (on) CallsOutMode.LIVE else CallsOutMode.DRY_RUN
+        store.update { it.copy(callsOutMode = mode).logged(System.currentTimeMillis(), "calls_out", if (on) "mailbox calls on: at night, muted, only when your own calls showed nothing" else "mailbox calls off: the app only notes what it would dial") }
+        refresh()
+    }
+
+    fun dryRunCallsOut() {
+        OwnerScheduler.dryRunCallsOut(getApplication())
+        say("Checking the mailbox call without dialling. See the log")
+    }
+
+    /** The optional data SMS to the phone's own number; off by default, as it may cost an SMS. */
+    fun setSelfSms(on: Boolean) = viewModelScope.launch {
+        store.update { it.copy(selfSmsOn = on).logged(System.currentTimeMillis(), "self_sms", if (on) "the weekly test SMS to your own number is on" else "the weekly test SMS is off") }
+        refresh()
+    }
+
     fun clearStop() = viewModelScope.launch {
         store.update { it.copy(stop = null).logged(System.currentTimeMillis(), "stop", "the owner cleared the stop flag") }
         say("Changes resumed")
@@ -329,14 +368,22 @@ class OwnerActivity : ComponentActivity() {
             clearStop = { viewModel.clearStop() },
             grantShizuku = { runCatching { Shizuku.requestPermission(4713) } },
             sendReport = ::openIssue,
-            openCheck = { startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_CALL_TEST, true)) },
+            setCallsOutLive = { viewModel.setCallsOutLive(it) },
+            dryRunCallsOut = viewModel::dryRunCallsOut,
+            setSelfSms = { viewModel.setSelfSms(it) },
         )
+        // `am start ... --ez calls_out_dry_run true` (the activity is guarded by MODIFY_PHONE_STATE): a dry run only, never a call.
+        if (intent?.getBooleanExtra(EXTRA_CALLS_OUT_DRY_RUN, false) == true) viewModel.dryRunCallsOut()
         setContent {
             OcdCheckTheme {
                 val ui by viewModel.ui.collectAsState()
                 OwnerScreen(ui, actions)
             }
         }
+    }
+
+    companion object {
+        const val EXTRA_CALLS_OUT_DRY_RUN = "calls_out_dry_run"
     }
 
     private fun openIssue() = viewModel.report { prefilled ->

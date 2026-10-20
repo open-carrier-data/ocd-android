@@ -1,0 +1,63 @@
+{
+  "description": "Networks recorded with MMS ended at high confidence: the owner build never tests MMS there and says \"MMS: not checked, the network no longer offers MMS\" (round 26 rule change 6). Everywhere else MMS stays a test target, checked only by a silent MMSC reachability probe, never by sending an MMS.",
+  "source": "OCD private repository, research/rule-decisions-20261006/mms-operator-ends-20261009.json (researched 2026-10-09), the rows with mms_status ended and confidence high",
+  "networks": [
+    {
+      "operator": "Vodafone Germany",
+      "mccmnc": [
+        "26202"
+      ],
+      "ended": "2023-01-17"
+    },
+    {
+      "operator": "Telekom Deutschland",
+      "mccmnc": [
+        "26201"
+      ],
+      "ended": "2026-06-30"
+    },
+    {
+      "operator": "Telefonica Germany / O2",
+      "mccmnc": [
+        "26203",
+        "26207"
+      ],
+      "ended": "2026-06-30"
+    },
+    {
+      "operator": "1&1 Mobilfunk",
+      "mccmnc": [
+        "26223"
+      ],
+      "ended": "2026-06-30"
+    },
+    {
+      "operator": "Swisscom",
+      "mccmnc": [
+        "22801"
+      ],
+      "ended": "2023-01-10"
+    },
+    {
+      "operator": "Salt",
+      "mccmnc": [
+        "22803"
+      ],
+      "ended": "2023-01-10"
+    },
+    {
+      "operator": "Sunrise",
+      "mccmnc": [
+        "22802"
+      ],
+      "ended": "2024-03-17"
+    },
+    {
+      "operator": "POST Luxembourg",
+      "mccmnc": [
+        "27001"
+      ],
+      "ended": "2024-09-29"
+    }
+  ]
+}

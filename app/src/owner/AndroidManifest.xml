@@ -14,6 +14,28 @@
     <!-- Re-applies the kept values of the SIM in each slot after a boot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--
+        Round 26 (runtime permissions, not privileged; granted by
+        priv-app/default-permissions-ocd-check-owner.xml in a ROM build and by `pm grant`
+        on a hand install): the night's muted call to the SIM's own allowlisted mailbox
+        (CALL_PHONE), and the removal of exactly that call's call log entry
+        (READ_CALL_LOG, WRITE_CALL_LOG); the optional data SMS to the phone's own number
+        on the app's port (SEND_SMS, RECEIVE_SMS), off unless the owner turns it on.
+    -->
+    <uses-permission
+        android:name="android.permission.CALL_PHONE"
+        tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
+    <uses-permission
+        android:name="android.permission.SEND_SMS"
+        tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
+    <uses-permission
+        android:name="android.permission.RECEIVE_SMS"
+        tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
+    <!-- Normal permissions: the microphone muted during the mailbox call; the SIM's MMS network for the MMSC probe. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!--
         No CHANGE_WIFI_STATE and no READ_LOGS since 2026-10-20: the owner build never
         switches Wi-Fi (VoLTE is measured inside a non-persistent Wi-Fi-calling-off
         override) and never reads the device log (the IWLAN and QNS dumps instead).
@@ -125,6 +147,38 @@
         <receiver
             android:name=".owner.RevertAlarmReceiver"
             android:exported="false" />
+
+        <!--
+            Round 26's passive call watch: the system's PHONE_STATE broadcast (protected; sent to
+            holders of READ_PHONE_STATE, waking them) starts the watch of a real call. It reads
+            the call from the registry and never keeps a number.
+        -->
+        <receiver
+            android:name=".owner.PhoneStateReceiver"
+            android:exported="true"
+            android:permission="android.permission.READ_PRIVILEGED_PHONE_STATE"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name=".owner.CallWatchService"
+            android:exported="false" />
+
+        <!--
+            The optional data SMS on the app's own port: only the system (BROADCAST_SMS) delivers
+            it; the send result comes back to the same receiver through its own PendingIntent.
+        -->
+        <receiver
+            android:name=".owner.SelfSmsReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.intent.action.DATA_SMS_RECEIVED" />
+                <data android:scheme="sms" android:host="localhost" android:port="16123" />
+            </intent-filter>
+        </receiver>
 
         <!-- Boot, the app's own update and carrier-config changes (all exempt from the implicit-broadcast limits). -->
         <receiver

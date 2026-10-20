@@ -7,6 +7,7 @@ import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.Radio
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import java.time.ZoneId
 
 /** How one run tests. */
 data class RunOptions(
@@ -60,6 +61,8 @@ class OwnerRunner(
     private val phone: OwnerPhone,
     private val store: StateStore,
     private val device: DeviceInfo,
+    /** The night a provisional keep needs calls out by ends at 05:00 in this zone. */
+    private val zone: ZoneId = ZoneId.systemDefault(),
 ) {
     private fun log(kind: String, text: String) = store.update { it.logged(phone.nowMs(), kind, text) }
 
@@ -427,10 +430,30 @@ class OwnerRunner(
         // The kept value as measured now: the baseline when the slot holds it, else the trial of it.
         val keptWorks = keptNow?.let { if (it.value == baseline) r.baselineWorks else if (it.value) r.onWorks else r.offWorks }
         if (best != null && best != baseline) {
+            // Round 26: a changed voice value needs calls out on its bearer; without a bearer proof (VoNR) it is not kept.
+            if (Provisional.unprovable(feature, best, baseline)) {
+                log("keep_waits", "${feature.wire}=$best is not kept: a changed voice value is kept only after calls out on its bearer, and ${feature.label} has no bearer proof")
+                return r.copy(best = best, bestWhy = "$why; not kept: no calls-out test for ${feature.label}", applied = false)
+            }
+            if (keptNow?.value == best) {
+                // Kept already (a trial of the other value gave it back): nothing to change, its calls-out state stays.
+                return r.copy(best = best, bestWhy = why, applied = true)
+            }
             if (keptNow != null) session.dropKeep(feature, "replaced by a better value")
             session.apply(feature, best, Hold.KEPT, why)
             applied = true
             log("keep", "${feature.wire}=$best kept on slot ${session.slot}: $why")
+            Provisional.bearerFor(feature, best, baseline)?.let { bearer ->
+                val now = phone.nowMs()
+                val sim = session.sim
+                store.update { s ->
+                    s.copy(
+                        provisional = s.provisional.filterNot { it.slot == sim.slot && it.feature == feature } +
+                            ProvisionalKeep(sim.slot, sim.key, feature, best, bearer, now, Provisional.nightEnd(now, zone)),
+                    )
+                }
+                log("keep", "${feature.wire}=$best is provisional: kept past the night only after calls out over ${bearer.plain}, then until an incoming call is seen (7 days at most)")
+            }
         } else if (best == null && keptNow != null && keptWorks == false) {
             session.dropKeep(feature, "the kept value no longer works")
             log("smart_revert", "${feature.wire}: the kept value no longer works; back to the phone's own value")
