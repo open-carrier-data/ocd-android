@@ -72,6 +72,11 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     val ui: StateFlow<OwnerUi> = _ui
 
     init {
+        // The bundled data is large; read its tag apart, so the first screen does not wait for it.
+        viewModelScope.launch {
+            val tag = withContext(Dispatchers.IO) { OwnerData.bundledTag(getApplication()) }
+            _ui.value = _ui.value.copy(bundledTag = tag)
+        }
         viewModelScope.launch {
             while (isActive) {
                 refresh()
@@ -89,7 +94,6 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         val wm = WorkManager.getInstance(context)
         val state = store.read()
         val run = withContext(Dispatchers.IO) { runCatching { wm.getWorkInfosForUniqueWork(OwnerScheduler.RUN).get() }.getOrNull() }.orEmpty()
-        val bundled = _ui.value.bundledTag ?: withContext(Dispatchers.IO) { OwnerData.bundledTag(context) }
         _ui.value = _ui.value.copy(
             loaded = true,
             gate = gate,
@@ -98,7 +102,6 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             simViews = views,
             calls = calls,
             apnCandidates = withContext(Dispatchers.IO) { candidates(state, sims) },
-            bundledTag = bundled,
             stepsToGo = OwnerScheduler.pending(run),
         )
     }
