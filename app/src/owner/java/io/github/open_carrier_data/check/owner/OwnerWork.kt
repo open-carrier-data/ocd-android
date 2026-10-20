@@ -374,6 +374,10 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                     if (!store.read().trialsLive()) RevertAlarm.disarm(context)
                 }
                 OwnerScheduler.dropKeeps(context, outcome.reverts)
+                // A scheduled dry run also uses the night's one call, so the log gets one line a night, not one an hour.
+                if (outcome.result == "dry_run" && !dryRunRequest) {
+                    store.update { s -> s.copy(callsOutNights = (s.callsOutNights + io.github.open_carrier_data.check.owner.core.CallsOutNight(d.sim, d.feature, d.bearer, QuietWindow.nightOf(ZonedDateTime.now()))).takeLast(MailboxCaller.MAX_NIGHTS)) }
+                }
                 if (outcome.result == "aborted") break
             }
             settleProvisional(context, store.read())
