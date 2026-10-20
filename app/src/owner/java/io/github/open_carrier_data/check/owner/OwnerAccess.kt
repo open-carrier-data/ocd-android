@@ -10,7 +10,6 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
-import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.Parcel
@@ -32,9 +31,12 @@ import io.github.open_carrier_data.check.owner.core.OwnerCommand
 import io.github.open_carrier_data.check.owner.core.OwnerPhone
 import io.github.open_carrier_data.check.owner.core.PhoneApnRow
 import io.github.open_carrier_data.check.owner.core.PreferredApn
+import io.github.open_carrier_data.check.owner.core.RegistrationWatch
 import io.github.open_carrier_data.check.owner.core.Route
 import io.github.open_carrier_data.check.owner.core.SafetyException
+import io.github.open_carrier_data.check.owner.core.ServerStart
 import io.github.open_carrier_data.check.owner.core.retrying
+import io.github.open_carrier_data.check.owner.core.sha256
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -68,13 +70,18 @@ object OwnerAccess {
     const val OWNER_DEVICE = "x1s"
     const val OWNER_MODEL = "SM-G981B"
 
-    /** What the privileged route needs; granted only to a priv-app with the shipped allowlist. */
+    /**
+     * What the privileged route needs; granted only to a priv-app with the
+     * shipped allowlist. READ_LOGS is gone (2026-10-20): the owner build reads
+     * no log; PACKAGE_USAGE_STATS opens the IWLAN and QNS dumps instead.
+     */
     val PRIVILEGED_PERMISSIONS = listOf(
         "android.permission.MODIFY_PHONE_STATE",
         "android.permission.READ_PRIVILEGED_PHONE_STATE",
+        "android.permission.READ_PRECISE_PHONE_STATE",
         "android.permission.WRITE_APN_SETTINGS",
         "android.permission.DUMP",
-        "android.permission.READ_LOGS",
+        "android.permission.PACKAGE_USAGE_STATS",
     )
 
     fun privilegedGranted(context: Context): Boolean {
@@ -184,6 +191,28 @@ abstract class AppSidePhone(protected val context: Context) : OwnerPhone {
     override fun nowMs(): Long = System.currentTimeMillis()
     override fun uptimeMs(): Long = SystemClock.elapsedRealtime()
     override suspend fun sleep(ms: Long) = delay(ms)
+
+    /**
+     * The running system_server's start: the property (when SELinux lets the
+     * app read it), the kernel's boot ID, and zygote's PID (the app's parent;
+     * a soft restart starts a new zygote).
+     */
+    override suspend fun serverStart(): ServerStart = withContext(Dispatchers.IO) {
+        ServerStart(
+            startElapsedMs = property("sys.system_server.start_elapsed")?.toLongOrNull(),
+            startCount = property("sys.system_server.start_count")?.toIntOrNull(),
+            bootId = runCatching { java.io.File("/proc/sys/kernel/random/boot_id").readText().trim() }.getOrNull()?.takeIf { it.matches(Regex("[0-9a-f-]{36}")) },
+            zygotePid = runCatching { android.system.Os.getppid() }.getOrNull()?.takeIf { it > 1 },
+            elapsedMs = SystemClock.elapsedRealtime(),
+        )
+    }
+
+    private fun property(name: String): String? = runCatching {
+        Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, name) as String
+    }.getOrNull()?.takeIf { it.isNotEmpty() }
+
+    override suspend fun watchRegistrations(subId: Int): RegistrationWatch? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) ImsRegistrationWatch.start(context, subId) else null
 }
 
 /** Route (b): Shizuku's server as root runs [OwnerShellService]. */
@@ -218,7 +247,9 @@ class ShizukuPhone(context: Context, private val binder: IBinder) : AppSidePhone
     override suspend fun registryText() = text(OwnerCommand.REGISTRY)
     override suspend fun phoneText() = text(OwnerCommand.PHONE)
     override suspend fun ecmProperty() = text(OwnerCommand.ECM_PROPERTY)
-    override suspend fun iwlanLogText(slot: Int) = text(OwnerCommand.IWLAN_LOG, OwnerArgs(slot = slot))
+    override suspend fun powerText() = text(OwnerCommand.POWER)
+    override suspend fun iwlanServiceText() = text(OwnerCommand.IWLAN_DUMP)
+    override suspend fun qnsText() = text(OwnerCommand.QNS_DUMP)
 
     override suspend fun ccSet(slot: Int, subId: Int, key: String, value: Boolean): CcResult {
         val out = run(OwnerCommand.CC_SET, OwnerArgs(slot = slot, key = key, value = value)) ?: return CcResult(false, "no_answer")
@@ -232,12 +263,18 @@ class ShizukuPhone(context: Context, private val binder: IBinder) : AppSidePhone
 
     override suspend fun apnQuery(numeric: String) = PhoneApnRow.parseQuery(text(OwnerCommand.APN_QUERY, OwnerArgs(numeric = numeric)))
     override suspend fun apnQueryMarked() = PhoneApnRow.parseQuery(text(OwnerCommand.APN_QUERY_MARKED))
+    override suspend fun apnRowById(id: Long) = PhoneApnRow.parseQuery(text(OwnerCommand.APN_BY_ID, OwnerArgs(id = id)))?.firstOrNull { it.id == id }
     override suspend fun apnConflicts(values: Map<String, String>) =
         PhoneApnRow.parseQuery(text(OwnerCommand.APN_CONFLICTS, OwnerArgs(binds = values)))?.map { it.id }
-    override suspend fun apnInsert(values: Map<String, String>) = run(OwnerCommand.APN_INSERT, OwnerArgs(binds = values))?.first == 0
-    override suspend fun apnDelete(id: Long) = run(OwnerCommand.APN_DELETE, OwnerArgs(id = id))?.first == 0
 
-    override suspend fun setWifiEnabled(on: Boolean): Boolean = run(OwnerCommand.WIFI_SET, OwnerArgs(value = on))?.first == 0
+    /** `content insert` prints no row: the new row is the marked one with the test row's name and carrier ID and the highest ID. */
+    override suspend fun apnInsert(values: Map<String, String>): Long? {
+        if (run(OwnerCommand.APN_INSERT, OwnerArgs(binds = values))?.first != 0) return null
+        val carrierId = values["carrier_id"]?.toLongOrNull()
+        return apnQueryMarked()?.filter { it.name == values["name"] && it.carrierId == carrierId && it.numeric.isNullOrEmpty() }?.maxOfOrNull { it.id }
+    }
+    override suspend fun apnDelete(id: Long) = run(OwnerCommand.APN_DELETE, OwnerArgs(id = id))?.first == 0
+    override suspend fun apnTableHash(): String? = text(OwnerCommand.APN_ALL)?.takeIf { "Row: " in it || "No result found" in it }?.let { sha256(it) }
 
     override suspend fun preferredApn(subId: Int): PreferredApn {
         val out = text(OwnerCommand.PREFERRED_QUERY, OwnerArgs(subId = subId)) ?: return PreferredApn(false, null)
@@ -320,10 +357,11 @@ class ShizukuPhone(context: Context, private val binder: IBinder) : AppSidePhone
  * Route (a): the app as a privileged system app. CarrierConfigManager's
  * system API overrideConfig(subId, bundle), which is never persistent, and
  * the telephony provider directly. The carrier config and the registry are
- * read with dumpsys as the app (DUMP), the IWLAN tags with logcat
- * (READ_LOGS); the emergency state and IMS through the system APIs
- * ([emergencyApi], [imsApi]), since the phone service's dump is closed to
- * an app.
+ * read with dumpsys as the app (DUMP), the IWLAN data service and QNS with
+ * `dumpsys activity service` (DUMP plus PACKAGE_USAGE_STATS); the emergency
+ * state and IMS through the system APIs ([emergencyApi], [imsApi]). Never the
+ * device log: reading it asks the owner for log access, and a privileged app
+ * cannot skip that prompt (2026-10-20).
  */
 class PrivilegedPhone(context: Context) : AppSidePhone(context) {
     override val route = Route.PRIVILEGED
@@ -362,7 +400,11 @@ class PrivilegedPhone(context: Context) : AppSidePhone(context) {
 
     /** Not read here: SELinux keeps priv_app from ril.cdma.inecmmode (radio_cdma_ecm_prop); [emergencyApi] reads the mode. */
     override suspend fun ecmProperty(): String? = null
-    override suspend fun iwlanLogText(slot: Int) = local(OwnerCommand.IWLAN_LOG, OwnerArgs(slot = slot))
+    override suspend fun powerText() = local(OwnerCommand.POWER)
+
+    /** "Permission Denial" when PACKAGE_USAGE_STATS (or its app-op) is missing: then unreadable. */
+    override suspend fun iwlanServiceText() = local(OwnerCommand.IWLAN_DUMP)?.takeIf { "IwlanDataServiceProvider" in it }
+    override suspend fun qnsText() = local(OwnerCommand.QNS_DUMP)?.takeIf { "QualifiedNetworksServiceImpl" in it }
 
     override suspend fun emergencyApi(): EmergencyApi = withContext(Dispatchers.IO) {
         val telephony = SystemBinders.telephony()
@@ -426,6 +468,8 @@ class PrivilegedPhone(context: Context) : AppSidePhone(context) {
                             types = c.getString(3).orEmpty().split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() },
                             protocol = c.getString(4)?.uppercase(),
                             mvnoType = c.getString(5)?.takeIf { it.isNotEmpty() }?.lowercase(),
+                            numeric = c.getString(6),
+                            carrierId = if (c.isNull(7)) null else c.getLong(7),
                         ),
                     )
                 }
@@ -433,10 +477,25 @@ class PrivilegedPhone(context: Context) : AppSidePhone(context) {
         }
     }.getOrNull()
 
-    /** A system app may still switch Wi-Fi (WifiServiceImpl lets system apps through); needs CHANGE_WIFI_STATE. */
-    @Suppress("DEPRECATION")
-    override suspend fun setWifiEnabled(on: Boolean): Boolean = withContext(Dispatchers.IO) {
-        runCatching { context.getSystemService(WifiManager::class.java)?.setWifiEnabled(on) == true }.getOrDefault(false)
+    override suspend fun apnRowById(id: Long): PhoneApnRow? = withContext(Dispatchers.IO) { query("_id = ?", arrayOf(id.toString()))?.firstOrNull() }
+
+    /** Every visible row's identity columns, hashed in row order; the same text as the Shizuku route's `content query` gives. */
+    override suspend fun apnTableHash(): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            resolver.query(carriers, OwnerCommand.HASH_COLUMNS.toTypedArray(), null, null, "_id")?.use { c ->
+                val text = StringBuilder()
+                var n = 0
+                while (c.moveToNext()) {
+                    text.append("Row: ").append(n++).append(' ')
+                    for (i in OwnerCommand.HASH_COLUMNS.indices) {
+                        if (i > 0) text.append(", ")
+                        text.append(OwnerCommand.HASH_COLUMNS[i]).append('=').append(if (c.isNull(i)) "NULL" else c.getString(i))
+                    }
+                    text.append('\n')
+                }
+                sha256(text.toString())
+            }
+        }.getOrNull()
     }
 
     override suspend fun apnQuery(numeric: String) = withContext(Dispatchers.IO) {
@@ -456,15 +515,15 @@ class PrivilegedPhone(context: Context) : AppSidePhone(context) {
         }.getOrNull()
     }
 
-    /** True only when the provider added a row: a merge into an existing row answers no URI. */
-    override suspend fun apnInsert(values: Map<String, String>): Boolean = withContext(Dispatchers.IO) {
+    /** The new row's ID; null when the provider answered no URI (a merge into an existing row, or a refusal): the runner stops. */
+    override suspend fun apnInsert(values: Map<String, String>): Long? = withContext(Dispatchers.IO) {
         // The same checks as the Shizuku route's argv.
-        if (OwnerCommand.APN_INSERT.argv(OwnerArgs(binds = values)) == null) return@withContext false
+        if (OwnerCommand.APN_INSERT.argv(OwnerArgs(binds = values)) == null) return@withContext null
         val cv = ContentValues()
         for ((k, v) in values) {
-            if (k in ApnColumns.INTEGER) cv.put(k, v.toLong()) else cv.put(k, v)
+            if (k in ApnColumns.INTEGER && v.isNotEmpty()) cv.put(k, v.toLong()) else cv.put(k, v)
         }
-        runCatching { resolver.insert(carriers, cv) != null }.getOrDefault(false)
+        runCatching { resolver.insert(carriers, cv)?.let { android.content.ContentUris.parseId(it) } }.getOrNull()?.takeIf { it > 0 }
     }
 
     override suspend fun apnDelete(id: Long): Boolean = withContext(Dispatchers.IO) {

@@ -110,7 +110,7 @@ class PrivilegedReadTest {
     private val s20 = DeviceInfo("samsung", "SM-G981B", "x1s", 16, RomFamily.LINEAGEOS)
     private val sim = OwnerFixtures.SIM
     private val ocdOn = OcdAnswer(true, "device_record", "open.26202.aaaaaaaaaaaa", recordSource = "samsung_omc", recordStack = "stock", sameStack = false)
-    private val fast = RunOptions(settleMs = 30_000, pollMs = 10_000, apnSettleMs = 30_000)
+    private val fast = RunOptions(settleMs = 30_000, restoreMs = 30_000, pollMs = 10_000, apnSettleMs = 30_000)
 
     @Test
     fun `the observation reads IMS from the API when there is no dump`() = runBlocking {
@@ -129,7 +129,7 @@ class PrivilegedReadTest {
     }
 
     @Test
-    fun `a privileged run tests VoLTE with Wi-Fi off and Wi-Fi comes back on`() = runBlocking {
+    fun `a privileged run measures VoLTE inside the Wi-Fi-calling-off override, Wi-Fi stays on`() = runBlocking {
         val phone = FakePhone().apply {
             privileged = true
             defaultApp = mapOf("carrier_volte_available_bool" to "true", "carrier_wfc_ims_available_bool" to "true")
@@ -139,11 +139,29 @@ class PrivilegedReadTest {
         val result = OwnerRunner(phone, phone.store, s20).testFeature(sim, OwnerFeature.VOLTE, ocdOn, fast)
         assertNull(result.refused)
         assertEquals(true, result.baselineWorks)
+        assertEquals(OwnerRunner.VOLTE_METHOD_WFC_OVERRIDE, result.method)
         assertEquals(true, result.offWorks)
         assertEquals(true, phone.wifi)
-        assertNull(phone.store.state.wifiOffSinceMs)
         assertNull(phone.store.state.stop)
         assertTrue(phone.overrides.isNullOrEmpty())
+    }
+
+    @Test
+    fun `IMS counts as moved only when the registration itself has, not only its data connection`() = runBlocking {
+        val phone = FakePhone().apply {
+            privileged = true
+            defaultApp = mapOf("carrier_volte_available_bool" to "true", "carrier_wfc_ims_available_bool" to "true")
+            imsOverWifi = true
+            wifi = true
+            registrationLag = 2
+        }
+        val result = OwnerRunner(phone, phone.store, s20).testFeature(sim, OwnerFeature.VOLTE, ocdOn, fast.copy(only = true))
+        assertEquals(true, result.baselineWorks)
+        assertEquals(true, result.restored)
+        val measured = phone.store.state.log.single { it.kind == "volte_method" && "registered over" in it.text }.text
+        assertTrue(measured, "after 0 s" !in measured)
+        val back = phone.store.state.log.single { it.kind == "restored" }.text
+        assertTrue(back, "after 0 s" !in back && "baseline back" in back)
     }
 
     @Test
@@ -185,19 +203,21 @@ class PrivilegedReadTest {
  * The APN trial on the S20 (2026-10-19): TelephonyProvider merged OCD rows
  * that matched a stock row on its UNIQUE columns into that row, answered
  * with no row, and the revert then deleted the stock rows by their new
- * marker name. A merge is now checked for before the insert, and one that
- * happens anyway stops the write path without deleting anything.
+ * marker name. Since 2026-10-20 the test row is keyed by the SIM's carrier
+ * ID with an empty numeric (AOSP Settings' way), so it cannot match a stock
+ * row; an OCD row the phone already has is still not inserted; a null insert
+ * answer stops; nothing is ever deleted by marker.
  */
 class ApnMergeTest {
     private val s20 = DeviceInfo("samsung", "SM-G981B", "x1s", 16, RomFamily.LINEAGEOS)
     private val sim = OwnerFixtures.SIM
-    private val fast = RunOptions(settleMs = 30_000, pollMs = 10_000, apnSettleMs = 30_000)
+    private val fast = RunOptions(settleMs = 30_000, restoreMs = 30_000, pollMs = 10_000, apnSettleMs = 30_000)
 
     /** The fake's stock row is web.vodafone.de [default,supl] IPV4V6; this one differs only in its types. */
     private val sameKey = OcdApnRow(mapOf("mcc" to "262", "mnc" to "02", "apn" to "web.vodafone.de", "type" to "default", "protocol" to "IPV4V6", "carrier" to "Vodafone"))
 
     @Test
-    fun `a row the provider would merge into a phone row is not inserted`() = runBlocking {
+    fun `a row the phone has already (the same provider key) is not inserted`() = runBlocking {
         val phone = FakePhone().apply { privileged = true }
         val results = OwnerRunner(phone, phone.store, s20).testApns(sim, listOf(sameKey), fast)
         assertEquals(OwnerRunner.SAME_AS_PHONE_ROW, results.single().status)
@@ -215,40 +235,41 @@ class ApnMergeTest {
     }
 
     @Test
-    fun `a merge the check missed stops the write path and deletes no phone row`() = runBlocking {
+    fun `the carrier-ID test row cannot merge into the stock row even when the lookup misses it`() = runBlocking {
         val phone = FakePhone().apply { conflictsBlind = true }
-        val runner = OwnerRunner(phone, phone.store, s20)
-        val results = runner.testApns(sim, listOf(sameKey), fast)
-        assertEquals("insert_merged_into_phone_row", results.single().status)
-        assertEquals("the stock row is still there", listOf(1L), phone.apns.map { it.id })
-        assertFalse(phone.writes.any { it.startsWith("apn delete") })
-        assertTrue(phone.store.state.stop!!.startsWith("apn_insert_merged"))
-        assertTrue(phone.store.state.apns.isEmpty())
-        // The start-up pass leaves the marked phone row to the owner while the stop flag is set.
-        val summary = runner.reconcile(listOf(sim))
-        assertTrue(summary, "left for the owner" in summary)
+        val results = OwnerRunner(phone, phone.store, s20).testApns(sim, listOf(sameKey), fast)
+        assertEquals("inserted", results.single().status)
+        assertEquals("the stock row is untouched", "LIDL Internet", phone.apns.single { it.id == 1L }.name)
         assertEquals(listOf(1L), phone.apns.map { it.id })
+        assertEquals(listOf("apn delete 100"), phone.writes.filter { it.startsWith("apn delete") })
+        assertNull(phone.store.state.stop)
     }
 
     @Test
-    fun `a crash leftover is found only among rows added after the record`() = runBlocking {
+    fun `a crash leftover is found only as the test row itself, added after the record`() = runBlocking {
         val phone = FakePhone()
-        // A phone row that carries the marker (a merge) and the same key as the trial's record.
+        // A phone row that carries the marker (an old merge) and the same key as the trial's record: never deleted.
         phone.apns[0] = phone.apns[0].copy(name = "LIDL Internet (OCD Check test)")
         val record = io.github.open_carrier_data.check.owner.core.LiveApn(
             sim.key, null, "web.vodafone.de", phone.apns[0].key, io.github.open_carrier_data.check.owner.core.Hold.TRIAL,
-            phone.now, 1L, true, madePreferred = false, maxIdBefore = 1L,
+            phone.now, 1L, true, madePreferred = false, maxIdBefore = 1L, testName = "LIDL Internet (OCD Check test)", carrierId = 2397,
         )
         phone.store.state = phone.store.state.copy(apns = listOf(record))
         OwnerRunner(phone, phone.store, s20).revertApn(sim, record)
         assertEquals(listOf(1L), phone.apns.map { it.id })
         assertFalse(phone.writes.any { it.startsWith("apn delete") })
+        // The test row itself (after the record, its own name, carrier ID and empty numeric) is.
+        phone.apns += io.github.open_carrier_data.check.owner.core.PhoneApnRow(120, "LIDL Internet (OCD Check test)", "internet.lidl", listOf("default"), "IPV4V6", null, "", 2397)
+        phone.store.state = phone.store.state.copy(apns = listOf(record))
+        OwnerRunner(phone, phone.store, s20).revertApn(sim, record)
+        assertEquals(listOf(1L), phone.apns.map { it.id })
+        assertEquals(listOf("apn delete 120"), phone.writes.filter { it.startsWith("apn delete") })
     }
 
     @Test
-    fun `the conflict lookup mirrors the provider's UNIQUE columns and defaults`() {
-        val values = io.github.open_carrier_data.check.owner.core.ApnColumns.values(sameKey)
-        val match = io.github.open_carrier_data.check.owner.core.ApnColumns.conflictMatch(values).toMap()
+    fun `the lookups mirror the provider's UNIQUE columns and defaults, and the test row's key is its own`() {
+        val identity = io.github.open_carrier_data.check.owner.core.ApnColumns.identity(sameKey)
+        val match = io.github.open_carrier_data.check.owner.core.ApnColumns.conflictMatch(identity).toMap()
         assertEquals(22, match.size)
         assertEquals("web.vodafone.de", match["apn"])
         assertEquals("IPV4V6", match["protocol"])
@@ -257,9 +278,13 @@ class ApnMergeTest {
         assertEquals("-1", match["carrier_id"])
         assertEquals("3", match["infrastructure_bitmask"])
         assertFalse("name and type are not UNIQUE columns", "name" in match || "type" in match)
+        val test = io.github.open_carrier_data.check.owner.core.ApnColumns.conflictMatch(io.github.open_carrier_data.check.owner.core.ApnColumns.testRow(sameKey, 2397)).toMap()
+        assertEquals("", test["numeric"])
+        assertEquals("2397", test["carrier_id"])
+        assertEquals("1", test["infrastructure_bitmask"])
         val quoted = OcdApnRow(sameKey.attributes + ("apn" to "o'brien"))
         val argv = io.github.open_carrier_data.check.owner.core.OwnerCommand.APN_CONFLICTS.argv(
-            io.github.open_carrier_data.check.owner.core.OwnerArgs(binds = io.github.open_carrier_data.check.owner.core.ApnColumns.values(quoted)),
+            io.github.open_carrier_data.check.owner.core.OwnerArgs(binds = io.github.open_carrier_data.check.owner.core.ApnColumns.identity(quoted)),
         )!!
         assertEquals(listOf("content", "query", "--uri", "content://telephony/carriers", "--projection", "_id", "--where"), argv.dropLast(1))
         assertTrue(argv.last(), "apn='o''brien'" in argv.last())

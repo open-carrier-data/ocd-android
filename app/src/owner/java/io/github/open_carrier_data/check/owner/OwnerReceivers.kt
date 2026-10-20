@@ -1,6 +1,7 @@
 package io.github.open_carrier_data.check.owner
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -15,59 +16,99 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.work.ExistingWorkPolicy
 import io.github.open_carrier_data.check.R
 import io.github.open_carrier_data.check.owner.core.Hold
+import io.github.open_carrier_data.check.owner.core.Notice
 import io.github.open_carrier_data.check.owner.core.OwnerState
 
 /**
- * While any override or APN row of the owner build is live, an ongoing
- * notification says so and offers a one-tap "Revert all" (round 25 OB5). The
- * notification only reverts; it never starts a test.
+ * The owner hears little (2026-10-20, "so the user does not notice it that
+ * much"). While a trial or a kept value is live, a quiet notification (the
+ * lowest importance: no sound, no status-bar icon, folded at the bottom of
+ * the shade) says so and offers a one-tap "Revert all" (round 25 OB5); it
+ * only reverts, it never starts a test. Routine work posts nothing. A
+ * normal notification comes only when a kept value came or went, or when
+ * something failed ([Notices]).
  */
 object OwnerNotifications {
-    private const val CHANNEL = "owner_live"
-    private const val ID = 4712
+    private const val LIVE_CHANNEL = "owner_live_quiet"
+    private const val EVENTS_CHANNEL = "owner_events"
 
-    fun refresh(context: Context, state: OwnerState) {
-        val manager = NotificationManagerCompat.from(context)
-        if (!state.anyLive && state.stop == null) {
-            manager.cancel(ID)
-            return
-        }
-        if (Build.VERSION.SDK_INT >= 33 &&
-            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
-        context.getSystemService(NotificationManager::class.java)?.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Live test settings", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Shown while the owner build holds a carrier setting on this phone"
+    /** The channel of the builds before 2026-10-20 (low importance, with an icon); removed. */
+    private const val OLD_LIVE_CHANNEL = "owner_live"
+    private const val LIVE_ID = 4712
+    private const val EVENT_ID = 4714
+
+    private fun allowed(context: Context): Boolean =
+        Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    private fun channels(context: Context) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        runCatching { manager.deleteNotificationChannel(OLD_LIVE_CHANNEL) }
+        manager.createNotificationChannel(
+            NotificationChannel(LIVE_CHANNEL, "While a test setting is live", NotificationManager.IMPORTANCE_MIN).apply {
+                description = "Quiet: shown only while the owner build holds a carrier setting on this phone, with Revert all"
+                setShowBadge(false)
             },
         )
+        manager.createNotificationChannel(
+            NotificationChannel(EVENTS_CHANNEL, "Changes and failures", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Only when a kept value came or went, or when something failed"
+            },
+        )
+    }
+
+    private fun open(context: Context) = PendingIntent.getActivity(
+        context, 0, Intent(context, OwnerActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
+    // allowed() checks POST_NOTIFICATIONS first; lint does not follow it into the helper.
+    @SuppressLint("MissingPermission")
+    fun refresh(context: Context, state: OwnerState) {
+        val manager = NotificationManagerCompat.from(context)
+        if (!state.anyLive) {
+            manager.cancel(LIVE_ID)
+            return
+        }
+        if (!allowed(context)) return
+        channels(context)
         val trials = state.overrides.count { it.hold == Hold.TRIAL } + state.apns.count { it.hold == Hold.TRIAL }
         val kept = state.overrides.count { it.hold == Hold.KEPT } + state.apns.count { it.hold == Hold.KEPT }
         val text = buildString {
-            if (state.stop != null) append("Stopped: ").append(state.stop.take(80)).append(". ")
             if (kept > 0) append("$kept kept: ").append(state.overrides.filter { it.hold == Hold.KEPT }.joinToString { "${it.key.substringBefore("_bool")}=${it.value}" }).append(". ")
-            if (trials > 0) append("$trials under test.")
-            if (state.wifiOffSinceMs != null) append(" Wi-Fi is off for a VoLTE measurement.")
+            if (trials > 0) append("$trials under test; reverted when the test ends.")
         }
-        val open = PendingIntent.getActivity(
-            context, 0, Intent(context, OwnerActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
         val revert = PendingIntent.getBroadcast(
             context, 1, Intent(context, RevertAllReceiver::class.java).setAction(RevertAllReceiver.ACTION),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val notification = NotificationCompat.Builder(context, CHANNEL)
+        val notification = NotificationCompat.Builder(context, LIVE_CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setContentTitle("Open Carrier Data: carrier settings changed on this phone")
+            .setContentTitle("Open Carrier Data: a carrier setting is live")
             .setContentText(text.ifBlank { "Live settings" })
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setSilent(true)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setContentIntent(open)
+            .setContentIntent(open(context))
             .addAction(0, "Revert all", revert)
             .build()
-        runCatching { manager.notify(ID, notification) }
+        runCatching { manager.notify(LIVE_ID, notification) }
+    }
+
+    /** A change or a failure; replaces the previous one. */
+    @SuppressLint("MissingPermission")
+    fun notice(context: Context, notice: Notice) {
+        if (!allowed(context)) return
+        channels(context)
+        val notification = NotificationCompat.Builder(context, EVENTS_CHANNEL)
+            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            .setContentTitle(notice.title)
+            .setContentText(notice.text.take(120))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(notice.text.take(600)))
+            .setAutoCancel(true)
+            .setContentIntent(open(context))
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(EVENT_ID, notification) }
     }
 }
 
@@ -95,15 +136,26 @@ class OwnerBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             // A boot, or an update of the app itself (an adb install over the system copy).
+            // A boot, a soft restart (BOOT_COMPLETED comes again; the window counts from the system server's start), or the app's own update.
             Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
-                OwnerScheduler.cleanup(context, afterBoot = true)
-                OwnerScheduler.ensureWeekly(context, FileStateStore(context).read().scheduleOn)
+                OwnerScheduler.cleanup(context, afterBoot = true, serverUpMs = serverUpMs())
+                OwnerScheduler.ensureQuiet(context, FileStateStore(context).read().scheduleOn)
             }
             CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED -> {
                 val state = FileStateStore(context).read()
                 // KEEP: a pass already queued or running is never cancelled by its own writes.
-                if (state.anyLive) OwnerScheduler.cleanup(context, afterBoot = true, policy = ExistingWorkPolicy.KEEP)
+                if (state.anyLive) OwnerScheduler.cleanup(context, afterBoot = true, policy = ExistingWorkPolicy.KEEP, serverUpMs = serverUpMs())
             }
         }
     }
+
+    /**
+     * How long the system server has run, from its start property when the
+     * app may read it; else 0, as if it had just started (the cleanup then
+     * waits the full 10 minutes).
+     */
+    private fun serverUpMs(): Long = runCatching {
+        val start = (Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "sys.system_server.start_elapsed") as String).toLong()
+        (android.os.SystemClock.elapsedRealtime() - start).coerceAtLeast(0)
+    }.getOrDefault(0L)
 }

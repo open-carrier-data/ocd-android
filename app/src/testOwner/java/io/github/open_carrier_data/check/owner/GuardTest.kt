@@ -9,6 +9,7 @@ import io.github.open_carrier_data.check.owner.core.OwnerFeature
 import io.github.open_carrier_data.check.owner.core.SafetyException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -41,28 +42,29 @@ class GuardTest {
         assertTrue(KeyGuard.FORBIDDEN.containsMatchIn("CARRIER_ECBM"))
     }
 
+    /** A test row as the runner builds it (the report of 2026-10-20): empty numeric, the SIM's carrier ID, edited. */
     private val args = OwnerArgs(slot = 0, subId = 3, key = "carrier_volte_available_bool", value = true, numeric = "26202", id = 7,
-        binds = mapOf("name" to "LIDL Internet${ApnColumns.MARKER}", "apn" to "web.vodafone.de", "numeric" to "26202", "type" to "default,supl"))
+        binds = mapOf(
+            "name" to "LIDL Internet${ApnColumns.MARKER}", "apn" to "web.vodafone.de", "numeric" to "", "mcc" to "", "mnc" to "",
+            "type" to "default,supl", "carrier_id" to "2397", "infrastructure_bitmask" to "1", "apn_set_id" to "0", "edited" to "1",
+        ))
 
     @Test
-    fun `every command has a fixed shape, and the writes are the seven listed`() {
+    fun `every command has a fixed shape, and the writes are the six listed`() {
         val lines = OwnerCommand.entries.associateWith { it.argv(args)!!.joinToString(" ") }
         assertEquals("cmd phone cc set-value -s 0 carrier_volte_available_bool true", lines[OwnerCommand.CC_SET])
         assertEquals("cmd phone cc clear-values -s 0", lines[OwnerCommand.CC_CLEAR])
         assertEquals("content delete --uri content://telephony/carriers --where _id=7", lines[OwnerCommand.APN_DELETE])
         assertEquals("content insert --uri content://telephony/carriers/preferapn/subId/3 --bind apn_id:l:7", lines[OwnerCommand.PREFERRED_SET])
-        // VoLTE's Wi-Fi-off measurement (the owner's first run, 2026-10-19): Wi-Fi only, never svc.
-        assertEquals("cmd wifi set-wifi-enabled enabled", lines[OwnerCommand.WIFI_SET])
-        assertEquals("cmd wifi set-wifi-enabled disabled", OwnerCommand.WIFI_SET.argv(args.copy(value = false))!!.joinToString(" "))
-        assertNull(OwnerCommand.WIFI_SET.argv(args.copy(value = null)))
+        // The IWLAN and QNS dumps in place of the log (2026-10-20); no Wi-Fi command at all.
+        assertEquals("dumpsys activity service com.google.android.iwlan/.IwlanDataService", lines[OwnerCommand.IWLAN_DUMP])
+        assertEquals("dumpsys activity service com.android.telephony.qns", lines[OwnerCommand.QNS_DUMP])
+        assertEquals("dumpsys power", lines[OwnerCommand.POWER])
         assertEquals(
-            setOf(
-                OwnerCommand.CC_SET, OwnerCommand.CC_CLEAR, OwnerCommand.APN_INSERT, OwnerCommand.APN_DELETE, OwnerCommand.PREFERRED_SET, OwnerCommand.PREFERRED_CLEAR,
-                OwnerCommand.WIFI_SET,
-            ),
+            setOf(OwnerCommand.CC_SET, OwnerCommand.CC_CLEAR, OwnerCommand.APN_INSERT, OwnerCommand.APN_DELETE, OwnerCommand.PREFERRED_SET, OwnerCommand.PREFERRED_CLEAR),
             OwnerCommand.entries.filter { it.writes }.toSet(),
         )
-        val banned = Regex("(^|\\s)-p(\\s|$)|persistent|settings put|reboot|\\bam\\b|\\bsvc\\b|setprop|tel:|ACTION_CALL|KEYCODE|\\bsu\\b|\\bsh\\b|[;&|`$<>\\n]")
+        val banned = Regex("(^|\\s)-p(\\s|$)|persistent|settings put|reboot|\\bam\\b|\\bsvc\\b|setprop|tel:|ACTION_CALL|KEYCODE|\\bsu\\b|\\bsh\\b|logcat|cmd wifi|[;&|`$<>\\n]")
         for ((command, line) in lines) assertFalse("$command: $line", banned.containsMatchIn(line))
     }
 
@@ -84,13 +86,21 @@ class GuardTest {
         assertNull("unknown column", OwnerCommand.APN_INSERT.argv(args.copy(binds = binds + ("_id" to "1"))))
         assertNull("not ASCII", OwnerCommand.APN_INSERT.argv(args.copy(binds = binds + ("apn" to "web\nvodafone"))))
         assertNull("integer column", OwnerCommand.APN_INSERT.argv(args.copy(binds = binds + ("mtu" to "x"))))
+        // Inserts are test rows only (the report of 2026-10-20).
+        assertNull("edited=0 leaves a tombstone", OwnerCommand.APN_INSERT.argv(args.copy(binds = binds + ("edited" to "0"))))
+        assertNull("no edited", OwnerCommand.APN_INSERT.argv(args.copy(binds = binds - "edited")))
+        assertNull("a numeric would share a stock row's key", OwnerCommand.APN_INSERT.argv(args.copy(binds = binds + ("numeric" to "26202"))))
+        assertNull("no carrier ID", OwnerCommand.APN_INSERT.argv(args.copy(binds = binds - "carrier_id")))
+        for (type in listOf("default,ims", "default,ia", "*")) assertNull(type, OwnerCommand.APN_INSERT.argv(args.copy(binds = binds + ("type" to type))))
+        // A lookup by the stock key is fine.
+        assertNotNull(OwnerCommand.APN_CONFLICTS.argv(args.copy(binds = mapOf("apn" to "web.vodafone.de", "numeric" to "26202", "mcc" to "262", "mnc" to "02"))))
     }
 
     @Test
     fun `an emergency APN row is never written`() {
         val row = OcdApnRow(mapOf("mcc" to "262", "mnc" to "02", "apn" to "sos", "type" to "emergency", "carrier" to "SOS"))
         try {
-            ApnColumns.values(row)
+            ApnColumns.testRow(row, 2397)
             fail("emergency row passed")
         } catch (e: SafetyException) {
             assertEquals("emergency_apn", e.reason)
@@ -110,6 +120,31 @@ class GuardTest {
             val hit = banned.find(file.readText())
             assertNull("${file.name}: ${hit?.value}", hit)
         }
+    }
+
+    @Test
+    fun `the owner build never reads the device log and never switches Wi-Fi`() {
+        // 2026-10-20: reading logcat asks the owner for log access; the Wi-Fi-off measurement is retired.
+        val banned = Regex("\"logcat\"|setWifiEnabled\\(|WifiManager|\"android\\.permission\\.READ_LOGS\"|\"android\\.permission\\.CHANGE_WIFI_STATE\"|setVoWiFiModeSetting|setVoWiFiSettingEnabled")
+        for (file in ownerSources) {
+            val hit = banned.find(file.readText())
+            assertNull("${file.name}: ${hit?.value}", hit)
+        }
+        assertTrue(OwnerCommand.entries.none { c -> runCatching { c.argv(args) }.getOrNull()?.firstOrNull() == "logcat" })
+    }
+
+    @Test
+    fun `the test row is keyed by carrier ID, edited, and never carries ia, wildcard, ims or emergency`() {
+        val row = OcdApnRow(mapOf("mcc" to "262", "mnc" to "02", "apn" to "web.vodafone.de", "type" to "default,ia,supl,ims", "protocol" to "IPV4V6", "carrier" to "Vodafone", "mvno_type" to "spn", "mvno_match_data" to "LIDL"))
+        val v = ApnColumns.testRow(row, 2397)
+        assertEquals("default,supl", v["type"])
+        assertEquals("", v["numeric"])
+        assertEquals("2397", v["carrier_id"])
+        assertEquals("1", v["edited"])
+        assertNull("the carrier ID is the MVNO match", v["mvno_type"])
+        assertTrue(v["name"]!!.endsWith(ApnColumns.MARKER))
+        assertNotNull(OwnerCommand.APN_INSERT.argv(OwnerArgs(binds = v)))
+        assertEquals("the stock lookup keeps the network code", "26202", ApnColumns.identity(row)["numeric"])
     }
 
     @Test

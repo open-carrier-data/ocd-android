@@ -15,6 +15,7 @@ enum class Refusal(val wire: String, val plain: String) {
     EMERGENCY_SMS_MODE("emergency_sms_mode", "the phone is in emergency SMS callback mode"),
     EMERGENCY_CALL_RECENT("emergency_call_recent", "an emergency call was seen less than 10 minutes ago"),
     JUST_BOOTED("just_booted", "the phone started less than 10 minutes ago; an emergency call before the restart cannot be ruled out"),
+    SYSTEM_RESTARTED("system_restarted", "the phone's system restarted less than 10 minutes ago without a reboot; an emergency call before it cannot be ruled out"),
     CALL_ACTIVE("call_active", "a call is up or the call state cannot be read"),
     ROAMING("roaming", "the phone is roaming"),
     ROAMING_UNREADABLE("roaming_unreadable", "whether the phone is roaming could not be read"),
@@ -38,6 +39,12 @@ data class SafetyInputs(
     val seen: EmergencySeen?,
     /** The privileged route's emergency state from the system APIs, in place of the phone dump; null on the Shizuku route. */
     val emergencyApi: EmergencyApi? = null,
+    /**
+     * How long the running system_server has run ([ServerClock]); a soft
+     * restart clears the registry's emergency field as a reboot does, while
+     * the elapsed clock runs on. Null: not known (a test without it).
+     */
+    val serverUpMs: Long? = null,
 )
 
 data class SafetyVerdict(
@@ -57,7 +64,10 @@ data class SafetyVerdict(
  * mOutgoingCallEmergencyNumber stays set until the system server restarts.
  * The first time the owner build sees it set is at or after the call, so 10
  * minutes from that sighting are at least 10 minutes from the call. A reboot
- * clears the field, so the first 10 minutes after boot refuse too.
+ * clears the field, so the first 10 minutes after boot refuse too, and so
+ * does a restart of the system server alone (a soft restart: the elapsed
+ * clock runs on, [SafetyInputs.serverUpMs]). A sighting the registry has
+ * since lost still counts for its 10 minutes.
  */
 object Refusals {
     const val EMERGENCY_WINDOW_MS = 10 * 60 * 1000L
@@ -70,11 +80,15 @@ object Refusals {
             return SafetyVerdict(Refusal.EMERGENCY_STATE_UNREADABLE, null, null, input.seen)
         }
         val emergency = EmergencyParser.parse(registry, phone, input.ecmProperty, api)
-        val bootAt = input.nowMs - input.uptimeMs
-        var seen = input.seen?.takeIf { it.firstSeenAtMs >= bootAt }
+        // When the registry's field was last cleared: the boot, or the system server's own start.
+        val serverAt = input.nowMs - minOf(input.uptimeMs, input.serverUpMs ?: input.uptimeMs)
         val mark = emergency.outgoingMark
+        var seen = input.seen
+        // A field set now is a call after the restart; a sighting from before it does not date that call.
+        if (seen != null && mark != null && seen.firstSeenAtMs < serverAt) seen = null
+        // The field gone (a restart cleared it): the sighting counts until its 10 minutes are over.
+        if (seen != null && mark == null && input.nowMs - seen.firstSeenAtMs >= EMERGENCY_WINDOW_MS) seen = null
         if (mark != null && seen?.mark != mark) seen = EmergencySeen(mark, input.nowMs)
-        if (mark == null && emergency.outgoingEmergencyCallSinceBoot == false) seen = null
         val roaming = RoamingParser.parse(RegistryText.block(registry, input.slot))
         val refusal = when {
             emergency.inEmergencyCall == null || emergency.ecbm == null || emergency.outgoingEmergencyCallSinceBoot == null ->
@@ -86,6 +100,7 @@ object Refusals {
             emergency.emergencySmsMode == true -> Refusal.EMERGENCY_SMS_MODE
             seen != null && input.nowMs - seen.firstSeenAtMs < EMERGENCY_WINDOW_MS -> Refusal.EMERGENCY_CALL_RECENT
             input.uptimeMs < EMERGENCY_WINDOW_MS -> Refusal.JUST_BOOTED
+            input.serverUpMs != null && input.serverUpMs < EMERGENCY_WINDOW_MS -> Refusal.SYSTEM_RESTARTED
             RegistryText.anyCallActive(registry) -> Refusal.CALL_ACTIVE
             input.homeMccMnc == null -> Refusal.NO_SIM
             roaming.roaming == null -> Refusal.ROAMING_UNREADABLE

@@ -33,6 +33,8 @@ data class LiveOverride(
     val before: String? = null,
     /** Why it is kept: the test that picked it. */
     val why: String? = null,
+    /** A trial of the other value of a kept key: the kept value it displaced, put back by the revert. */
+    val keptBefore: Boolean? = null,
 )
 
 @Serializable
@@ -50,7 +52,16 @@ data class LiveApn(
     val madePreferred: Boolean,
     /** The highest row ID before the insert: a row at or below it is the phone's own and is never deleted as ours. */
     val maxIdBefore: Long? = null,
+    /** The test row's own name and carrier ID: how a crash leftover is told from every other row. */
+    val testName: String? = null,
+    val carrierId: Long? = null,
+    /** A hash of every visible APN row before the insert: the revert proves the other rows are as they were. */
+    val tableHash: String? = null,
 )
+
+/** The last finished check or test, one line, for the Settings entry and the owner screen. */
+@Serializable
+data class LastResult(val atMs: Long, val text: String, val changed: Boolean = false, val failed: Boolean = false)
 
 /** One event of the local log (LB9 standard: redacted typed fields only). */
 @Serializable
@@ -74,6 +85,15 @@ data class FeatureResult(
     val bestWhy: String? = null,
     val applied: Boolean = false,
     val refused: String? = null,
+    /** How VoLTE was measured while IMS ran over Wi-Fi ("wfc_override"); null: seen as it was. */
+    val method: String? = null,
+    /** A fresh IMS REGISTER over LTE seen after the change (the stronger result); null: not watchable or not measured. */
+    val freshRegister: Boolean? = null,
+    /** After the revert the baseline came back within the window; false is a failure of the entry. */
+    val restored: Boolean? = null,
+    /** What the same change also showed: Wi-Fi calling's service gone (VoLTE's measurement), VoLTE over LTE (Wi-Fi calling off). */
+    val sideVowifiOff: Boolean? = null,
+    val sideVolteOn: Boolean? = null,
 )
 
 @Serializable
@@ -102,6 +122,12 @@ data class RunResult(
     val apns: List<ApnResult> = emptyList(),
     val refused: String? = null,
     val note: String? = null,
+    /** A background run in the silent window, and why its entries were due. */
+    val background: Boolean = false,
+    val plan: String? = null,
+    /** What the run changed on the phone and what failed, told at its end ([Notices]). */
+    val changes: List<String> = emptyList(),
+    val failures: List<String> = emptyList(),
 )
 
 @Serializable
@@ -125,16 +151,41 @@ data class OwnerState(
     /** When the reboot check's override was applied; null when none is pending. */
     val rebootProbeAtMs: Long? = null,
     /**
-     * Set before the owner build switches Wi-Fi off for VoLTE's measurement,
-     * cleared once Wi-Fi is back on: a crash in between leaves the record, and
-     * the cleanup switches Wi-Fi on again.
+     * Builds before 2026-10-20 switched Wi-Fi off for VoLTE's measurement and
+     * recorded it here. This build never switches Wi-Fi; the cleanup drops an
+     * old record.
      */
     val wifiOffSinceMs: Long? = null,
+    /** Each entry's last result per SIM, for the triggers and the rotation ([QuietPlan]). */
+    val entries: List<EntryRecord> = emptyList(),
+    /** The first sighting of the running system_server ([ServerClock]). */
+    val serverSeen: ServerSighting? = null,
+    /** The last finished check or test, for the Settings entry. */
+    val lastResult: LastResult? = null,
+    /** The last read-only check of the background job. */
+    val lastCheckAtMs: Long? = null,
+    /** The last pull attempt of the background job (once a day). */
+    val lastPullAtMs: Long? = null,
+    /** Since when a triggered entry waits for a night window; after [QuietPlan.NIGHT_GRACE_MS] any silent window does. */
+    val triggerSinceMs: Long? = null,
+    /** The basis the background job last saw; a new ROM build or data release starts [onOnlyUntilMs]. */
+    val basisSeen: TestBasis? = null,
+    /** After a ROM flash or a data release, only on values are tried until then ([QuietPlan.ON_ONLY_MS]). */
+    val onOnlyUntilMs: Long? = null,
+    /** The night (its local date) whose one change was made already. */
+    val trialNight: String? = null,
 ) {
     val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
 
     fun kept(slot: Int): Map<String, Boolean> =
         overrides.filter { it.slot == slot && it.hold == Hold.KEPT }.associate { it.key to it.value }
+
+    /** The keeps the slot's trials displaced, back as keeps: what a revert re-applies along with the other keeps. */
+    fun keepsRestored(slot: Int): OwnerState = copy(
+        overrides = overrides.map {
+            if (it.slot == slot && it.hold == Hold.TRIAL && it.keptBefore != null) it.copy(value = it.keptBefore, hold = Hold.KEPT, keptBefore = null) else it
+        },
+    )
 
     fun logged(atMs: Long, kind: String, text: String): OwnerState =
         copy(log = (log + LogEvent(atMs, kind, text)).takeLast(MAX_LOG))

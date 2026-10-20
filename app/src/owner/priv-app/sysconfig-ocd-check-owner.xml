@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The owner build on the power-save allowlist (the report of 2026-10-20): its night
+    jobs and the revert alarm armed before each background change run in doze, and the
+    alarm may be exact. Install to /system_ext/etc/sysconfig/ (a ROM build: prebuilt_etc
+    with sub_dir "sysconfig"). Read at boot; an entry for a missing package is ignored.
+-->
+<config>
+    <allow-in-power-save package="io.github.open_carrier_data.check.owner" />
+</config>

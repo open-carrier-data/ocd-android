@@ -23,6 +23,13 @@ data class Observation(
     val callActive: Boolean,
     /** TelephonyManager network type of the call, while one is up. */
     val callNetworkType: Int? = null,
+    /**
+     * The IMS registration itself is on the bearer its data connection is on
+     * (the API's live registration transport; the phone dump's registration
+     * log is history, so the dump route counts as agreeing). After a handover
+     * PHH can stay registered over the old bearer for half a minute.
+     */
+    val registrationOnPdn: Boolean = true,
 ) {
     fun switch(feature: OwnerFeature): Boolean? = config[feature.key].asBool()
 
