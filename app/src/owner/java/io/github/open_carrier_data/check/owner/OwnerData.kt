@@ -68,10 +68,31 @@ class FileStateStore(context: Context) : StateStore {
             out.fd.sync()
         }
         if (!tmp.renameTo(file)) throw IOException("state file not replaced")
+        trace(state)
+    }
+
+    /**
+     * Round 26's call and message lines also go to the device log (tag
+     * [TRACE_TAG]), so the owner can follow a dry run or a night over adb
+     * without root. They hold no number: the mailbox short code at most.
+     */
+    private fun trace(state: OwnerState) {
+        val last = lastTraced
+        // In a new process only what happens from now on.
+        val since = last?.first ?: (PROCESS_START - 1)
+        val fresh = state.log.filter { (it.atMs > since || (last != null && it.atMs == last.first && it.text != last.second)) && it.kind in TRACED }
+        for (event in fresh) runCatching { android.util.Log.i(TRACE_TAG, "${event.kind}: ${event.text}") }
+        state.log.lastOrNull()?.let { lastTraced = it.atMs to it.text }
     }
 
     companion object {
         private val LOCK = Any()
+        const val TRACE_TAG = "OcdCheckCalls"
+        private val TRACED = setOf("calls_out", "call_watch", "provisional", "self_sms", "mms")
+
+        @Volatile
+        private var lastTraced: Pair<Long, String>? = null
+        private val PROCESS_START = System.currentTimeMillis()
     }
 }
 
