@@ -131,7 +131,7 @@ data class ReportCell(
     val romFamily: String,
     /** Build.TYPE: user, userdebug or eng. */
     val buildType: String,
-    /** [ImsStack]: phh_ims, samsung_ims, other or not_known. */
+    /** [ImsStack]: phh_ims, samsung_ims, aosp_imsstack, other or not_known. */
     val imsStack: String,
     val spn: String? = null,
     val gid1Prefix: String? = null,

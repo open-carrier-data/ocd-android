@@ -223,11 +223,18 @@ object IssueReport {
     }
 }
 
-/** Which IMS service the phone runs, from the packages that implement android.telephony.ims.ImsService. */
+/**
+ * Which IMS service the phone runs, from the packages that implement
+ * android.telephony.ims.ImsService: PHH IMS (me.phh.ims), Samsung's
+ * (com.sec.imsservice), Google's AOSP ImsStack (com.android.imsstack, the
+ * S20 on LineageOS 24.0 since 2026-10-22), another one, or not readable. The
+ * values are the public schemas' `ims_stack` enum.
+ */
 object ImsStack {
     fun of(packages: List<String>): String = when {
         packages.any { it.startsWith("me.phh.ims") } -> "phh_ims"
         packages.any { it == "com.sec.imsservice" } -> "samsung_ims"
+        packages.any { it == "com.android.imsstack" } -> "aosp_imsstack"
         packages.isNotEmpty() -> "other"
         else -> "not_known"
     }
