@@ -70,7 +70,7 @@ data class ObservedCell(
     val mccmnc: String,
     /** stock, lineageos or other. */
     val romFamily: String,
-    /** phh_ims, samsung_ims, other or not_known. */
+    /** phh_ims, samsung_ims, aosp_imsstack, other or not_known. */
     val imsStack: String,
     val androidMajor: Int,
 ) {

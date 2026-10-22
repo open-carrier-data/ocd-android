@@ -3,6 +3,7 @@ package io.github.open_carrier_data.check.owner
 import io.github.open_carrier_data.check.owner.core.ApnResult
 import io.github.open_carrier_data.check.owner.core.CallsTested
 import io.github.open_carrier_data.check.owner.core.FeatureResult
+import io.github.open_carrier_data.check.owner.core.ImsStack
 import io.github.open_carrier_data.check.owner.core.IssueReport
 import io.github.open_carrier_data.check.owner.core.OcdAnswer
 import io.github.open_carrier_data.check.owner.core.OwnerFeature
@@ -192,6 +193,27 @@ class ReportSchemaTest {
         val bundled = IssueReport.report(s20Run(), cell.copy(dataRelease = null, dataSource = "bundled"), calls)!!
         assertEquals(JsonNull, bundled.getValue("release").jsonObject["tag"])
         assertEquals(emptyList<String>(), SchemaSubset.problems(bundled, schema))
+    }
+
+    @Test
+    fun `the IMS stack is named from the installed ImsService, and the public schema takes every name`() {
+        assertEquals("phh_ims", ImsStack.of(listOf("me.phh.ims")))
+        assertEquals("samsung_ims", ImsStack.of(listOf("com.sec.imsservice")))
+        // The S20 on LineageOS 24.0 with Google's AOSP ImsStack (2026-10-22).
+        assertEquals("aosp_imsstack", ImsStack.of(listOf("com.android.imsstack")))
+        assertEquals("aosp_imsstack", ImsStack.of(listOf("com.android.imsstack", "com.example.ims")))
+        assertEquals("other", ImsStack.of(listOf("com.android.imsstack.test")))
+        assertEquals("other", ImsStack.of(listOf("com.example.ims")))
+        assertEquals("not_known", ImsStack.of(emptyList()))
+        val stacks = schema.getValue("properties").jsonObject.getValue("device").jsonObject.getValue("properties").jsonObject
+            .getValue("ims_stack").jsonObject.getValue("enum").jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("phh_ims", "samsung_ims", "aosp_imsstack", "other", "not_known"), stacks)
+        for (stack in stacks) {
+            val report = IssueReport.report(s20Run(), cell.copy(imsStack = stack), calls)!!
+            assertEquals(stack, report.getValue("device").jsonObject.getValue("ims_stack").jsonPrimitive.content)
+            assertEquals(stack, emptyList<String>(), SchemaSubset.problems(report, schema))
+        }
+        assertTrue(SchemaSubset.problems(IssueReport.report(s20Run(), cell.copy(imsStack = "imsstack"), calls)!!, schema).any { "ims_stack" in it })
     }
 
     @Test

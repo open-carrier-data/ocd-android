@@ -162,6 +162,20 @@ class ObservedTest {
         assertEquals(setOf(alice, own), ObservedReports.ownHashes(state))
     }
 
+    @Test
+    fun `reports from Google's AOSP ImsStack pass the owner build's schema and form their own cell`() {
+        // The S20 on LineageOS 24.0 runs com.android.imsstack (2026-10-22); its reports name aosp_imsstack.
+        val aosp = s20.copy(imsStack = "aosp_imsstack")
+        val text = fixture.decodeToString().replace("\"ims_stack\": \"phh_ims\"", "\"ims_stack\": \"aosp_imsstack\"")
+        assertTrue(text.contains("\"ims_stack\": \"aosp_imsstack\"") && !text.contains("\"phh_ims\""))
+        assertEquals(emptyList<String>(), SchemaSubset.problems(Json.parseToJsonElement(text), schema))
+        val phh = ObservedReports.forCell(fetched(pull(Raw(fixture), hashes = emptySet())).info, s20)
+        val got = fetched(pull(Raw(text.toByteArray()), hashes = emptySet()))
+        assertTrue(phh.isNotEmpty())
+        assertEquals(phh.mapValues { (_, p) -> p.copy(cell = aosp) }, ObservedReports.forCell(got.info, aosp))
+        assertTrue("PHH IMS and the AOSP ImsStack are different cells", ObservedReports.forCell(got.info, s20).isEmpty())
+    }
+
     /** A state with a kept value, records, an undo, a ledger and a previous summary: what no pull may touch. */
     private fun busyState(previous: ObservedInfo?) = OwnerState(
         overrides = listOf(LiveOverride(0, OwnerFixtures.SIM.key, OwnerFeature.VOLTE.key, true, Hold.KEPT, now - day)),
@@ -195,6 +209,7 @@ class ObservedTest {
             "a re-tested status from outside" to cell0 { it["retested_by_ocd"] = JsonPrimitive("re-tested by OCD") },
             "a profile of another shape" to cell0 { it["carrier_profile"] = JsonPrimitive("26202") },
             "a negative count" to cell0 { it["held"] = JsonPrimitive(-1) },
+            "an IMS stack the schema does not name" to cell0 { it["stack"] = JsonObject(it.getValue("stack").jsonObject + ("ims_stack" to JsonPrimitive("imsstack"))) },
             "a list" to "[]".toByteArray(),
             "oversized" to fixture + ByteArray((ObservedSource.MAX_SUMMARY_BYTES - fixture.size + 1).toInt()) { ' '.code.toByte() },
         )
