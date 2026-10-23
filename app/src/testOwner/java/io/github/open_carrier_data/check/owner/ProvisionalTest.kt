@@ -6,6 +6,8 @@ import io.github.open_carrier_data.check.core.CallDirection
 import io.github.open_carrier_data.check.core.CallQualityReading
 import io.github.open_carrier_data.check.core.DisconnectReading
 import io.github.open_carrier_data.check.core.ImsTransport
+import io.github.open_carrier_data.check.core.MediaRule
+import io.github.open_carrier_data.check.core.MediaWindowBuilder
 import io.github.open_carrier_data.check.core.ProvenBearer
 import io.github.open_carrier_data.check.core.RtpFlow
 import io.github.open_carrier_data.check.owner.core.CallLedger
@@ -62,6 +64,7 @@ class ProvisionalTest {
         active: Boolean = true,
         activeMs: Long = 45_000,
         rate: Long = 50,
+        recvRate: Long = rate,
         end: DisconnectReading = DisconnectReading(510, "CODE_USER_TERMINATED_BY_REMOTE"),
         atActive: BearerReading? = reading(bearer),
         startBearer: ProvenBearer = bearer,
@@ -69,14 +72,24 @@ class ProvisionalTest {
         build: String = "rom-1",
         hungUp: Boolean? = null,
     ): CallRecord {
-        val first = CallQualityReading(1_000, rate, rate)
-        val last = CallQualityReading(activeMs, rate * activeMs / 1000, rate * activeMs / 1000)
+        val first = CallQualityReading(1_000, rate, recvRate)
+        val last = CallQualityReading(activeMs, rate * activeMs / 1000, recvRate * activeMs / 1000)
+        val proof = BearerProof.of(active, atActive, atActive)
+        // PHH's reports, once a second, judged by round 28's media rule.
+        val window = MediaWindowBuilder().apply {
+            var t = 1_000L
+            while (t <= activeMs) {
+                add(CallQualityReading(t, rate * t / 1000, recvRate * t / 1000))
+                t += 1_000
+            }
+        }.window()
         return CallRecord(
             atMs = at, slot = 0, sim = sim, method = method, direction = direction,
             rang = direction == CallDirection.INCOMING, answered = answered, active = active,
             bearerAtStart = reading(startBearer, 0), bearerAtActive = atActive, bearerAtHangUp = atActive,
-            bearer = BearerProof.of(active, atActive, atActive),
+            bearer = proof,
             rtp = if (active) RtpFlow.of(first, last, false) else null,
+            media = if (active) MediaRule.judge(window, CallRecord.kindOf(method, direction), "phh_ims", build, proof, end) else null,
             activeMs = if (active) activeMs else null,
             disconnect = end, disconnectFresh = true, hungUpByPhone = hungUp, fromMailbox = fromMailbox,
             build = build, stack = "phh_ims",
@@ -96,10 +109,13 @@ class ProvisionalTest {
         assertTrue(CallLevels.callsOut(mailbox).passed)
         // The mailbox call must have been ended by the phone itself.
         assertEquals(listOf("not_hung_up_by_the_phone"), CallLevels.callsOut(mailbox.copy(hungUpByPhone = false)).failed)
-        // A SIP failure, thin RTP or an abnormal end fails; an unproven bearer does not count.
-        assertEquals("failed", CallLevels.callsOut(real.copy(disconnect = DisconnectReading(338, "CODE_SIP_BUSY"))).result)
-        assertEquals("failed", CallLevels.callsOut(call(applied, CallDirection.OUTGOING, rate = 20)).result)
-        assertEquals("failed", CallLevels.callsOut(real.copy(disconnect = DisconnectReading(1510, "CODE_MEDIA_NO_DATA"))).result)
+        // Round 28: a real call's SIP or media end and thin RTP are not counted, never failed; another abnormal end fails.
+        assertEquals("not_counted_retry", CallLevels.callsOut(real.copy(disconnect = DisconnectReading(338, "CODE_SIP_BUSY"))).result)
+        assertEquals("not_counted_retry", CallLevels.callsOut(call(applied, CallDirection.OUTGOING, rate = 20)).result)
+        assertEquals("not_counted_retry", CallLevels.callsOut(real.copy(disconnect = DisconnectReading(1510, "CODE_MEDIA_NO_DATA"))).result)
+        assertEquals("failed", CallLevels.callsOut(call(applied, CallDirection.OUTGOING, end = DisconnectReading(0, "CODE_UNSPECIFIED", cause = 36))).result)
+        // The mailbox call's SIP failure still fails.
+        assertEquals("failed", CallLevels.callsOut(mailbox.copy(disconnect = DisconnectReading(338, "CODE_SIP_BUSY"))).result)
         val unproven = call(applied, CallDirection.OUTGOING, atActive = BearerReading(13, listOf(ImsTransport.IWLAN), "lte"))
         assertEquals("not_counted_retry", CallLevels.callsOut(unproven).result)
         // A real call nobody answered, or a busy callee, says nothing about this phone; the mailbox always answers.
@@ -118,7 +134,8 @@ class ProvisionalTest {
         assertTrue(CallLevels.incoming(call(applied, CallDirection.INCOMING, activeMs = 20_000)).passed)
         assertEquals(listOf("from_mailbox"), CallLevels.incoming(call(applied, CallDirection.INCOMING, fromMailbox = true)).notCounted)
         assertEquals("not_counted_retry", CallLevels.incoming(call(applied, CallDirection.INCOMING, answered = false, active = false)).result)
-        assertEquals("failed", CallLevels.incoming(call(applied, CallDirection.INCOMING, rate = 10)).result)
+        // Round 28: a thin stream is not counted, never failed.
+        assertEquals("not_counted_retry", CallLevels.incoming(call(applied, CallDirection.INCOMING, rate = 10)).result)
     }
 
     @Test
@@ -166,8 +183,11 @@ class ProvisionalTest {
         assertEquals(ProvisionalDecision.Revert("no_calls_out_by_the_end_of_the_night"), Provisional.decide(p, emptyList(), "rom-1", p.callsOutByMs))
         // A call before the apply says nothing about the new value.
         assertEquals(ProvisionalDecision.Revert("no_calls_out_by_the_end_of_the_night"), Provisional.decide(p, listOf(call(applied - 1, CallDirection.OUTGOING)), "rom-1", p.callsOutByMs))
-        // A measured outgoing failure on its bearer reverts at once.
-        assertEquals(ProvisionalDecision.Revert("calls_out_failed"), Provisional.decide(p, listOf(call(applied + 1, CallDirection.OUTGOING, rate = 10)), "rom-1", applied + 60_000))
+        // A measured outgoing failure on its bearer reverts at once: the mailbox call received nothing (round 28).
+        val silentMailbox = call(applied + 1, CallDirection.OUTGOING, method = CallMethod.MAILBOX_CALL, recvRate = 0, end = DisconnectReading(501, "CODE_USER_TERMINATED"), activeMs = 15_000, hungUp = true)
+        assertEquals(ProvisionalDecision.Revert("calls_out_failed"), Provisional.decide(p, listOf(silentMailbox), "rom-1", applied + 60_000))
+        // A thin real call is not a failure: it keeps waiting.
+        assertEquals(ProvisionalDecision.Wait, Provisional.decide(p, listOf(call(applied + 1, CallDirection.OUTGOING, rate = 10)), "rom-1", applied + 60_000))
     }
 
     @Test

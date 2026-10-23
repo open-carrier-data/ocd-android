@@ -75,7 +75,11 @@ class CallMediaTest {
         assertEquals(listOf(ImsTransport.IWLAN), phone.imsPdn)
         assertEquals("lte", phone.wwanDataRat)
         assertEquals(BearerReading(18, listOf(ImsTransport.IWLAN), "lte"), phone.call.bearer)
-        assertEquals(CallQualityReading(4_000, 200, 198, false, rxSilence = false, txSilence = false), phone.call.quality)
+        // Round 28: every key is read by name; the silence flags are never read (no stack fills them).
+        assertEquals(
+            CallQualityReading(4_000, 200, 198, false, notReceived = 0, sidReceived = 0, duplicates = 0, codecType = 0, avgRttMs = 0),
+            phone.call.quality,
+        )
         assertEquals(DisconnectReading(501, "CODE_USER_TERMINATED", -1, -1), phone.call.disconnect)
         assertFalse(phone.call.disconnect.toString(), "User terminated" in phone.call.disconnect.toString())
         // The internet row on WWAN is not the ims data connection.

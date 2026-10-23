@@ -4,9 +4,13 @@ import io.github.open_carrier_data.check.core.BearerReading
 import io.github.open_carrier_data.check.core.BearerVerdict
 import io.github.open_carrier_data.check.core.CallBearer
 import io.github.open_carrier_data.check.core.CallDirection
+import io.github.open_carrier_data.check.core.CallKind
 import io.github.open_carrier_data.check.core.CallWatchSummary
 import io.github.open_carrier_data.check.core.DisconnectReading
 import io.github.open_carrier_data.check.core.ImsTransport
+import io.github.open_carrier_data.check.core.MediaResult
+import io.github.open_carrier_data.check.core.MediaRule
+import io.github.open_carrier_data.check.core.MediaVerdict
 import io.github.open_carrier_data.check.core.ProvenBearer
 import io.github.open_carrier_data.check.core.RtpFlow
 import kotlinx.serialization.Serializable
@@ -20,20 +24,30 @@ import java.util.concurrent.TimeUnit
  * evidence ladder "signed in -> calls out -> works", measured by the phone.
  *
  * - Calls out (L2): an outgoing call went ACTIVE, the bearer proof passed,
- *   RTP flowed both ways (at least 300 packets each way per 10 s, no
- *   inactivity), no SIP failure cause, and the call ended normally (the app's
- *   own mailbox call: the phone hung up itself). A real call the owner makes
- *   anyway, measured passively, counts the same as the app's muted call to
- *   the SIM's own mailbox; that call is only the fallback.
+ *   round 28's media rule passed ([MediaRule]: an audio stream both ways,
+ *   full rate or, on a stack with verified counters, DTX), no SIP failure
+ *   cause, and the call ended normally (the app's own mailbox call: the
+ *   phone hung up itself). A real call the owner makes anyway, measured
+ *   passively, counts the same as the app's muted call to the SIM's own
+ *   mailbox; that call is only the fallback.
  * - Works (L3): calls out plus an incoming call on the same bearer that rang,
  *   was answered, did not come from a mailbox code, went ACTIVE with the
- *   bearer proof, had RTP both ways and lasted at least 20 s.
+ *   bearer proof, passed the media rule and lasted at least 20 s.
+ *
+ * Round 28: a media result that is not a pass is "not counted, retry",
+ * never "failed", except "no audio stream received" (zero packets received
+ * over at least 10 s ACTIVE). That is a measured failure at once on the
+ * app's own mailbox call, which plays continuously; a passive real call
+ * needs it twice, on the same SIM and bearer on separate days
+ * ([CallLevels.noStreamTwice]), because a far end that sends nothing in
+ * silence cannot be told from a broken downlink after one call. A passive
+ * call that ended with a CODE_SIP_* or CODE_MEDIA_* code is "not counted".
  *
  * Each level is per phone x SIM x software build x feature x bearer. The
- * audio is judged from packet counts until PHH IMS exports its audible
- * downlink and live uplink, so every detail line says "(audio from packet
- * counts)". No level ever claims anything about emergency calls, and no
- * record holds a number.
+ * audio is judged from packet counts only, so every detail line says so
+ * ("(audio from packet counts)", "packets only", "No sound was checked").
+ * No level ever claims anything about emergency calls, and no record holds
+ * a number.
  */
 
 /** How a call came to be measured. */
@@ -64,7 +78,10 @@ data class CallRecord(
     val bearerAtActive: BearerReading? = null,
     val bearerAtHangUp: BearerReading? = null,
     val bearer: BearerVerdict? = null,
+    /** Round 26's plain per-10-s numbers; the ladder reads them only for records made before round 28 ([media] null). */
     val rtp: RtpFlow? = null,
+    /** Round 28's media result, with the data the ruling asks each result to carry; null when the call never went ACTIVE. */
+    val media: MediaResult? = null,
     val activeMs: Long? = null,
     /** Why it ended, read right after the end; [disconnectFresh] false: the same reading as before the call. */
     val disconnect: DisconnectReading? = null,
@@ -90,6 +107,7 @@ data class CallRecord(
             hungUpByPhone: Boolean? = null, muted: Boolean? = null,
         ): CallRecord? {
             if (summary.emergencySeen) return null
+            val kind = kindOf(method, summary.direction)
             return CallRecord(
                 atMs = atMs, slot = slot, sim = sim, method = method,
                 direction = summary.direction,
@@ -101,6 +119,11 @@ data class CallRecord(
                 bearerAtHangUp = summary.bearerAtHangUp,
                 bearer = summary.bearerProof,
                 rtp = summary.rtp,
+                media = if (summary.wentActive) {
+                    MediaRule.judge(summary.media, kind, stack, build, summary.bearerProof, summary.disconnectAfter)
+                } else {
+                    null
+                },
                 activeMs = summary.activeMs,
                 disconnect = summary.disconnectAfter,
                 disconnectFresh = summary.disconnectFresh,
@@ -112,8 +135,19 @@ data class CallRecord(
                 muted = muted,
             )
         }
+
+        /** Round 28's call_kind; null for a real call whose direction is not known (it never counts). */
+        fun kindOf(method: CallMethod, direction: CallDirection): CallKind? = when {
+            method == CallMethod.MAILBOX_CALL -> CallKind.MAILBOX_AUTO
+            direction == CallDirection.OUTGOING -> CallKind.PASSIVE_OUTGOING
+            direction == CallDirection.INCOMING -> CallKind.PASSIVE_INCOMING
+            else -> null
+        }
     }
 }
+
+/** A call's media verdict for the ladder, with its machine reasons. */
+data class MediaCheck(val verdict: MediaVerdict, val reasons: List<String> = emptyList())
 
 /** The result of one call against a level. */
 @Serializable
@@ -165,12 +199,24 @@ object CallLevels {
         } else if (r.bearer?.counted != true) {
             notCounted += (r.bearer?.why ?: listOf("no_reading")).map { "bearer_not_proven:$it" }
         }
-        if (r.active && r.rtp?.passed != true) failed += (r.rtp?.why ?: listOf("unreadable")).map { "rtp:$it" }
-        if (r.disconnect?.sipFailure == true && (mailbox || r.active)) failed += "sip_failure:${r.disconnect.imsName}"
+        if (r.active) {
+            val m = media(r)
+            when (m.verdict) {
+                MediaVerdict.PASS -> Unit
+                MediaVerdict.NOT_COUNTED -> notCounted += m.reasons.map { "media:$it" }
+                // Round 28: the mailbox plays continuously, so nothing received is a measured failure at once; a real call needs two.
+                MediaVerdict.NO_STREAM -> if (mailbox) failed += "media:$NO_STREAM" else notCounted += "media:$NO_STREAM"
+            }
+        }
+        // Round 28: a passive call's CODE_SIP_* or CODE_MEDIA_* end is "not counted"; the mailbox call keeps "failed".
+        if (r.disconnect?.sipFailure == true && mailbox) failed += "sip_failure:${r.disconnect.imsName}"
+        passiveEnd(r, notCounted)
         if (r.active) {
             when (r.method) {
                 CallMethod.MAILBOX_CALL -> if (r.hungUpByPhone != true || r.disconnect?.byThisPhone != true) failed += "not_hung_up_by_the_phone"
-                CallMethod.REAL_CALL -> if (r.disconnect != null && !r.disconnect.normal) failed += "ended_abnormally"
+                CallMethod.REAL_CALL -> if (r.disconnect != null && !r.disconnect.normal && !r.disconnect.sipFailure && !r.disconnect.mediaFailure) {
+                    failed += "ended_abnormally"
+                }
             }
         }
         return check(r, failed, notCounted)
@@ -186,10 +232,62 @@ object CallLevels {
         if (!r.answered) notCounted += "not_answered"
         if (r.answered && !r.active) failed += "not_active"
         if (r.active && r.bearer?.counted != true) notCounted += (r.bearer?.why ?: listOf("no_reading")).map { "bearer_not_proven:$it" }
-        if (r.active && r.rtp?.passed != true) failed += (r.rtp?.why ?: listOf("unreadable")).map { "rtp:$it" }
+        if (r.active) {
+            val m = media(r)
+            // A passive incoming call with nothing received is not counted on its own: it fails only twice ([noStreamTwice]).
+            if (m.verdict != MediaVerdict.PASS) notCounted += m.reasons.map { "media:$it" }
+        }
         if (r.active && (r.activeMs ?: 0) < L3_MIN_MS) notCounted += "under_20s"
-        if (r.disconnect?.sipFailure == true) failed += "sip_failure:${r.disconnect.imsName}"
+        // Round 28: an ACTIVE passive call's CODE_SIP_* or CODE_MEDIA_* end is "not counted"; before ACTIVE a SIP failure still fails.
+        if (r.disconnect?.sipFailure == true && !r.active) failed += "sip_failure:${r.disconnect.imsName}"
+        passiveEnd(r, notCounted)
         return check(r, failed, notCounted)
+    }
+
+    /** Round 28: an ACTIVE real call that ended with CODE_SIP_* or CODE_MEDIA_* is not counted (its media result says so too). */
+    private fun passiveEnd(r: CallRecord, notCounted: MutableList<String>) {
+        val end = r.disconnect ?: return
+        if (r.method != CallMethod.REAL_CALL || !r.active || !(end.sipFailure || end.mediaFailure)) return
+        val reason = "ended_with:${end.imsName ?: end.imsCode}"
+        if (notCounted.none { it.endsWith(reason) }) notCounted += reason
+    }
+
+    /**
+     * The media verdict of an ACTIVE call: round 28's [MediaResult], or for a
+     * record made before round 28 its round 26 flow (a pass only on the 300
+     * floor; zero received over at least 10 s is no stream; anything else is
+     * not counted).
+     */
+    fun media(r: CallRecord): MediaCheck {
+        r.media?.let { return MediaCheck(it.verdict, it.reasons) }
+        val rtp = r.rtp ?: return MediaCheck(MediaVerdict.NOT_COUNTED, listOf("no_call_quality_reports"))
+        return when {
+            rtp.receivedPer10s == 0L && (rtp.windowMs ?: 0) >= MediaRule.MIN_WINDOW_MS && (rtp.sentPer10s ?: 0) > 0 ->
+                MediaCheck(MediaVerdict.NO_STREAM, listOf(NO_STREAM))
+            rtp.passed -> MediaCheck(MediaVerdict.PASS)
+            else -> MediaCheck(MediaVerdict.NOT_COUNTED, rtp.why.map { "round26:$it" })
+        }
+    }
+
+    /** The machine reason of "no audio stream received". */
+    const val NO_STREAM = "no_audio_stream_received"
+
+    /**
+     * Round 28's measured failure for passive real calls: "no audio stream
+     * received" on two calls of [direction] on [bearer] (the incoming leg:
+     * rang, answered, not from a mailbox code, one call in the watch), on
+     * separate days in [zone], each with the bearer proof. An IMS call that
+     * went ACTIVE with the bearer proof ran over the IMS registration, so the
+     * proof stands for "IMS registered". [calls]: one SIM's records.
+     */
+    fun noStreamTwice(calls: List<CallRecord>, direction: CallDirection, bearer: ProvenBearer, zone: ZoneId): Boolean {
+        val days = calls.filter { r ->
+            r.method == CallMethod.REAL_CALL && r.direction == direction && r.active && !r.severalCalls &&
+                r.bearer?.counted == true && r.bearer.bearer == bearer &&
+                (direction != CallDirection.INCOMING || (r.rang && r.answered && r.fromMailbox != true)) &&
+                media(r).verdict == MediaVerdict.NO_STREAM
+        }.map { Instant.ofEpochMilli(it.atMs).atZone(zone).toLocalDate() }.toSet()
+        return days.size >= 2
     }
 
     private fun check(r: CallRecord, failed: List<String>, notCounted: List<String>): LevelCheck {
@@ -253,28 +351,37 @@ object CallLevels {
         return if (incoming != null) CallsLevel.WORKS else CallsLevel.CALLS_OUT
     }
 
-    /** One plain line for Details: what the call showed, "(audio from packet counts)" when it passed. Never the number. */
+    /**
+     * One plain line for Details: what the call showed, then round 28's media
+     * text ("packets only", "No sound was checked") for an ACTIVE call. The
+     * media reasons are said in its plain words, not as codes. Never the number.
+     */
     fun line(r: CallRecord, zone: ZoneId): String {
         val day = Instant.ofEpochMilli(r.atMs).atZone(zone).toLocalDate()
         val how = if (r.method == CallMethod.MAILBOX_CALL) "Automatic call to your mailbox" else if (r.direction == CallDirection.INCOMING) "Incoming call" else "Outgoing call"
         val over = r.bearer?.takeIf { it.counted }?.bearer?.let { " over ${it.plain}" }.orEmpty()
+        fun said(head: String, reasons: List<String>): String {
+            val own = reasons.filterNot { it.startsWith("media:") && r.media != null }
+            return if (own.isEmpty()) head else "$head: ${own.joinToString()}"
+        }
         val outcome = if (r.direction == CallDirection.INCOMING) {
             val c = incoming(r)
             when {
-                c.passed -> "came in and worked both ways (audio from packet counts)"
+                c.passed -> "answered incoming call with an audio stream both ways (packets)"
                 !r.answered -> "not answered (that is not a failure)"
-                c.result == "failed" -> "did not work: ${c.failed.joinToString()}"
-                else -> "not counted: ${c.notCounted.joinToString()}"
+                c.result == "failed" -> said("did not work", c.failed)
+                else -> said("not counted", c.notCounted)
             }
         } else {
             val c = callsOut(r)
             when {
                 c.passed -> "calls out work (audio from packet counts)"
-                c.result == "failed" -> "did not work: ${c.failed.joinToString()}"
-                else -> "not counted, tried again later: ${c.notCounted.joinToString()}"
+                c.result == "failed" -> said("did not work", c.failed)
+                else -> said("not counted, tried again later", c.notCounted)
             }
         }
-        return "$how$over, $day: $outcome"
+        val media = r.media?.takeIf { r.active }?.text?.let { " $it" }.orEmpty()
+        return "$how$over, $day: $outcome.$media"
     }
 }
 
@@ -341,16 +448,22 @@ object Provisional {
         return end.toInstant().toEpochMilli()
     }
 
-    fun decide(p: ProvisionalKeep, calls: List<CallRecord>, build: String, nowMs: Long): ProvisionalDecision {
+    /** [zone]: the owner's days, for round 28's "two calls on separate days". */
+    fun decide(p: ProvisionalKeep, calls: List<CallRecord>, build: String, nowMs: Long, zone: ZoneId = ZoneId.systemDefault()): ProvisionalDecision {
         val mine = calls.filter { it.sim?.sameCard(p.sim) == true && it.atMs >= p.appliedAtMs }
         // A measured incoming failure on the keep's bearer reverts it at once.
         mine.firstNotNullOfOrNull { r -> CallLevels.incomingFailure(r)?.takeIf { it.bearer == p.bearer } }?.let {
             return ProvisionalDecision.Revert("incoming_failed:${it.kind}")
         }
+        // Round 28: no audio stream received on two answered incoming calls on its bearer, on separate days.
+        if (CallLevels.noStreamTwice(mine, CallDirection.INCOMING, p.bearer, zone)) {
+            return ProvisionalDecision.Revert("incoming_failed:${CallLevels.NO_STREAM}_twice")
+        }
         val out = p.callsOutAtMs ?: CallLevels.callsOutEvidence(calls, p.sim, p.bearer, build, p.appliedAtMs, nowMs)?.atMs
         if (out == null) {
-            // A measured outgoing failure on its bearer after the apply, or the night over without calls out.
-            val failedOut = mine.any { it.direction == CallDirection.OUTGOING && CallLevels.callsOut(it).let { c -> c.result == "failed" && imsOn(it) == p.bearer } }
+            // A measured outgoing failure on its bearer after the apply (a real call's "no stream" only twice), or the night over without calls out.
+            val failedOut = mine.any { it.direction == CallDirection.OUTGOING && CallLevels.callsOut(it).let { c -> c.result == "failed" && imsOn(it) == p.bearer } } ||
+                CallLevels.noStreamTwice(mine, CallDirection.OUTGOING, p.bearer, zone)
             if (failedOut) return ProvisionalDecision.Revert("calls_out_failed")
             if (nowMs >= p.callsOutByMs) return ProvisionalDecision.Revert("no_calls_out_by_the_end_of_the_night")
             return ProvisionalDecision.Wait
@@ -493,17 +606,18 @@ object CallLedger {
         nowMs: Long,
         cellOf: (SimKey) -> String,
         shortBuild: String,
+        zone: ZoneId = ZoneId.systemDefault(),
     ): Pair<OwnerState, List<Triple<Int, OwnerFeature, String>>> {
         var next = state.copy(calls = (state.calls + record).takeLast(CallRecord.MAX))
         next = retested(next, record, nowMs, cellOf, shortBuild)
-        return settle(next, record.build, nowMs)
+        return settle(next, record.build, nowMs, zone)
     }
 
     /** Decides every provisional keep against the ledger. */
-    fun settle(state: OwnerState, build: String, nowMs: Long): Pair<OwnerState, List<Triple<Int, OwnerFeature, String>>> {
+    fun settle(state: OwnerState, build: String, nowMs: Long, zone: ZoneId = ZoneId.systemDefault()): Pair<OwnerState, List<Triple<Int, OwnerFeature, String>>> {
         val reverts = mutableListOf<Triple<Int, OwnerFeature, String>>()
         val kept = state.provisional.mapNotNull { p ->
-            when (val d = Provisional.decide(p, state.calls, build, nowMs)) {
+            when (val d = Provisional.decide(p, state.calls, build, nowMs, zone)) {
                 ProvisionalDecision.Wait -> p
                 is ProvisionalDecision.CallsOut -> p.copy(callsOutAtMs = d.atMs)
                 is ProvisionalDecision.Promote -> null
@@ -513,7 +627,7 @@ object CallLedger {
                 }
             }
         }
-        val promoted = state.provisional.filter { p -> Provisional.decide(p, state.calls, build, nowMs) is ProvisionalDecision.Promote }
+        val promoted = state.provisional.filter { p -> Provisional.decide(p, state.calls, build, nowMs, zone) is ProvisionalDecision.Promote }
         var next = state.copy(provisional = kept)
         for (p in promoted) next = next.logged(nowMs, "keep", "${p.feature.wire} kept: calls both ways over ${p.bearer.plain} (audio from packet counts)")
         return next to reverts

@@ -161,6 +161,8 @@ enum class PreciseCallState(val wire: String) {
 data class CallSample(
     val state: CallState? = null,
     val foreground: PreciseCallState? = null,
+    /** PreciseCallState's background call state: HOLDING while a call is on hold (round 28 ends the media window there). */
+    val background: PreciseCallState? = null,
     /** TelephonyManager.NETWORK_TYPE_* (0 unknown, 13 LTE, 18 IWLAN, 20 NR); not the RIL numbers of ServiceState. */
     val networkType: Int? = null,
     /**
@@ -177,7 +179,7 @@ data class CallSample(
     val incomingIsMailbox: Boolean? = null,
     /** The bearer readings of this moment (round 26): call type, ims data connection, WWAN data RAT. */
     val bearer: BearerReading? = null,
-    /** mCallQuality: RTP packets both ways, cumulative while the call is active. */
+    /** mCallQuality: the latest CallQuality report, cumulative while the call is active. */
     val quality: CallQualityReading? = null,
     /** Why the phone's last call ended; stale until the next call ends. */
     val disconnect: DisconnectReading? = null,
@@ -247,8 +249,10 @@ data class CallWatchSummary(
     val bearerAtHangUp: BearerReading? = null,
     /** The bearer proof over those readings; null in watches before round 26. */
     val bearerProof: BearerVerdict? = null,
-    /** RTP both ways while active (mCallQuality); null in watches before round 26. */
+    /** RTP both ways while active (mCallQuality), round 26's plain per-10-s numbers; null in watches before round 26. */
     val rtp: RtpFlow? = null,
+    /** Round 28: the CallQuality reports over the ACTIVE, non-held window, for [MediaRule]; null when the call never went active. */
+    val media: MediaWindow? = null,
     /** How long the call was active, ms: the call-quality duration, else the readings' clock. */
     val activeMs: Long? = null,
     /** The disconnect readings before the call and after it ended; [disconnectFresh] when they changed. */
@@ -292,6 +296,8 @@ class CallWatch {
     private var firstQuality: CallQualityReading? = null
     private var lastQuality: CallQualityReading? = null
     private var inactiveSeen = false
+    private val media = MediaWindowBuilder()
+    private var activeSeen = false
     private var firstActiveAt: Long? = null
     private var lastActiveAt: Long? = null
     private var firstQualityAt: Long? = null
@@ -340,7 +346,15 @@ class CallWatch {
             lastType = type
             if (sample.foreground == PreciseCallState.ACTIVE) lastActiveType = type
         }
+        // Round 28: a hold (this call, or one held beside it) or an SRVCC to 2G/3G ends the media window.
+        if (state == CallState.OFFHOOK && activeSeen &&
+            (sample.foreground == PreciseCallState.HOLDING || sample.background == PreciseCallState.HOLDING)
+        ) {
+            media.hold()
+        }
+        if (state == CallState.OFFHOOK && type != null && CallBearer.of(type) == CallBearer.CS) media.end()
         if (state == CallState.OFFHOOK && sample.foreground == PreciseCallState.ACTIVE) {
+            activeSeen = true
             if (firstActiveAt == null) firstActiveAt = sample.atMs
             lastActiveAt = sample.atMs ?: lastActiveAt
             // "At ACTIVE": the first active reading with a call type (the registry sets it with the first call-quality report).
@@ -355,11 +369,16 @@ class CallWatch {
                 lastQuality = q
                 lastQualityAt = sample.atMs
                 if (q.rtpInactive) inactiveSeen = true
+                media.add(q)
             }
         }
     }
 
     private fun sampleWindow(from: Long?, to: Long?): Long? = if (from != null && to != null && to >= from) to - from else null
+
+    /** Round 28: the media window can be judged now (at least 3 reports over at least 10 s); the app's own call holds until then. */
+    @Synchronized
+    fun mediaReady(): Boolean = media.ready
 
     @Synchronized
     fun markStoppedByLimit() {
@@ -408,6 +427,7 @@ class CallWatch {
             } else {
                 null
             },
+            media = if (PreciseCallState.ACTIVE in foreground) media.window() else null,
             activeMs = lastQuality?.durationMs?.takeIf { it > 0 } ?: sampleWindow(firstActiveAt, lastActiveAt),
             disconnectBefore = disconnectBefore,
             disconnectAfter = disconnectAfter,

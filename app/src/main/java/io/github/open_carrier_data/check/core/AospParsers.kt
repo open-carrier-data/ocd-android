@@ -186,6 +186,7 @@ object RegistryParser {
     private val CALL_STATE = Regex("mCallState=(\\d)")
     private val CALL_NETWORK_TYPE = Regex("mCallNetworkType=(\\d+)")
     private val FOREGROUND = Regex("Foreground call state: (-?\\d+)")
+    private val BACKGROUND = Regex("Background call state: (-?\\d+)")
     private val EMERGENCY_CALL = Regex("^\\s*mOutgoingCallEmergencyNumber=(.*)$")
     private val INCOMING_NUMBER = Regex("mCallIncomingNumber=([^\\s,]*)")
     private val NOT_DIGIT = Regex("\\D")
@@ -210,6 +211,7 @@ object RegistryParser {
         var callState: String? = null
         var callType: String? = null
         var foreground: String? = null
+        var background: String? = null
         var emergency: Int? = null
         var incomingIsMailbox: Boolean? = null
         var dataRat: String? = null
@@ -239,6 +241,7 @@ object RegistryParser {
             CALL_STATE.findAll(line).lastOrNull()?.let { callState = it.groupValues[1] }
             CALL_NETWORK_TYPE.findAll(line).lastOrNull()?.let { callType = it.groupValues[1] }
             FOREGROUND.findAll(line).lastOrNull()?.let { foreground = it.groupValues[1] }
+            BACKGROUND.findAll(line).lastOrNull()?.let { background = it.groupValues[1] }
             // Only a hash is kept, to see a change during a call watch; the number itself never is.
             EMERGENCY_CALL.find(line)?.let { match ->
                 emergency = match.groupValues[1].trim().takeIf { it.isNotEmpty() && it != "null" }?.hashCode()
@@ -262,6 +265,7 @@ object RegistryParser {
             call = CallSample(
                 state = CallState.fromCode(callState),
                 foreground = PreciseCallState.fromCode(foreground),
+                background = PreciseCallState.fromCode(background),
                 networkType = networkType,
                 emergencyMark = emergency,
                 incomingIsMailbox = incomingIsMailbox,
