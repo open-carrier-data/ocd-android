@@ -18,11 +18,19 @@ import kotlinx.serialization.Serializable
  *   ServiceState's combined data RAT reads IWLAN whenever Wi-Fi's IWLAN
  *   registration is in service, even for a call over LTE, so the WWAN
  *   registration's own RAT is the reading that can agree with an LTE call;
- * - mCallQuality: PHH IMS fills it once a second while a call is active
- *   (SipHandler.buildCallQuality): RTP packets sent and received, cumulative
- *   since the call started, the call's duration and RTP inactivity. The
- *   registry resets it when the foreground call is no longer active. PHH
- *   leaves the silence flags unset, so they prove nothing yet;
+ * - mCallQuality: the IMS stack's CallQuality report, cumulative since the
+ *   call started (RTP packets sent and received, the call's duration, RTP
+ *   inactivity; on AOSP ImsMedia also SID packets received, sequence-gap
+ *   losses, duplicates, the codec and the RTCP round trip). PHH IMS fills it
+ *   once a second (SipHandler.buildCallQuality). AOSP ImsStack passes
+ *   ImsMedia's report through unchanged: every 5 s
+ *   (CALL_QUALITY_MONITORING_TIME) and whenever RTP inactivity starts or
+ *   stops, inactivity meaning 4 s in a row without a received packet played.
+ *   The registry resets it when the foreground call is no longer active.
+ *   Neither stack ever sets rxSilenceDetected or txSilenceDetected (they
+ *   always print false), and ImsMedia never sets numRtpPacketsTransmittedLost,
+ *   so those three are never read (round 28). Round 28's media rule
+ *   ([MediaRule]) judges the reports;
  * - mImsCallDisconnectCause, mCallDisconnectCause, mCallPreciseDisconnectCause:
  *   why the last call ended. They stay until the next call ends, so a reading
  *   is fresh only when it changed during the watch.
@@ -106,24 +114,43 @@ object BearerProof {
     }
 }
 
-/** One reading of the registry's mCallQuality, cumulative since the call started. */
+/**
+ * One reading of the registry's mCallQuality, cumulative since the call
+ * started. Fields after [rtpInactive] are null when the report does not carry
+ * the key; whether a stack really fills them is [MediaRule]'s question, never
+ * this reading's. rxSilenceDetected, txSilenceDetected and
+ * numRtpPacketsTransmittedLost are not read at all: no stack sets them, so a
+ * printed false or 0 would read as a measurement it is not (round 28).
+ */
 @Serializable
 data class CallQualityReading(
     val durationMs: Long = 0,
     val rtpSent: Long = 0,
     val rtpReceived: Long = 0,
     val rtpInactive: Boolean = false,
-    /** Not set by PHH IMS yet (round 26 check 7); kept for when it is. */
-    val rxSilence: Boolean? = null,
-    val txSilence: Boolean? = null,
-)
+    /** numRtpPacketsNotReceived: RTP sequence gaps (ImsMedia's AudioJitterBuffer::CountLostFrames). */
+    val notReceived: Long? = null,
+    /** numRtpSidPacketsReceived: comfort-noise (SID) packets by their payload frame type. */
+    val sidReceived: Long? = null,
+    /** numRtpDuplicatePackets. */
+    val duplicates: Long? = null,
+    /** ImsStreamMediaProfile.AUDIO_QUALITY_* (1 AMR, 2 AMR-WB, 17 to 20 EVS). */
+    val codecType: Int? = null,
+    /** averageRoundTripTime, ms, from RTCP only; 0 means not measured. */
+    val avgRttMs: Long? = null,
+) {
+    /** Received packets net of duplicates (round 28: "Received packets are counted after subtracting numRtpDuplicatePackets"). */
+    val receivedNet: Long get() = rtpReceived - (duplicates ?: 0)
+}
 
 /**
  * RTP while the call was active (lab `rtp_flow`): the window runs from the
  * first call-quality report (duration above 0) to the last active reading,
  * and the counts are scaled to 10 s. [passed] is round 26's media test: a
  * window of at least 10 s, at least 300 packets each way per 10 s, and no RTP
- * inactivity in any report.
+ * inactivity in any report. Round 28 replaced that test with [MediaRule];
+ * the flow stays as the call's plain per-10-s numbers, and [passed] judges
+ * only ledger records made before round 28, which carry no [MediaWindow].
  */
 @Serializable
 data class RtpFlow(
@@ -188,6 +215,9 @@ data class DisconnectReading(
     val normal: Boolean get() = imsCode == IMS_USER_TERMINATED || imsCode == IMS_USER_TERMINATED_BY_REMOTE ||
         ((imsCode == null || imsCode == 0) && (cause == CAUSE_NORMAL || cause == CAUSE_LOCAL))
 
+    /** A media failure end (ImsReasonInfo CODE_MEDIA_*, 401 to 404). */
+    val mediaFailure: Boolean get() = imsName?.startsWith("CODE_MEDIA_") == true || (imsCode != null && imsCode in 401..404)
+
     val plain: String get() = listOfNotNull(imsName?.let { "$it ($imsCode)" }, cause?.let { "cause $it" }).joinToString(", ").ifEmpty { "not reported" }
 
     companion object {
@@ -200,7 +230,7 @@ data class DisconnectReading(
 
 /** Parsers for the registry's call-media lines, inside one phone block. */
 object CallMediaParser {
-    private val QUALITY = Regex("mCallQuality=CallQuality: \\{([^}]*)\\}")
+    private val QUALITY = Regex("mCallQuality=CallQuality: \\{([^}]*)\\}?")
     private val FIELD = Regex("(\\w+)=(-?\\w+)")
     private val IMS_REASON = Regex("mImsCallDisconnectCause=ImsReasonInfo :: \\{(-?\\d+) : (\\w+)")
     private val CAUSE = Regex("mCallDisconnectCause=(-?\\d+)")
@@ -214,22 +244,25 @@ object CallMediaParser {
         "state: (\\w+), transport: (\\w+), id: -?\\d+, netId: -?\\d+, network type: (\\w+), APN Setting: \\[ApnSetting\\] ([^{}\\n]*)",
     )
 
+    /**
+     * The last mCallQuality report of a line, read by key: missing keys give
+     * null (or 0 for the three round 26 counters), unknown keys are ignored,
+     * and the line may end before the closing brace.
+     */
     fun quality(line: String): CallQualityReading? {
         val body = QUALITY.findAll(line).lastOrNull()?.groupValues?.get(1) ?: return null
         val fields = FIELD.findAll(body).associate { it.groupValues[1] to it.groupValues[2] }
-        fun long(name: String) = fields[name]?.toLongOrNull() ?: 0L
-        fun bool(name: String) = when (fields[name]) {
-            "true" -> true
-            "false" -> false
-            else -> null
-        }
+        fun long(name: String) = fields[name]?.toLongOrNull()
         return CallQualityReading(
-            durationMs = long("callDuration"),
-            rtpSent = long("numRtpPacketsTransmitted"),
-            rtpReceived = long("numRtpPacketsReceived"),
-            rtpInactive = bool("rtpInactivityDetected") == true,
-            rxSilence = bool("rxSilenceDetected"),
-            txSilence = bool("txSilenceDetected"),
+            durationMs = long("callDuration") ?: 0L,
+            rtpSent = long("numRtpPacketsTransmitted") ?: 0L,
+            rtpReceived = long("numRtpPacketsReceived") ?: 0L,
+            rtpInactive = fields["rtpInactivityDetected"] == "true",
+            notReceived = long("numRtpPacketsNotReceived"),
+            sidReceived = long("numRtpSidPacketsReceived"),
+            duplicates = long("numRtpDuplicatePackets"),
+            codecType = fields["codecType"]?.toIntOrNull(),
+            avgRttMs = long("averageRoundTripTime"),
         )
     }
 

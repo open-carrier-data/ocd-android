@@ -37,9 +37,12 @@ import kotlinx.serialization.Serializable
  *   bearer under test, and the voice-call stream is muted first.
  * While the call runs, an emergency mark (the registry's emergency number
  * changing, or Telecom's emergency call) aborts at once: the sound is given
- * back and no call is touched. The app ends its call itself after ACTIVE and
- * about 15 s of measurement, gives the sound back, and deletes exactly that
- * call's call log entry. It never sends a menu digit (round 26 rule change 10).
+ * back and no call is touched. The app ends its call itself after ACTIVE,
+ * once round 28's media window can be judged (at least 15 s, and at least 3
+ * CallQuality reports over 10 s: AOSP ImsMedia reports every 5 s; at most
+ * 25 s, inside the mailbox's prompts), gives the sound back, and deletes
+ * exactly that call's call log entry. It never sends a menu digit (round 26
+ * rule change 10).
  *
  * [CallsOutMode.DRY_RUN] runs every guard without changing anything and logs
  * what it would dial, then refuses.
@@ -148,8 +151,13 @@ class MailboxCaller(
 ) {
     data class Timing(
         val waitActiveMs: Long = 30_000,
-        /** How long the call stays up after ACTIVE: round 26's packet test needs a window of at least 10 s. */
+        /**
+         * How long the call stays up after ACTIVE at least, and at most while
+         * round 28's media window is not ready yet (3 reports over 10 s; on
+         * AOSP ImsMedia's 5 s reports about 15 s connected).
+         */
         val holdMs: Long = 15_000,
+        val holdMaxMs: Long = 25_000,
         val endWaitMs: Long = 15_000,
         val pollMs: Long = 1_000,
         /** How long IMS gets to move to LTE inside the Wi-Fi-calling-off override. */
@@ -318,7 +326,7 @@ class MailboxCaller(
                         device.end()
                         endAt = now
                     }
-                    activeAt != null && now - activeAt >= timing.holdMs -> {
+                    activeAt != null && now - activeAt >= timing.holdMs && (watch.mediaReady() || now - activeAt >= timing.holdMaxMs) -> {
                         hungUpByPhone = active
                         device.end()
                         endAt = now
@@ -353,14 +361,15 @@ class MailboxCaller(
             reverts = r
             next
         }
+        // Round 28's media text ("packets only", "No sound was checked"), or round 26's numbers when the call never went ACTIVE.
+        val media = record.media?.text ?: "RTP ${record.rtp?.sentPer10s ?: "-"} sent and ${record.rtp?.receivedPer10s ?: "-"} received per 10 s."
         log(
             "mailbox call for ${due.feature.label} over ${due.bearer.plain}: " +
                 when (result) {
                     "passed" -> "calls out work (audio from packet counts); incoming not tested"
                     "failed" -> "failed ($reasons)"
                     else -> "not counted, retry ($reasons)"
-                } + "; RTP ${record.rtp?.sentPer10s ?: "-"} sent and ${record.rtp?.receivedPer10s ?: "-"} received per 10 s; " +
-                "ended: ${record.disconnect?.plain ?: "not read"}; call log entry ${if (deleted == 1) "deleted" else "left (not exactly one match)"}",
+                } + ". $media Ended: ${record.disconnect?.plain ?: "not read"}; call log entry ${if (deleted == 1) "deleted" else "left (not exactly one match)"}",
         )
         return MailboxOutcome(result, reasons.ifEmpty { null }, record, reverts)
     }

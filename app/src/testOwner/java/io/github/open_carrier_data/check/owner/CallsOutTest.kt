@@ -1,12 +1,16 @@
 package io.github.open_carrier_data.check.owner
 
 import io.github.open_carrier_data.check.core.CallDirection
+import io.github.open_carrier_data.check.core.CallKind
 import io.github.open_carrier_data.check.core.CallTargets
 import io.github.open_carrier_data.check.core.CallTargetsFile
+import io.github.open_carrier_data.check.core.MediaRule
+import io.github.open_carrier_data.check.core.MediaVerdict
 import io.github.open_carrier_data.check.core.NetworkTarget
 import io.github.open_carrier_data.check.core.ProvenBearer
 import io.github.open_carrier_data.check.core.SimIdentity
 import io.github.open_carrier_data.check.core.SpnTarget
+import io.github.open_carrier_data.check.core.StreamClass
 import io.github.open_carrier_data.check.owner.core.CallDevice
 import io.github.open_carrier_data.check.owner.core.CallMethod
 import io.github.open_carrier_data.check.owner.core.CallsLevel
@@ -109,7 +113,9 @@ class CallsOutTest {
     /**
      * The fake phone with a call in its registry: dialling, then ACTIVE after
      * [activeAfterMs] with PHH's call-quality reports ([rate] packets a second
-     * each way), then idle with the disconnect cause the end gives.
+     * each way, a report every reading), or with [reportEveryMs] AOSP
+     * ImsMedia's (a report every 5 s, with the SID, loss, duplicate, codec and
+     * round-trip keys), then idle with the disconnect cause the end gives.
      */
     class CallingPhone(store: MemoryStore = MemoryStore(OwnerState(rebootCleared = true))) : FakePhone(store) {
         var dialAt: Long? = null
@@ -117,6 +123,15 @@ class CallsOutTest {
         var activeAfterMs = 2_000L
         var neverActive = false
         var rate = 50L
+
+        /** AOSP ImsMedia's report period; 0: PHH, a fresh report at every reading. */
+        var reportEveryMs = 0L
+
+        /** Packets received a second; null: [rate]. */
+        var receivedRate: Long? = null
+
+        /** Comfort-noise (SID) packets received a second (AOSP reports only). */
+        var sidRate = 0L
 
         /** The call type PHH reports; null: the bearer's own (18 on Wi-Fi, 13 on LTE). */
         var callTypeOverride: Int? = null
@@ -153,11 +168,21 @@ class CallsOutTest {
                 .replaceFirst("Foreground call state: 0", "Foreground call state: ${if (active) 1 else 3}")
             if (active) {
                 val seconds = since / 1000
-                text = text.replaceFirst(
-                    "mCallNetworkType=0",
-                    "mCallNetworkType=${if (seconds >= 1) type else 0}\n    mCallQuality=CallQuality: {downlinkCallQualityLevel=0 uplinkCallQualityLevel=0 callDuration=${since} " +
-                        "numRtpPacketsTransmitted=${seconds * rate} numRtpPacketsReceived=${seconds * rate} rtpInactivityDetected=false txSilenceDetected=false rxSilenceDetected=false}",
-                )
+                val received = receivedRate ?: rate
+                val quality = if (reportEveryMs > 0) {
+                    // The last report ImsMedia sent: every reportEveryMs, its counts as of then.
+                    val at = since / reportEveryMs * reportEveryMs
+                    val s = at / 1000
+                    "mCallQuality=CallQuality: {downlinkCallQualityLevel=0 uplinkCallQualityLevel=0 callDuration=${if (at > 0) at + 1 else 0} " +
+                        "numRtpPacketsTransmitted=${s * rate} numRtpPacketsReceived=${s * received} numRtpPacketsTransmittedLost=0 numRtpPacketsNotReceived=0 " +
+                        "averageRelativeJitter=5 maxRelativeJitter=8 averageRoundTripTime=0 codecType=2 rtpInactivityDetected=false txSilenceDetected=false " +
+                        "rxSilenceDetected=false numVoiceFrames=0 numNoDataFrames=0 numDroppedRtpPackets=0 minPlayoutDelayMillis=30 maxPlayoutDelayMillis=65 " +
+                        "numRtpSidPacketsReceived=${s * sidRate} numRtpDuplicatePackets=0}"
+                } else {
+                    "mCallQuality=CallQuality: {downlinkCallQualityLevel=0 uplinkCallQualityLevel=0 callDuration=${since} " +
+                        "numRtpPacketsTransmitted=${seconds * rate} numRtpPacketsReceived=${seconds * received} rtpInactivityDetected=false txSilenceDetected=false rxSilenceDetected=false}"
+                }
+                text = text.replaceFirst("mCallNetworkType=0", "mCallNetworkType=${if (seconds >= 1) type else 0}\n    $quality")
             }
             if (emergencyAfterMs?.let { active && since >= it } == true) text = text.replaceFirst("mOutgoingCallEmergencyNumber=null", "mOutgoingCallEmergencyNumber=112")
             // The disconnect cause of an earlier call stays until this one ends.
@@ -176,11 +201,11 @@ class CallsOutTest {
         defaultApp = mapOf("carrier_wfc_ims_available_bool" to "true", "carrier_volte_available_bool" to "true")
     }
 
-    private fun caller(phone: CallingPhone, device: FakeDevice) =
-        MailboxCaller(phone, phone.store, device, "rom-1", "TQ1 eng, phh_ims", "phh_ims", "SM-G981B", { PointerLedger.cell(io.github.open_carrier_data.check.core.DeviceInfo("samsung", "SM-G981B", "x1s", 16, io.github.open_carrier_data.check.core.RomFamily.LINEAGEOS), it) })
+    private fun caller(phone: CallingPhone, device: FakeDevice, stack: String = "phh_ims") =
+        MailboxCaller(phone, phone.store, device, "rom-1", "TQ1 eng, $stack", stack, "SM-G981B", { PointerLedger.cell(io.github.open_carrier_data.check.core.DeviceInfo("samsung", "SM-G981B", "x1s", 16, io.github.open_carrier_data.check.core.RomFamily.LINEAGEOS), it) })
 
-    private fun run(phone: CallingPhone, device: FakeDevice, mode: CallsOutMode = CallsOutMode.LIVE, night: Boolean = true, due: CallsOutDue = wifiDue) =
-        runBlocking { caller(phone, device).run(sim, due, table, mode, night, "2026-10-21") }
+    private fun run(phone: CallingPhone, device: FakeDevice, mode: CallsOutMode = CallsOutMode.LIVE, night: Boolean = true, due: CallsOutDue = wifiDue, stack: String = "phh_ims") =
+        runBlocking { caller(phone, device, stack).run(sim, due, table, mode, night, "2026-10-21") }
 
     // --- only the SIM's own mailbox, never an emergency or service number ---
 
@@ -335,16 +360,19 @@ class CallsOutTest {
     }
 
     @Test
-    fun `PHH's default 13 while IMS runs over Wi-Fi is not counted, and thin RTP or no ACTIVE fails`() {
+    fun `PHH's default 13 while IMS runs over Wi-Fi is not counted, thin RTP is not counted, and no ACTIVE fails`() {
         val mismatch = phone().apply { callTypeOverride = 13 }
         val notCounted = run(mismatch, FakeDevice(mismatch))
         assertEquals("not_counted_retry", notCounted.result)
         assertFalse(notCounted.record!!.bearer!!.counted)
 
+        // Round 28: below 300 per 10 s on PHH (no DTX class) is "not counted, retry", never "failed".
         val thin = phone().apply { rate = 29 }
-        val failed = run(thin, FakeDevice(thin))
-        assertEquals("failed", failed.result)
-        assertTrue(failed.reason, "rtp:sent_290_per_10s_under_300" in failed.reason.orEmpty())
+        val thinCall = run(thin, FakeDevice(thin))
+        assertEquals("not_counted_retry", thinCall.result)
+        assertTrue(thinCall.reason, "media:sent_dtx_not_available:stack" in thinCall.reason.orEmpty())
+        assertTrue(thinCall.reason, "media:recv_dtx_not_available:stack" in thinCall.reason.orEmpty())
+        assertTrue(thin.store.state.log.last().text, "Audio stream not judged, retry: this IMS stack does not report comfort-noise packets" in thin.store.state.log.last().text)
 
         val never = phone().apply { neverActive = true }
         val device = FakeDevice(never)
@@ -352,6 +380,70 @@ class CallsOutTest {
         assertEquals("failed", noActive.result)
         assertTrue(noActive.reason, "not_active" in noActive.reason.orEmpty())
         assertEquals(1, device.ends)
+    }
+
+    // --- round 28 on AOSP ImsStack: 5 s reports, the DTX class, no stream ---
+
+    @Test
+    fun `on AOSP ImsStack's 5 s reports the call stays up until 3 reports span 10 s, and passes at full rate`() {
+        val phone = phone().apply { reportEveryMs = 5_000 }
+        val device = FakeDevice(phone)
+        val outcome = run(phone, device, stack = MediaRule.AOSP_IMSSTACK)
+        assertEquals(outcome.reason, "passed", outcome.result)
+        val media = outcome.record!!.media!!
+        assertEquals(3, media.reportCount)
+        assertEquals(10_000L, media.windowMs)
+        assertEquals(MediaRule.AOSP_IMSSTACK, media.imsStack)
+        assertEquals(CallKind.MAILBOX_AUTO, media.callKind)
+        assertEquals(StreamClass.FULL_RATE, media.recvClass)
+        assertEquals(true, media.byThisPhone)
+        assertEquals(1, device.ends)
+        val line = phone.store.state.log.last().text
+        assertTrue(line, "calls out work (audio from packet counts); incoming not tested" in line)
+        assertTrue(line, "Audio stream both ways (packets only): this phone sent 500 and received 500 RTP packets per 10 s over Wi-Fi. No sound was checked." in line)
+    }
+
+    @Test
+    fun `a mailbox call whose prompts pause still counts as DTX on AOSP ImsStack, marked for Lab review`() {
+        val phone = phone().apply {
+            reportEveryMs = 5_000
+            receivedRate = 10
+            sidRate = 7
+        }
+        val outcome = run(phone, FakeDevice(phone), stack = MediaRule.AOSP_IMSSTACK)
+        assertEquals(outcome.reason, "passed", outcome.result)
+        val media = outcome.record!!.media!!
+        assertEquals(StreamClass.DTX, media.recvClass)
+        assertEquals(listOf(MediaRule.MAILBOX_BELOW_FULL_RATE), media.notes)
+        assertTrue(phone.store.state.log.last().text, "70 of 100 were comfort-noise (SID) packets, 0% lost" in phone.store.state.log.last().text)
+        // The same call on PHH has no DTX class: not counted.
+        val phh = phone().apply {
+            receivedRate = 10
+        }
+        assertEquals("not_counted_retry", run(phh, FakeDevice(phh)).result)
+    }
+
+    @Test
+    fun `a mailbox call that receives nothing is a measured failure at once`() {
+        val phone = phone().apply {
+            reportEveryMs = 5_000
+            receivedRate = 0
+        }
+        val outcome = run(phone, FakeDevice(phone), stack = MediaRule.AOSP_IMSSTACK)
+        assertEquals("failed", outcome.result)
+        assertTrue(outcome.reason, "media:no_audio_stream_received" in outcome.reason.orEmpty())
+        assertEquals(MediaVerdict.NO_STREAM, outcome.record!!.media!!.verdict)
+        assertTrue(phone.store.state.log.last().text, "No audio packets received for 15 s after the call connected (this phone sent 500 per 10 s)." in phone.store.state.log.last().text)
+    }
+
+    @Test
+    fun `reports too far apart - the app hangs up at 25 s and the call is not counted`() {
+        val phone = phone().apply { reportEveryMs = 10_000 }
+        val outcome = run(phone, FakeDevice(phone), stack = MediaRule.AOSP_IMSSTACK)
+        assertEquals("not_counted_retry", outcome.result)
+        assertTrue(outcome.reason, "media:reports_under_3" in outcome.reason.orEmpty())
+        val heldFor = phone.hangUpAt!! - (phone.dialAt!! + phone.activeAfterMs)
+        assertTrue("$heldFor", heldFor in 25_000L..26_000L)
     }
 
     @Test
