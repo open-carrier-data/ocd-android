@@ -120,9 +120,11 @@ dependencies {
     testImplementation(libs.junit)
 }
 
-// Round 25 OB1: the owner APK is never a CI artifact.
+// Round 25 OB1: the owner APK is never a CI artifact. Only the tasks that produce or sign an
+// owner APK or bundle are blocked; packageOwnerResources and the other resource steps the owner
+// unit tests need still run.
 tasks.matching { task ->
-    task.name.contains("Owner") && listOf("assemble", "package", "bundle").any { task.name.startsWith(it) }
+    task.name in setOf("assembleOwner", "packageOwner", "bundleOwner", "signOwnerBundle", "packageOwnerBundle")
 }.configureEach {
     doFirst {
         if (System.getenv("CI") != null) throw GradleException("The owner build is never built in CI (round 25 OB1).")
