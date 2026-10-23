@@ -283,6 +283,36 @@ class MediaRuleTest {
     }
 
     @Test
+    fun `a full-rate count with more than 20 % loss is not counted where the loss counter is verified, and passes on PHH`() {
+        // 200 received and 100 lost per 5 s: 400 per 10 s over the window, a third of the packets lost.
+        val lossyFull = window(recv = List(4) { 200L }, sid = List(4) { 0L }, lost = List(4) { 100L })
+        val r = judge(lossyFull).said()
+        assertEquals(400L, r.recvPer10s)
+        assertEquals(MediaVerdict.NOT_COUNTED, r.verdict)
+        assertEquals(StreamClass.LOW_UNEXPLAINED, r.recvClass)
+        assertEquals(listOf("recv_loss_over_20_percent"), r.reasons)
+        assertEquals(33.3, r.lossPercent!!, 0.0)
+        assertEquals("Audio stream not judged, retry: 33.3% of packets lost", r.text)
+        assertTrue(MediaRule.lossCounterVerified(aosp))
+        // The same counts on the mailbox call: still not counted (the ladder reads it as "not counted, retry").
+        assertEquals(listOf("recv_loss_over_20_percent"), judge(lossyFull, kind = CallKind.MAILBOX_AUTO, bearer = wifi).said().reasons)
+        // PHH (and any stack without a verified loss counter) keeps the plain 300 floor: a pass, its loss null.
+        for (stack in listOf("phh_ims", "samsung_ims", "other", "not_known")) {
+            assertFalse(MediaRule.lossCounterVerified(stack))
+            val phh = judge(lossyFull, stack = stack).said()
+            assertEquals(stack, MediaVerdict.PASS, phh.verdict)
+            assertEquals(StreamClass.FULL_RATE, phh.recvClass)
+            assertNull(phh.rtpNotReceivedWindow)
+            assertNull(phh.lossPercent)
+        }
+        // 20 % exactly at full rate still passes on AOSP; AOSP without the loss key in its reports keeps the plain floor.
+        assertEquals(MediaVerdict.PASS, judge(window(recv = List(4) { 200L }, lost = List(4) { 50L })).verdict)
+        assertEquals(MediaVerdict.PASS, judge(window(recv = List(4) { 200L })).verdict)
+        // The sent direction has no loss counter: a full-rate send is never capped.
+        assertEquals(StreamClass.FULL_RATE, r.sentClass)
+    }
+
+    @Test
     fun `a low rate the SIDs do not explain is not counted`() {
         val r = judge(window(recv = List(4) { 45L }, sid = List(4) { 2L }, lost = List(4) { 0L })).said()
         assertEquals(MediaVerdict.NOT_COUNTED, r.verdict)
@@ -444,6 +474,7 @@ class MediaRuleTest {
         `a low send rate on AOSP counts on rate and continuity alone, labelled as assumed`()
         `one-way audio - zero received over at least 10 s is no audio stream, on every stack`()
         `a lossy stream is not counted - sequence gaps tell loss from DTX`()
+        `a full-rate count with more than 20 % loss is not counted where the loss counter is verified, and passes on PHH`()
         `a low rate the SIDs do not explain is not counted`()
         `a window under 10 s or under 3 reports is not counted`()
         `EVS below the full-rate floor waits for its own measurement, full-rate EVS passes`()

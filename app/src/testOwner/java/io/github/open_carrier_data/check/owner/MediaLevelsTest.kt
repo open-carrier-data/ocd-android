@@ -141,6 +141,14 @@ class MediaLevelsTest {
         assertEquals("not_counted_retry", CallLevels.callsOut(thin).result)
         assertEquals(listOf("media:recv_rate_not_explained:sid_under_20_per_10s"), CallLevels.callsOut(thin).notCounted)
         assertEquals("not_counted_retry", CallLevels.callsOut(mailbox(applied, recv = 45, stack = "phh_ims")).result)
+        // A full-rate count with a third of the packets lost: not counted on AOSP ImsStack (verified loss counter), a pass on PHH.
+        fun lossyMailbox(stack: String) = call(
+            applied, CallDirection.OUTGOING, method = CallMethod.MAILBOX_CALL, stack = stack, recv = 200, lost = 100, reports = 3,
+            end = DisconnectReading(501, "CODE_USER_TERMINATED", 3), hungUp = true,
+        )
+        assertEquals(listOf("media:recv_loss_over_20_percent"), CallLevels.callsOut(lossyMailbox(aosp)).notCounted)
+        assertEquals("not_counted_retry", CallLevels.callsOut(lossyMailbox(aosp)).result)
+        assertTrue(CallLevels.callsOut(lossyMailbox("phh_ims")).passed)
         val silent = mailbox(applied + 1, recv = 0)
         assertEquals(MediaVerdict.NO_STREAM, silent.media!!.verdict)
         assertEquals("failed", CallLevels.callsOut(silent).result)
