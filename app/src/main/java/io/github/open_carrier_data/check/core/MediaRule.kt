@@ -15,8 +15,14 @@ import kotlinx.serialization.Serializable
  *    from the first CallQuality report to the last, which must span at least
  *    10 s and hold at least 3 reports (on AOSP ImsMedia's 5 s reports that is
  *    about 15 s connected). Received packets are net of duplicates.
- * 2. Full rate (unchanged, every stack): at least 300 packets per 10 s (60 %
- *    of 10000/ptime where the Lab reads ptime), and no RTP inactivity.
+ * 2. Full rate (every stack): at least 300 packets per 10 s (60 % of
+ *    10000/ptime where the Lab reads ptime), and no RTP inactivity. On a
+ *    stack whose sequence-loss counter a Lab run has shown to be filled
+ *    ([MediaRule.LOSS_COUNTER_STACKS]) the received direction also needs at
+ *    most 20 % sequence-gap loss: the ruling's mailbox section says a lossy
+ *    full-rate stream fails (d) whatever its packet count with that counter
+ *    (the stricter reading, coordinator, 2026-10-23). Stacks without a
+ *    verified loss counter keep the plain floor.
  * 3. DTX (new): only on a stack whose SID and sequence-loss counters a Lab run
  *    has shown to be filled ([MediaRule.DTX_STACKS], today AOSP ImsStack with
  *    ImsMedia, never PHH). Below the floor a direction still counts with
@@ -403,6 +409,14 @@ object MediaRule {
      */
     val DTX_STACKS = setOf(AOSP_IMSSTACK)
 
+    /**
+     * Stacks whose sequence-loss counter (numRtpPacketsNotReceived, from RTP
+     * sequence gaps) a Lab run has shown to be filled: the 20 % loss cap
+     * applies to the received direction at full rate too. Every DTX stack is
+     * one, since the DTX class needs that counter.
+     */
+    val LOSS_COUNTER_STACKS = setOf(AOSP_IMSSTACK)
+
     /** Codecs admitted to the DTX class: AMR and AMR-WB. EVS (other SID intervals, TS 26.445) waits for its own measurement. */
     val DTX_CODECS = setOf(Codec.AMR, Codec.AMR_WB)
 
@@ -414,6 +428,8 @@ object MediaRule {
     fun fullRateFloor(ptimeMs: Int?): Long = if (ptimeMs != null && ptimeMs > 0) 6_000L / ptimeMs else FULL_RATE_PER_10S
 
     fun dtxAllowed(stack: String): Boolean = stack in DTX_STACKS
+
+    fun lossCounterVerified(stack: String): Boolean = stack in LOSS_COUNTER_STACKS || dtxAllowed(stack)
 
     /**
      * Round 28's judgement of one call's [window]. [kind] null: the direction
@@ -447,7 +463,7 @@ object MediaRule {
         val recvPer10s = per10s(w.received)
         // Only a stack whose counters a Lab run verified gives SID and loss; elsewhere they are null, never 0.
         val sid = w.sidReceived.takeIf { dtxStack }
-        val notReceived = w.notReceived.takeIf { dtxStack }
+        val notReceived = w.notReceived.takeIf { lossCounterVerified(stack) }
         val sidPer10s = sid?.let { per10s(it) }
         val loss = notReceived?.let { nr -> (w.received + nr).takeIf { it > 0 }?.let { nr.toDouble() / it } }
         val reasons = mutableListOf<String>()
@@ -518,7 +534,11 @@ object MediaRule {
         val way = if (received) "recv" else "sent"
         // Nothing received at all: the window, the hold or "no stream" says why; nothing sent still has to be explained.
         if (total == 0L && received) return StreamClass.NONE to emptyList()
-        if (per10s >= floor) return StreamClass.FULL_RATE to emptyList()
+        if (per10s >= floor) {
+            // With a verified loss counter a lossy stream is not full rate, whatever its count ([loss] is null without one).
+            if (received && loss != null && loss > MAX_LOSS) return StreamClass.LOW_UNEXPLAINED to listOf("recv_loss_over_20_percent")
+            return StreamClass.FULL_RATE to emptyList()
+        }
         val none = total == 0L
         if (!dtxStack) return (if (none) StreamClass.NONE else StreamClass.LOW_UNEXPLAINED) to listOf("${way}_dtx_not_available:stack")
         val why = mutableListOf<String>()
