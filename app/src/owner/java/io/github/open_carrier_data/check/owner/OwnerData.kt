@@ -75,6 +75,12 @@ class FileStateStore(context: Context) : StateStore {
     }
 
     /**
+     * One read, change and write under the process's state lock, for updates that may race each
+     * other (Telephony's answer to the test SMS and the SMS itself arrive within milliseconds).
+     */
+    fun updateLocked(change: (OwnerState) -> OwnerState): OwnerState = synchronized(LOCK) { change(read()).also(::write) }
+
+    /**
      * Round 26's call and message lines also go to the device log (tag
      * [TRACE_TAG]), so the owner can follow a dry run or a night over adb
      * without root. They hold no number: the mailbox short code at most.

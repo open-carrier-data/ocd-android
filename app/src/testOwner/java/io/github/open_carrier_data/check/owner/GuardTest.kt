@@ -60,6 +60,8 @@ class GuardTest {
         assertEquals("dumpsys activity service com.google.android.iwlan/.IwlanDataService", lines[OwnerCommand.IWLAN_DUMP])
         assertEquals("dumpsys activity service com.android.telephony.qns", lines[OwnerCommand.QNS_DUMP])
         assertEquals("dumpsys power", lines[OwnerCommand.POWER])
+        // How a test SMS came in, from Telephony's own record (2026-10-24).
+        assertEquals("dumpsys isms", lines[OwnerCommand.SMS_DUMP])
         assertEquals(
             setOf(OwnerCommand.CC_SET, OwnerCommand.CC_CLEAR, OwnerCommand.APN_INSERT, OwnerCommand.APN_DELETE, OwnerCommand.PREFERRED_SET, OwnerCommand.PREFERRED_CLEAR),
             OwnerCommand.entries.filter { it.writes }.toSet(),

@@ -327,6 +327,12 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         say("Checking the mailbox call without dialling. See the log")
     }
 
+    /** One test SMS to the phone's own number now, at the owner's request; it may cost an SMS. */
+    fun selfSmsNow() {
+        OwnerScheduler.selfSmsNow(getApplication())
+        say("Sending a test SMS to your own number. See the log")
+    }
+
     /** The optional data SMS to the phone's own number; off by default, as it may cost an SMS. */
     fun setSelfSms(on: Boolean) = viewModelScope.launch {
         store.update { it.copy(selfSmsOn = on).logged(System.currentTimeMillis(), "self_sms", if (on) "the weekly test SMS to your own number is on" else "the weekly test SMS is off") }
@@ -447,6 +453,7 @@ class OwnerActivity : ComponentActivity() {
             setCallsOutLive = { viewModel.setCallsOutLive(it) },
             dryRunCallsOut = viewModel::dryRunCallsOut,
             setSelfSms = { viewModel.setSelfSms(it) },
+            selfSmsNow = { viewModel.selfSmsNow() },
             undoKept = { slot, key -> viewModel.undoKept(slot, key) },
             saveToken = { text, done -> viewModel.saveToken(text, done) },
             removeToken = { viewModel.removeToken() },
@@ -457,6 +464,8 @@ class OwnerActivity : ComponentActivity() {
         // `--ei layer_probe 0` puts the probe entry on the SIM in slot 1; `--ez layer_undo_all true` is Undo all.
         intent?.getIntExtra(EXTRA_LAYER_PROBE, -1)?.takeIf { it in 0..3 }?.let { viewModel.layerProbe(it) }
         if (intent?.getBooleanExtra(EXTRA_LAYER_UNDO_ALL, false) == true) viewModel.undoKept(null, null)
+        // `--ez self_sms_now true` is "Send a test SMS now"; once per start, never again when the activity is recreated, as it may cost an SMS.
+        if (savedInstanceState == null && intent?.getBooleanExtra(EXTRA_SELF_SMS_NOW, false) == true) viewModel.selfSmsNow()
         setContent {
             OcdCheckTheme {
                 val ui by viewModel.ui.collectAsState()
@@ -469,6 +478,7 @@ class OwnerActivity : ComponentActivity() {
         const val EXTRA_CALLS_OUT_DRY_RUN = "calls_out_dry_run"
         const val EXTRA_LAYER_PROBE = "layer_probe"
         const val EXTRA_LAYER_UNDO_ALL = "layer_undo_all"
+        const val EXTRA_SELF_SMS_NOW = "self_sms_now"
     }
 
     private fun openIssue() = viewModel.report { prefilled ->

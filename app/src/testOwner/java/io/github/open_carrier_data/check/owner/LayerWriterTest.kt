@@ -46,6 +46,7 @@ import io.github.open_carrier_data.check.owner.core.ProvisionalKeep
 import io.github.open_carrier_data.check.owner.core.Provisional
 import io.github.open_carrier_data.check.owner.core.Refusal
 import io.github.open_carrier_data.check.owner.core.RunResult
+import io.github.open_carrier_data.check.owner.core.SelfSms
 import io.github.open_carrier_data.check.owner.core.SelfSmsCheck
 import io.github.open_carrier_data.check.owner.core.SimView
 import io.github.open_carrier_data.check.owner.core.StatusSentence
@@ -218,7 +219,10 @@ class LayerWriterTest {
     private fun keep(k: String, value: Boolean = true, since: Long = now - day) = LiveOverride(0, key, k, value, Hold.KEPT, since, before = "false")
 
     private fun sent(at: Long, received: Boolean) =
-        SelfSmsCheck(key, at, "0123456789abcdef", if (received) "received" else "sent", if (received) at + 5_000 else null, imsAtSend = true, imsAtReceive = if (received) true else null)
+        SelfSmsCheck(
+            key, at, "0123456789abcdef", if (received) "received" else "sent", if (received) at + 5_000 else null, imsAtSend = true,
+            imsAtReceive = if (received) true else null, sentVia = SelfSms.IMS, receivedVia = if (received) SelfSms.IMS else null,
+        )
 
     private fun entry(k: String, value: Boolean, level: LayerLevel = LayerLevel.DURABLE, cls: LayerClass = LayerKeys.classOf(k)!!, since: Long = now - day, lease: Long = now + 5 * day, baseline: Boolean? = false, carried: Boolean = false, state: String = "served", bearers: List<String> = emptyList(), method: String = "") =
         LayerEntryView(k, "bool", JsonPrimitive(value), cls.wire, "ocd", level.wire, since, lease, bearers = bearers, method = method, baseline = baseline?.let(::JsonPrimitive), carriedOver = carried, served = state == "served", state = state)
@@ -273,6 +277,14 @@ class LayerWriterTest {
         // Only what happened since the value took effect counts; an off needs an SMS delivered while off.
         assertNull(LayerCheck.sms(listOf(sent(now - 2 * day, true)), key, true, now - day))
         assertEquals(LayerLevel.DURABLE, LayerCheck.sms(listOf(sent(now - 600_000, true)), key, false, now - day))
+        // Durable needs SMS both ways by Telephony's word on each leg; IMS registered at both ends is not enough (2026-10-24).
+        val registeredOnly = sent(now - 600_000, true).copy(sentVia = null, receivedVia = null)
+        assertNull(LayerCheck.sms(listOf(registeredOnly), key, true, now - day))
+        assertEquals(LayerLevel.PROVISIONAL, LayerCheck.sms(listOf(sent(now - 600_000, true).copy(receivedVia = null)), key, true, now - day))
+        assertEquals(LayerLevel.PROVISIONAL, LayerCheck.sms(listOf(sent(now - 600_000, true).copy(receivedVia = SelfSms.CS)), key, true, now - day))
+        // Sent over CS is not sent over IMS, whatever the registration said.
+        assertNull(LayerCheck.sms(listOf(sent(now - 600_000, false).copy(sentVia = SelfSms.CS)), key, true, now - day))
+        assertNull(LayerCheck.sms(listOf(sent(now - 600_000, true).copy(imsAtSend = false)), key, true, now - day))
         assertEquals(LayerLevel.DURABLE, LayerCheck.video(true, true))
         assertNull(LayerCheck.video(true, false))
         val before = io.github.open_carrier_data.check.owner.core.ImsShape(true, false, setOf("mmtel", "smsip"))

@@ -94,15 +94,14 @@ object Settled {
     }
 
     /**
-     * SMS both ways on [sim] and [build]: the newest data SMS to the phone's own number that was
-     * sent with IMS registered for SMS and came back with IMS registered, within 90 days. A check
-     * without its build or without IMS read on its way back never settles.
+     * SMS both ways on [sim] and [build]: the newest data SMS to the phone's own number that went
+     * out and came back over IMS by Telephony's own word on each leg ([SelfSms.bothWays]), within
+     * 90 days. A check without its build or without either leg proven never settles.
      */
     fun sms(checks: List<SelfSmsCheck>, sim: SimKey, build: String, nowMs: Long): SettledLevel? {
         val newest = checks.filter {
             val at = it.receivedAtMs ?: it.sentAtMs
-            it.sim.sameCard(sim) && it.build == build && it.result == "received" && it.imsAtSend == true && it.imsAtReceive == true &&
-                at <= nowMs && nowMs - at < CallLevels.VALID_MS
+            it.sim.sameCard(sim) && it.build == build && SelfSms.bothWays(it) && at <= nowMs && nowMs - at < CallLevels.VALID_MS
         }.maxByOrNull { it.receivedAtMs ?: it.sentAtMs } ?: return null
         val bearer = newest.wifiAtSend?.let { if (it) ProvenBearer.IWLAN.wire else ProvenBearer.LTE.wire }
         return SettledLevel(L3, bearer, SELF_SMS, day(newest.receivedAtMs ?: newest.sentAtMs))
