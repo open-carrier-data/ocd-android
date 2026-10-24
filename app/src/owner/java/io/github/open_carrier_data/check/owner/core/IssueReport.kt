@@ -30,8 +30,15 @@ import java.time.ZoneOffset
  * S13), the pinned main commit or the commit the bundled snapshot was built
  * from; a run recorded before round 29 still names its release tag.
  *
- * The app only opens the URL in the browser; the owner reads it and submits
- * it himself, and the app holds no token. The public repository's bot checks
+ * Since OCD's round 29 a result of volte:on, vowifi:on or sms_over_ims:on can
+ * carry `settled` ([Settled]): the level, bearer, method and day this phone
+ * measured under rounds 26 to 28, with the ROM build in `device.build`. From
+ * the owner's account the bot records those as "re-tested by OCD".
+ *
+ * The app opens the URL in the browser; the owner reads it and submits it
+ * himself. With the owner's token ([AutoReport]) the owner build also sends
+ * its settled results itself as an issue on the same form, through GitHub's
+ * REST API; without one it sends nothing. The public repository's bot checks
  * that the commit (or release) and every entry exist and records the report under
  * `observed/` as "reported, not checked by OCD": a report is a hint that
  * never moves an OCD value and never makes a phone skip its own test. It
@@ -64,20 +71,27 @@ object IssueReport {
     fun loginLength(url: String): Int = LOGIN.length + URLEncoder.encode(url, "UTF-8").length
 
     /** Values the privacy scan's phone heuristics skip: an all-digit hash tail or GID1 prefix is not a number. */
-    private val HEX_FIELDS = PrivacyScan.hexFields + setOf("report.ocd_profile", "report.sim.gid1_prefix", "report.release.data_digest", "report.release.commit")
+    private val HEX_FIELDS = PrivacyScan.hexFields + setOf(
+        "report.ocd_profile", "report.sim.gid1_prefix", "report.release.data_digest", "report.release.commit",
+        // "CP2A.260605.016 1792814506" has a phone number's shape; it is a fixed-shape field.
+        "report.device.build",
+    )
 
     private val DIGEST = Regex("sha256:[0-9a-f]{64}")
 
     fun title(run: RunResult, cell: ReportCell): String =
         "$TITLE_PREFIX ${cell.model} on ${run.sim?.mccmnc ?: "?"}" + (cell.spn?.let { " ($it)" } ?: "")
 
-    /** Every entry the run found: the five switches' on and off, then OCD's APN rows. */
-    fun results(run: RunResult, calls: List<CallsTested>): Pair<List<EntryResult>, Int> {
+    /**
+     * Every entry the run found: the five switches' on and off, then OCD's APN rows. [settled]:
+     * the settled results by entry ([Settled.forRun]), attached as rounds 26 to 28 read them.
+     */
+    fun results(run: RunResult, calls: List<CallsTested>, settled: Map<String, SettledLevel> = emptyMap()): Pair<List<EntryResult>, Int> {
         val mccmnc = run.sim?.mccmnc
         val features = run.features.flatMap { f ->
             // Round 26 rule change 1: T2 is the machine evidence of L3 (calls both ways), measured by this phone.
             val t2 = f.feature in Ladders.CALL_TESTED && calls.any { it.feature == f.feature && it.level == CallsLevel.WORKS && (it.mccmnc == null || it.mccmnc == mccmnc) }
-            Pointers.entries(f, t2)
+            Pointers.entries(f, t2).map { Settled.apply(it, settled[it.entry]) }
         }
         val rows = run.apns.filter { it.apnKey.isNotEmpty() }
         val apns = rows.mapNotNull(Pointers::apn).distinctBy { it.entry }
@@ -90,10 +104,20 @@ object IssueReport {
      * [calls] are this phone's measured call levels (round 26; works is T2). Null
      * without a SIM, without a data digest, or without a result.
      */
-    fun report(run: RunResult, cell: ReportCell, calls: List<CallsTested>, leaveOutApns: Int = 0): JsonObject? {
+    fun report(
+        run: RunResult,
+        cell: ReportCell,
+        calls: List<CallsTested>,
+        leaveOutApns: Int = 0,
+        settled: Map<String, SettledLevel> = emptyMap(),
+        settledOnly: Boolean = false,
+    ): JsonObject? {
         val sim = run.sim ?: return null
         if (!DIGEST.matches(cell.dataDigest)) return null
-        val (all, skipped) = results(run, calls)
+        val (found, foundSkipped) = results(run, calls, settled)
+        // The automatic report carries only the settled results (round 29); the prefilled one carries every entry.
+        val all = if (settledOnly) found.filter { it.settled != null } else found
+        val skipped = if (settledOnly) 0 else foundSkipped
         val apnCount = all.count { it.entry.startsWith("apn:") }
         val drop = leaveOutApns.coerceAtMost(apnCount)
         val results = all.dropLast(drop)
@@ -121,6 +145,7 @@ object IssueReport {
                 put("rom_family", cell.romFamily)
                 put("build_type", cell.buildType)
                 put("ims_stack", cell.imsStack)
+                cell.romBuild?.takeIf { Settled.BUILD.matches(it) }?.let { put("build", it) }
             }
             putJsonObject("sim") {
                 put("mccmnc", sim.mccmnc)
@@ -153,6 +178,14 @@ object IssueReport {
                         if (r.kept && r.tested && r.passed) put("kept", true)
                         r.method?.let { put("method", code(it)) }
                         r.restored?.let { put("restored", it) }
+                        r.settled?.let { s ->
+                            putJsonObject("settled") {
+                                put("level", s.level)
+                                s.bearer?.let { put("bearer", it) }
+                                put("method", s.method)
+                                put("measured_on", s.measuredOn)
+                            }
+                        }
                     }
                 }
             }
@@ -200,12 +233,12 @@ object IssueReport {
     }
 
     /** The prefilled issue, or null without a SIM, a data digest or a result, or when the privacy scan finds an identifier. */
-    fun prefill(run: RunResult, cell: ReportCell, calls: List<CallsTested>): Prefilled? {
+    fun prefill(run: RunResult, cell: ReportCell, calls: List<CallsTested>, settled: Map<String, SettledLevel> = emptyMap()): Prefilled? {
         val title = title(run, cell)
         if (PrivacyScan.scanValue("title", title).isNotEmpty()) return null
         var leaveOut = 0
         while (true) {
-            val report = report(run, cell, calls, leaveOut) ?: return null
+            val report = report(run, cell, calls, leaveOut, settled) ?: return null
             if (PrivacyScan.scan(report, hex = HEX_FIELDS).isNotEmpty()) return null
             val text = text(report)
             val url = NEW_ISSUE + "?" + linkedMapOf("template" to TEMPLATE, "title" to title, FIELD to text).entries
@@ -217,6 +250,40 @@ object IssueReport {
     }
 
     fun url(run: RunResult, cell: ReportCell, calls: List<CallsTested>): String? = prefill(run, cell, calls)?.url
+
+    /** An issue as the app sends it itself: the form's title and the body GitHub would write for it. */
+    data class Issue(val title: String, val body: String, val text: String) {
+        val hash: String get() = hash(text)
+    }
+
+    /**
+     * The automatic report (OCD round 29): only [settled]'s entries of [run], in the form's
+     * shape, or null without a settled result or when the privacy scan finds anything.
+     */
+    fun automatic(run: RunResult, cell: ReportCell, calls: List<CallsTested>, settled: Map<String, SettledLevel>): Issue? {
+        if (settled.isEmpty()) return null
+        val title = title(run, cell)
+        if (PrivacyScan.scanValue("title", title).isNotEmpty()) return null
+        val report = report(run, cell, calls, settled = settled, settledOnly = true) ?: return null
+        if (PrivacyScan.scan(report, hex = HEX_FIELDS).isNotEmpty()) return null
+        val text = text(report)
+        val body = body(text)
+        if (PrivacyScan.scanValue("body", body.replace(text, "")).isNotEmpty()) return null
+        return Issue(title, body, text)
+    }
+
+    /** The form's headings, as the public bot reads them (observed_reports.py REPORT_HEADING, PRIVACY_HEADING). */
+    const val REPORT_HEADING = "Report"
+    const val PRIVACY_HEADING = "Privacy check"
+
+    /**
+     * The issue body GitHub writes for the form: the report fenced as JSON under "Report", and
+     * the privacy box ticked under "Privacy check" with what the app checked, since nobody reads
+     * an automatic report before it is sent.
+     */
+    fun body(text: String): String =
+        "### $REPORT_HEADING\n\n```json\n$text\n```\n\n### $PRIVACY_HEADING\n\n" +
+            "- [X] Sent by the OCD Check owner build after its privacy scan; it holds none of the private values listed in SECURITY.md.\n"
 
     /** A fixed code, as the schema wants it: lower case letters, digits and underscores. */
     internal fun code(text: String): String {

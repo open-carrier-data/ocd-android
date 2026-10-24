@@ -310,6 +310,7 @@ class OwnerData(private val context: Context, private val store: StateStore) {
                 dataDigest = bundle.source.dataDigest.orEmpty(),
                 dataSource = if (pulled) "pulled" else "bundled",
                 dataCommit = bundle.source.commit.takeIf { DataSource.SHA.matches(it) },
+                romBuild = OwnerAutoReports.publicBuild(),
             )
         }
 

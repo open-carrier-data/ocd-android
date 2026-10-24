@@ -144,7 +144,9 @@ object OwnerSelfSms {
         )
         // Always a port: a data SMS to the app's own port reaches only this app, never an inbox; never a Type 0 SMS.
         val ok = runCatching { manager.sendDataMessage(own, null, SelfSms.PORT, SelfSms.payload(nonce), sent, null) }.isSuccess
-        return SelfSmsCheck(sim.key, now, nonce, if (ok) "sent" else "send_failed", imsAtSend = smsOverIms)
+        // Round 29: the build and the IMS bearer, so SMS both ways can settle per build.
+        val build = OwnerBasis.current(context, FileStateStore(context).read()).rom
+        return SelfSmsCheck(sim.key, now, nonce, if (ok) "sent" else "send_failed", imsAtSend = smsOverIms, build = build, wifiAtSend = ims?.ims?.transport?.isWifi)
     }
 
     @Suppress("DEPRECATION")

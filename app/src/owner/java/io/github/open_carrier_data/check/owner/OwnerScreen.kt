@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -48,6 +49,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -93,6 +95,9 @@ import androidx.compose.ui.text.font.DeviceFontFamilyName
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.open_carrier_data.check.owner.core.CheckedLine
@@ -134,6 +139,9 @@ class OwnerActions(
     val setSelfSms: (Boolean) -> Unit,
     /** Undo of one entry kept after restart (slot and key), or of all (null, null). */
     val undoKept: (Int?, String?) -> Unit = { _, _ -> },
+    /** Round 29: stores the owner's token for automatic reports; the callback says whether it was stored. */
+    val saveToken: (String, (Boolean) -> Unit) -> Unit = { _, _ -> },
+    val removeToken: () -> Unit = {},
 )
 
 /** The options under "When you tap Test now" in Details. Off values run at night on their own. */
@@ -738,6 +746,10 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         }
     }
 
+    // Round 29: settled results sent as report issues with the owner's own fine-grained token; without one, nothing is sent.
+    SectionTitle("Reports")
+    Group { item { TokenRow(ui, actions) } }
+
     Spacer(Modifier.padding(top = 24.dp))
     Group {
         item {
@@ -821,6 +833,38 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
 
     SectionTitle("Log")
     Group { item { Log(state) } }
+}
+
+/**
+ * Automatic reports (OCD round 29): without a token, the field to enter one; with one, what was
+ * sent last and "Remove token". The typed text stays in memory only (never saved state, never
+ * shown), and the field clears once the token is stored.
+ */
+@Composable
+private fun TokenRow(ui: OwnerUi, actions: OwnerActions) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Title("Send reports automatically")
+        if (ui.tokenSet) {
+            Summary(listOfNotNull("On: settled results go to Open Carrier Data as issues under your GitHub account", ui.state.autoLine).joinToString(". "))
+            OutlinedButton(onClick = actions.removeToken) { Text("Remove token") }
+        } else {
+            Summary(
+                "Off: reports open in the browser for you to submit. To send settled results automatically, enter a fine-grained " +
+                    "GitHub token with only Issues read and write on open-carrier-data/open-carrier-data",
+            )
+            var text by remember { mutableStateOf("") }
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                label = { Text("GitHub token") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(onClick = { actions.saveToken(text) { stored -> if (stored) text = "" } }, enabled = text.isNotBlank()) { Text("Save token") }
+        }
+    }
 }
 
 /** The newest 20 entries inline, the rest behind "Show all"; selectable, so a line can be copied. */

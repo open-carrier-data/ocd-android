@@ -149,6 +149,12 @@ data class ReportCell(
      * before round 29, whose reports still name the release.
      */
     val dataCommit: String? = null,
+    /**
+     * The ROM build the run ran on, as the report names it (OCD round 29: levels are per build):
+     * Build.ID and the build's UTC time in seconds, for example "CP2A.260605.016 1792814506".
+     * Never the fingerprint, the incremental or the builder's user or host. Null in runs before.
+     */
+    val romBuild: String? = null,
 )
 
 @Serializable
@@ -255,6 +261,15 @@ data class OwnerState(
     /** The optional data SMS to the phone's own number (off unless the owner turns it on; it may cost an SMS). */
     val selfSmsOn: Boolean = false,
     val selfSms: List<SelfSmsCheck> = emptyList(),
+    /**
+     * OCD round 29: the settled results the app sent itself as report issues, with the owner's
+     * token ([AutoReport]); a result is sent again only after [AutoReport.RENEW_MS].
+     */
+    val autoSent: List<SentResult> = emptyList(),
+    /** The last automatic report's outcome for the screen: sent, refused, or why nothing was sent. */
+    val autoLine: String? = null,
+    /** GitHub refused the token: nothing is sent until the owner enters a token again. */
+    val autoRefusedAtMs: Long? = null,
     /**
      * Round 29 item 3: the entries this app put into CarrierSettings's runtime layer (kept
      * after a restart, without any override), as it recorded them ([LayerRecord]).
