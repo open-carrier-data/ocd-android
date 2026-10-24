@@ -144,11 +144,20 @@ class GuardTest {
 
     @Test
     fun `round 26 - never DTMF, never a text or multimedia message, and a data SMS only on the app's port`() {
-        val banned = Regex("(?i)dtmf|sendTextMessage|sendMultipartTextMessage|sendMultimediaMessage|downloadMultimediaMessage|\"POST\"")
+        val banned = Regex("(?i)dtmf|sendTextMessage|sendMultipartTextMessage|sendMultimediaMessage|downloadMultimediaMessage")
         for (file in ownerSources) {
             val hit = banned.find(file.readText())
             assertNull("${file.name}: ${hit?.value}", hit)
         }
+        // Round 29: one HTTP POST in the whole owner build, the automatic report's issue on OCD's public repository.
+        val posters = ownerSources.filter { "\"POST\"" in it.readText() }
+        assertEquals(listOf("OwnerReports.kt"), posters.map { it.name })
+        val reports = posters.single().readText()
+        assertEquals(1, Regex("\"POST\"").findAll(reports).count())
+        assertTrue("https://api.github.com/repos/\${DataSource.REPOSITORY}/issues" in reports)
+        // The token goes into the Authorization header only: no device log, no state log, no message in that file.
+        assertNull(Regex("Log\\.[a-z]\\(|\\.logged\\(|println").find(reports)?.value)
+        assertEquals(1, Regex("\\\$token").findAll(reports).count())
         val senders = ownerSources.filter { "sendDataMessage" in it.readText() }
         assertEquals(listOf("OwnerMessages.kt"), senders.map { it.name })
         assertTrue(Regex("sendDataMessage\\(own, null, SelfSms\\.PORT, SelfSms\\.payload\\(nonce\\)").containsMatchIn(senders.single().readText()))

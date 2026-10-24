@@ -82,6 +82,8 @@ data class OwnerUi(
     /** Round 29: what is kept after restart in the ROM's runtime layer, per SIM; null on a ROM without the layer. */
     val kept: List<KeptSim>? = null,
     val layerStatus: io.github.open_carrier_data.check.owner.core.LayerStatus? = null,
+    /** Round 29: the owner entered a token for automatic reports ([OwnerToken]); its value is never in the UI state. */
+    val tokenSet: Boolean = false,
 ) {
     /** Test now may start: system access, a SIM, nothing running, not paused. */
     val canTest: Boolean get() = gate?.canWrite == true && sims?.isNotEmpty() == true && stepsToGo == 0 && state.stop == null
@@ -142,6 +144,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             apnCandidates = keys.mapValues { it.value.size },
             reportLines = withContext(Dispatchers.IO) { runCatching { reportLines(state, sims, keys) }.getOrDefault(emptyList()) },
             stepsToGo = OwnerScheduler.pending(run),
+            tokenSet = withContext(Dispatchers.IO) { OwnerToken.isSet(context) },
         )
     }
 
@@ -330,6 +333,30 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    /** Round 29: stores the owner's fine-grained token for automatic reports, encrypted; never logged or shown. */
+    fun saveToken(text: String, done: (Boolean) -> Unit) = viewModelScope.launch {
+        val context = getApplication<Application>()
+        val problem = withContext(Dispatchers.IO) { OwnerToken.save(context, text) }
+        if (problem != null) {
+            say(problem)
+            done(false)
+            return@launch
+        }
+        store.update { it.copy(autoRefusedAtMs = null, autoLine = null).logged(System.currentTimeMillis(), "report", "the owner entered a token for automatic reports") }
+        done(true)
+        say("Token saved. Settled results are sent automatically")
+        OwnerScheduler.autoReport(context)
+        refresh()
+    }
+
+    /** Removes the token and its key; reports open in the browser again. */
+    fun removeToken() = viewModelScope.launch {
+        withContext(Dispatchers.IO) { OwnerToken.remove(getApplication()) }
+        store.update { it.copy(autoRefusedAtMs = null, autoLine = null).logged(System.currentTimeMillis(), "report", "the owner removed the token; reports open in the browser for him to submit") }
+        say("Token removed")
+        refresh()
+    }
+
     fun clearStop() = viewModelScope.launch {
         store.update { it.copy(stop = null).logged(System.currentTimeMillis(), "stop", "the owner cleared the stop flag") }
         // The runtime layer's own stop flag is cleared by the same tap (round 29 S9: "until the owner clears the flag").
@@ -357,7 +384,9 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
                     val profile = bundle.profiles.firstOrNull { it.profileId == run.profileId }
                     OwnerData.reportCell(context, OwnerWorker.device(context), sim, profile, data.currentDir() != null, bundle)
                 } ?: return@runCatching null
-                IssueReport.prefill(run, cell, OwnerData.callsTested(context))
+                // Round 29: the settled results of the run's SIM on this build ride along, as in the automatic report.
+                val settled = runCatching { OwnerAutoReports.settled(context, store.read(), run.copy(cell = cell)) }.getOrDefault(emptyMap())
+                IssueReport.prefill(run, cell, OwnerData.callsTested(context), settled)
             }.getOrNull()
         }
         if (prefilled != null) {
@@ -419,6 +448,8 @@ class OwnerActivity : ComponentActivity() {
             dryRunCallsOut = viewModel::dryRunCallsOut,
             setSelfSms = { viewModel.setSelfSms(it) },
             undoKept = { slot, key -> viewModel.undoKept(slot, key) },
+            saveToken = { text, done -> viewModel.saveToken(text, done) },
+            removeToken = { viewModel.removeToken() },
         )
         // `am start ... --ez calls_out_dry_run true` (the activity is guarded by MODIFY_PHONE_STATE): a dry run only, never a call.
         if (intent?.getBooleanExtra(EXTRA_CALLS_OUT_DRY_RUN, false) == true) viewModel.dryRunCallsOut()

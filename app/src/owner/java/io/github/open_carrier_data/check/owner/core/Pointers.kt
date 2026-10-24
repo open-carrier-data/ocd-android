@@ -30,6 +30,8 @@ data class EntryResult(
     val kept: Boolean = false,
     val method: String? = null,
     val restored: Boolean? = null,
+    /** A settled result under rounds 26 to 28 (OCD round 29), from this phone's call ledger and SMS checks on this build ([Settled]). */
+    val settled: SettledLevel? = null,
 ) {
     val passed: Boolean get() = result in Pointers.PASSED
 

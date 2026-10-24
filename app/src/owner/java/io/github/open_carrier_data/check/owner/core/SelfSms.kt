@@ -30,6 +30,10 @@ data class SelfSmsCheck(
     /** IMS was registered for SMS over IMS when it was sent, and when it came back. */
     val imsAtSend: Boolean? = null,
     val imsAtReceive: Boolean? = null,
+    /** The ROM build key it was sent on (the call ledger's), for SMS both ways per build (OCD round 29). */
+    val build: String? = null,
+    /** IMS ran over Wi-Fi when it was sent: the bearer of SMS over IMS. */
+    val wifiAtSend: Boolean? = null,
 )
 
 object SelfSms {

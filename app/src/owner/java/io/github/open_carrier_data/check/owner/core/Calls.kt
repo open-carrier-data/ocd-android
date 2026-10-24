@@ -280,15 +280,17 @@ object CallLevels {
      * went ACTIVE with the bearer proof ran over the IMS registration, so the
      * proof stands for "IMS registered". [calls]: one SIM's records.
      */
-    fun noStreamTwice(calls: List<CallRecord>, direction: CallDirection, bearer: ProvenBearer, zone: ZoneId): Boolean {
-        val days = calls.filter { r ->
+    fun noStreamTwice(calls: List<CallRecord>, direction: CallDirection, bearer: ProvenBearer, zone: ZoneId): Boolean =
+        noStreamCalls(calls, direction, bearer).map { Instant.ofEpochMilli(it.atMs).atZone(zone).toLocalDate() }.toSet().size >= 2
+
+    /** The passive real calls of [direction] on [bearer] that received no audio stream ([noStreamTwice] counts their days). */
+    fun noStreamCalls(calls: List<CallRecord>, direction: CallDirection, bearer: ProvenBearer): List<CallRecord> =
+        calls.filter { r ->
             r.method == CallMethod.REAL_CALL && r.direction == direction && r.active && !r.severalCalls &&
                 r.bearer?.counted == true && r.bearer.bearer == bearer &&
                 (direction != CallDirection.INCOMING || (r.rang && r.answered && r.fromMailbox != true)) &&
                 media(r).verdict == MediaVerdict.NO_STREAM
-        }.map { Instant.ofEpochMilli(it.atMs).atZone(zone).toLocalDate() }.toSet()
-        return days.size >= 2
-    }
+        }
 
     private fun check(r: CallRecord, failed: List<String>, notCounted: List<String>): LevelCheck {
         val passed = failed.isEmpty() && notCounted.isEmpty()
@@ -475,7 +477,7 @@ object Provisional {
     }
 
     /** The bearer an outgoing call ran on, as far as the readings tell: proven, else IMS's at the start. */
-    private fun imsOn(r: CallRecord): ProvenBearer? = r.bearer?.takeIf { it.counted }?.bearer ?: CallLevels.imsBearerAtStart(r)
+    internal fun imsOn(r: CallRecord): ProvenBearer? = r.bearer?.takeIf { it.counted }?.bearer ?: CallLevels.imsBearerAtStart(r)
 }
 
 /** One mailbox call placed (or tried) in a night, for "at most one call per feature and bearer a night". */

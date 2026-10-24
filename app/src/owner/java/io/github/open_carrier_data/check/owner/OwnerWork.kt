@@ -147,6 +147,13 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 STEP_CALLS_OUT -> callsOut(store)
                 STEP_DROP_KEEP -> dropKeep(store)
                 STEP_FINISH -> finish(store)
+                STEP_AUTO_REPORT -> try {
+                    // Round 29: the settled results as report issues, with the owner's token; it logs what it sent, never the token.
+                    OwnerAutoReports.run(applicationContext, store)
+                    Result.success()
+                } catch (e: java.io.IOException) {
+                    if (runAttemptCount < 3) Result.retry() else Result.success()
+                }
                 else -> Result.failure()
             }
         } catch (e: CancellationException) {
@@ -290,6 +297,8 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             } catch (e: Exception) {
                 quietLog(store, "layer", "the layer step failed: ${e.javaClass.simpleName}: ${e.message?.take(120)}")
             }
+            // Round 29: settled results go out as report issues when the owner set a token (its own work, with a network).
+            OwnerScheduler.autoReport(context)
             state = store.read()
             // Others' reports for each SIM's own cell: they only move an entry earlier (read only when there are any).
             val observed = state.observed
@@ -615,6 +624,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         store.update { it.withRun(ended).copy(lastResult = LastResult(System.currentTimeMillis(), line, changed = ended.changes.isNotEmpty(), failed = ended.failures.isNotEmpty())) }
         // Failures were told when they happened; the changes are told now.
         if (ended.changes.isNotEmpty()) OwnerNotifications.notice(applicationContext, Notices.changed(ended.changes))
+        OwnerScheduler.autoReport(applicationContext)
         return Result.success()
     }
 
@@ -677,6 +687,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val STEP_LAYER = "layer"
         const val STEP_LAYER_UNDO = "layer_undo"
         const val STEP_LAYER_PROBE = "layer_probe"
+        const val STEP_AUTO_REPORT = "auto_report"
         const val KEY_LAYER_KEY = "layer_key"
 
         /** At most this many mailbox calls in one step: one per bearer. */
@@ -710,6 +721,7 @@ object OwnerScheduler {
     const val RUN = "owner-run"
     const val CLEANUP = "owner-cleanup"
     const val REVERT_ALL = "owner-revert-all"
+    const val AUTO_REPORT = "owner-auto-report"
     const val PULL = "owner-pull"
     const val LAYER = "owner-layer"
     const val LAYER_UNDO = "owner-layer-undo"
@@ -816,6 +828,17 @@ object OwnerScheduler {
             "owner-probe", ExistingWorkPolicy.KEEP,
             step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_PROBE), null, expedite = true),
         )
+    }
+
+    /** Round 29: sends the settled results as report issues with the owner's token; nothing without one. */
+    fun autoReport(context: Context) {
+        if (!OwnerToken.isSet(context)) return
+        val request = OneTimeWorkRequestBuilder<OwnerWorker>()
+            .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_AUTO_REPORT))
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(AUTO_REPORT, ExistingWorkPolicy.KEEP, request)
     }
 
     fun pull(context: Context, force: Boolean = false) {
