@@ -66,7 +66,7 @@ object OwnerNotifications {
     @SuppressLint("MissingPermission")
     fun refresh(context: Context, state: OwnerState) {
         val manager = NotificationManagerCompat.from(context)
-        if (!state.anyLive) {
+        if (!state.anyKept) {
             manager.cancel(LIVE_ID)
             return
         }

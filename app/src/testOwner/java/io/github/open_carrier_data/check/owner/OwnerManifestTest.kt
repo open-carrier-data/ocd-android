@@ -33,6 +33,8 @@ class OwnerManifestTest {
             "android.permission.INTERNET", "android.permission.POST_NOTIFICATIONS", "android.permission.RECEIVE_BOOT_COMPLETED",
             "android.permission.MODIFY_PHONE_STATE", "android.permission.READ_PRIVILEGED_PHONE_STATE", "android.permission.READ_PRECISE_PHONE_STATE",
             "android.permission.WRITE_APN_SETTINGS", "android.permission.DUMP", "android.permission.PACKAGE_USAGE_STATS",
+            // Round 29: the runtime layer's writer permission (signature|knownSigner in CarrierSettings, not privileged).
+            "com.android.carriersettings.permission.WRITE_OCD_LAYER",
         ) + ROUND_26_RUNTIME + ROUND_26_NORMAL
         val readOnly = setOf("android.permission.READ_PHONE_STATE", "android.permission.ACCESS_NETWORK_STATE", "moe.shizuku.manager.permission.API_V23")
         // WorkManager's own: wake lock and its foreground service (never started by the owner build).
@@ -117,6 +119,8 @@ class OwnerManifestTest {
             "android.permission.INTERNET", "android.permission.POST_NOTIFICATIONS", "android.permission.RECEIVE_BOOT_COMPLETED",
             "android.permission.READ_PHONE_STATE", "android.permission.ACCESS_NETWORK_STATE",
             "moe.shizuku.manager.permission.API_V23", "android.permission.WAKE_LOCK", "android.permission.FOREGROUND_SERVICE",
+            // signature|knownSigner in the ROM's CarrierSettings, pinned to the owner certificate: no privapp entry.
+            "com.android.carriersettings.permission.WRITE_OCD_LAYER",
         ) + ROUND_26_RUNTIME + ROUND_26_NORMAL
         val requested = elements("uses-permission").filter { it.getAttributeNS(tools, "node") != "remove" }.map { it.getAttributeNS(android, "name") }.toSet()
         assertEquals(emptySet<String>(), requested - notPrivileged - listed)

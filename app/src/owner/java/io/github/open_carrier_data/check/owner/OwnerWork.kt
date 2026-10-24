@@ -98,7 +98,29 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 }
                 STEP_QUIET -> quiet(store)
                 STEP_CLEANUP -> cleanup(store)
-                STEP_REVERT_ALL -> withPhone(store) { runner, sims, _ -> runner.revertAll(sims); Result.success() }
+                STEP_REVERT_ALL -> withPhone(store) { runner, sims, phone ->
+                    runner.revertAll(sims)
+                    // Undo changes also clears what is kept after restart (round 29 S11, S12); it works while roaming.
+                    val line = OwnerLayerStep.undo(applicationContext, store, phone, sims, null, null)
+                    if (!line.startsWith("no runtime layer") && line != "nothing kept after restart") store.update { it.logged(System.currentTimeMillis(), "layer", line) }
+                    Result.success()
+                }
+                STEP_LAYER -> withPhone(store) { _, sims, phone ->
+                    val line = OwnerLayerStep.run(applicationContext, store, phone, sims, null, quietOpen = false)
+                    if (!line.startsWith("no runtime layer") && line != "layer: nothing to do") store.update { it.logged(System.currentTimeMillis(), "layer", line) }
+                    Result.success()
+                }
+                STEP_LAYER_UNDO -> withPhone(store) { _, sims, phone ->
+                    val slot = inputData.getInt(KEY_SLOT, -1).takeIf { it >= 0 }
+                    val line = OwnerLayerStep.undo(applicationContext, store, phone, sims, slot, inputData.getString(KEY_LAYER_KEY))
+                    store.update { it.logged(System.currentTimeMillis(), "layer", line) }
+                    Result.success()
+                }
+                STEP_LAYER_PROBE -> withPhone(store) { _, sims, phone ->
+                    val line = OwnerLayerStep.probe(applicationContext, store, phone, sims, inputData.getInt(KEY_SLOT, 0))
+                    store.update { it.logged(System.currentTimeMillis(), "layer", line) }
+                    Result.success()
+                }
                 STEP_PULL -> if (inputData.getBoolean(KEY_IN_RUN, false)) {
                     // "Test now" pulls first (round 29): the test runs on whatever data the pull leaves, and a failed pull never holds it up.
                     val line = try {
@@ -258,6 +280,16 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             // Round 26: provisional keeps reverted when the night ended without calls out or 7 days passed without incoming.
             settleProvisional(context, store.read())
             messageChecks(store, phone, sims, look, night)
+            // Round 29: the runtime layer. Reverts and renewals at every light check; what passed its class check goes in only in a silent window.
+            val quietOpen = QuietWindow.trialBlocker(look, nightOnly = false, traffic = false) == null
+            try {
+                val line = OwnerLayerStep.run(context, store, phone, sims, checks, quietOpen)
+                if (!line.startsWith("no runtime layer") && line != "layer: nothing to do") quietLog(store, "layer", line)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                quietLog(store, "layer", "the layer step failed: ${e.javaClass.simpleName}: ${e.message?.take(120)}")
+            }
             state = store.read()
             // Others' reports for each SIM's own cell: they only move an entry earlier (read only when there are any).
             val observed = state.observed
@@ -642,6 +674,10 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val STEP_PROBE = "probe"
         const val STEP_CALLS_OUT = "calls_out"
         const val STEP_DROP_KEEP = "drop_keep"
+        const val STEP_LAYER = "layer"
+        const val STEP_LAYER_UNDO = "layer_undo"
+        const val STEP_LAYER_PROBE = "layer_probe"
+        const val KEY_LAYER_KEY = "layer_key"
 
         /** At most this many mailbox calls in one step: one per bearer. */
         const val MAX_CALLS_PER_STEP = 2
@@ -675,6 +711,8 @@ object OwnerScheduler {
     const val CLEANUP = "owner-cleanup"
     const val REVERT_ALL = "owner-revert-all"
     const val PULL = "owner-pull"
+    const val LAYER = "owner-layer"
+    const val LAYER_UNDO = "owner-layer-undo"
 
     /** The quiet job runs while Android counts the phone idle (screen off about half an hour); the job checks the rest itself. */
     private fun quietConstraints(): Constraints = Constraints.Builder().setRequiresDeviceIdle(true).build()
@@ -745,6 +783,30 @@ object OwnerScheduler {
         WorkManager.getInstance(context).enqueueUniqueWork(
             REVERT_ALL, ExistingWorkPolicy.KEEP,
             step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_REVERT_ALL), null, expedite = true),
+        )
+    }
+
+    /** The runtime layer's step on its own: reverts and renewals (after a measured call settles a voice entry). */
+    fun layerStep(context: Context) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            LAYER, ExistingWorkPolicy.KEEP,
+            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_LAYER), null, expedite = false),
+        )
+    }
+
+    /** Undo of what is kept after restart: one entry ([slot] and [key]) or all ([slot] null). Works while roaming. */
+    fun layerUndo(context: Context, slot: Int?, key: String?) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            LAYER_UNDO, ExistingWorkPolicy.APPEND_OR_REPLACE,
+            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_LAYER_UNDO, OwnerWorker.KEY_SLOT to (slot ?: -1), OwnerWorker.KEY_LAYER_KEY to key), null, expedite = true),
+        )
+    }
+
+    /** Round 29 S15 check 2: the first-use probe entry, equal to the build's own value. */
+    fun layerProbe(context: Context, slot: Int) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            LAYER_UNDO, ExistingWorkPolicy.APPEND_OR_REPLACE,
+            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_LAYER_PROBE, OwnerWorker.KEY_SLOT to slot), null, expedite = true),
         )
     }
 

@@ -255,8 +255,27 @@ data class OwnerState(
     /** The optional data SMS to the phone's own number (off unless the owner turns it on; it may cost an SMS). */
     val selfSmsOn: Boolean = false,
     val selfSms: List<SelfSmsCheck> = emptyList(),
+    /**
+     * Round 29 item 3: the entries this app put into CarrierSettings's runtime layer (kept
+     * after a restart, without any override), as it recorded them ([LayerRecord]).
+     */
+    val layer: List<LayerRecord> = emptyList(),
+    /** What CarrierSettings last reported about the layer; null before the first look or on a ROM without it. */
+    val layerStatus: LayerStatus? = null,
 ) {
     val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
+
+    /** Changes Open Carrier Data holds now: live overrides and APN rows, or entries kept after restart in the runtime layer. */
+    val anyKept: Boolean get() = anyLive || layer.isNotEmpty()
+
+    /**
+     * Every switch value Open Carrier Data holds on a SIM: a kept override, or an entry of the
+     * runtime layer ([layer] the entry's level), not the first-use probe and not one on its way out.
+     */
+    fun heldSwitches(): List<HeldSwitch> =
+        overrides.filter { it.hold == Hold.KEPT }.map { HeldSwitch(it.slot, it.sim, it.key, it.value, null) } +
+            layer.filter { !it.probe && it.removing == null && it.feature != null && it.boolValue != null }
+                .map { HeldSwitch(it.slot, it.sim, it.key, it.boolValue!!, it.level) }
 
     fun kept(slot: Int): Map<String, Boolean> =
         overrides.filter { it.slot == slot && it.hold == Hold.KEPT }.associate { it.key to it.value }
@@ -284,6 +303,9 @@ data class OwnerState(
         fun decode(text: String): OwnerState = wire.decodeFromString(serializer(), text)
     }
 }
+
+/** A switch value Open Carrier Data holds: a kept override ([layer] null) or a runtime-layer entry with its level. */
+data class HeldSwitch(val slot: Int, val sim: SimKey, val key: String, val value: Boolean, val layer: LayerLevel?)
 
 /** Where the state lives. The app's version writes atomically to its private files folder. */
 interface StateStore {

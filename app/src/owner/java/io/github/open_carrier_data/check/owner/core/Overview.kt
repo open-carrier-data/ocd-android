@@ -108,7 +108,9 @@ object Ladders {
         val result = state.runs.lastOrNull { run -> run.sim?.let(sim::owns) == true && run.features.any { it.feature == feature } }
             ?.features?.lastOrNull { it.feature == feature }
         val overrides = state.overrides.filter { it.slot == sim.slot && sim.owns(it.sim) && it.key == feature.key }
-        val kept = overrides.lastOrNull { it.hold == Hold.KEPT }?.value
+        // A value kept as an override, else one kept after restart in the runtime layer (round 29).
+        val layered = state.heldSwitches().lastOrNull { it.layer != null && it.slot == sim.slot && sim.owns(it.sim) && it.key == feature.key }
+        val kept = overrides.lastOrNull { it.hold == Hold.KEPT }?.value ?: layered?.value
         val trial = overrides.any { it.hold == Hold.TRIAL }
 
         val onReason = on?.outcome ?: result?.onReason
@@ -143,6 +145,7 @@ object Ladders {
         }
         // A changed voice value kept for now: calls out first, then incoming (round 26 check 6).
         val keptText = when {
+            layered?.layer == LayerLevel.PROVISIONAL && overrides.none { it.hold == Hold.KEPT } -> "Switched on by Open Carrier Data, calls out work, incoming not yet seen"
             provisional == null -> "Switched on by Open Carrier Data"
             provisional.callsOutAtMs == null -> "Switched on by Open Carrier Data, calls out not checked yet"
             else -> "Switched on by Open Carrier Data, calls out work, incoming not yet seen"
@@ -202,7 +205,7 @@ object StatusSentence {
         val broken = problems.filter { it.kept == true }.map { it.feature.label }.distinct()
         val own = problems.filter { it.kept == null }.map { it.feature.label }.distinct()
         val checked = state.runs.isNotEmpty() || state.entries.isNotEmpty() || state.lastResult != null
-        val keptAny = state.overrides.any { it.hold == Hold.KEPT } || state.apns.any { it.hold == Hold.KEPT }
+        val keptAny = state.heldSwitches().isNotEmpty() || state.apns.any { it.hold == Hold.KEPT }
         return when {
             sims != null && sims.isEmpty() -> Status(Tone.NEUTRAL, "No SIM card", StatusKind.NO_SIM)
             state.stop != null -> Status(Tone.PROBLEM, "Changes paused: a setting didn't go back", StatusKind.PAUSED)
@@ -258,7 +261,7 @@ object StatusSentence {
      * one item.
      */
     private fun changed(state: OwnerState): String {
-        val kept = state.overrides.filter { it.hold == Hold.KEPT }
+        val kept = state.heldSwitches()
         val on = kept.filter { it.value }.map { label(it.key) }.distinct()
         val off = kept.filter { !it.value }.map { label(it.key) }.distinct()
         val apns = state.apns.filter { it.hold == Hold.KEPT }.map { it.sim to it.apnKey }.distinct().size
@@ -277,7 +280,7 @@ object StatusSentence {
      * notification: "VoLTE switched on", "2 access point names added".
      */
     fun keptChanges(state: OwnerState): List<String> {
-        val features = state.overrides.filter { it.hold == Hold.KEPT }.map { "${label(it.key)} switched ${if (it.value) "on" else "off"}" }.distinct()
+        val features = state.heldSwitches().map { "${label(it.key)} switched ${if (it.value) "on" else "off"}" }.distinct()
         val apns = state.apns.filter { it.hold == Hold.KEPT }.map { it.sim to it.apnKey }.distinct().size
         return features + listOfNotNull(apns.takeIf { it > 0 }?.let { "${accessPointNames(it)} added" })
     }

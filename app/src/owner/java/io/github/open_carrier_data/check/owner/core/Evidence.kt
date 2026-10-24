@@ -30,6 +30,8 @@ data class Observation(
      * PHH can stay registered over the old bearer for half a minute.
      */
     val registrationOnPdn: Boolean = true,
+    /** The circuit-switched voice registration on WWAN (X5's voice-loss check); null when not read. */
+    val cs: PsRegistration? = null,
 ) {
     fun switch(feature: OwnerFeature): Boolean? = config[feature.key].asBool()
 
