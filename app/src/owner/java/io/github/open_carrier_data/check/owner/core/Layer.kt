@@ -368,15 +368,17 @@ object LayerCheck {
         }.distinct().joinToString("+").take(40)
 
     /**
-     * SMS over IMS on: provisional after an SMS sent over IMS, durable after one received over
-     * IMS (the optional data SMS to the phone's own number). Off: kept only with an SMS
-     * delivered while off (the plan's rule), and then durable with that measurement.
+     * SMS over IMS on: provisional after an SMS sent over IMS, durable after one sent and received
+     * over IMS (the data SMS to the phone's own number, SMS both ways: [SelfSms.bothWays]). Sent
+     * over IMS is Telephony's own word (its SMS_SENT result), with IMS registered for SMS. Off:
+     * kept only with an SMS delivered while off (the plan's rule), and then durable with that
+     * measurement.
      */
     fun sms(checks: List<SelfSmsCheck>, sim: SimKey, value: Boolean, sinceMs: Long): LayerLevel? {
         val mine = checks.filter { it.sim.sameCard(sim) && it.sentAtMs >= sinceMs }
         if (!value) return LayerLevel.DURABLE.takeIf { mine.any { it.result == "received" } }
-        if (mine.any { it.result == "received" && it.imsAtReceive == true }) return LayerLevel.DURABLE
-        if (mine.any { it.imsAtSend == true && it.result in setOf("sent", "received", "not_received") }) return LayerLevel.PROVISIONAL
+        if (mine.any(SelfSms::bothWays)) return LayerLevel.DURABLE
+        if (mine.any { it.imsAtSend == true && it.sentVia == SelfSms.IMS && it.result in setOf("sent", "received", "not_received") }) return LayerLevel.PROVISIONAL
         return null
     }
 

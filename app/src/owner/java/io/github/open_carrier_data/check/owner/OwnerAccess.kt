@@ -262,6 +262,7 @@ class ShizukuPhone(context: Context, private val binder: IBinder) : AppSidePhone
     override suspend fun powerText() = text(OwnerCommand.POWER)
     override suspend fun iwlanServiceText() = text(OwnerCommand.IWLAN_DUMP)
     override suspend fun qnsText() = text(OwnerCommand.QNS_DUMP)
+    override suspend fun smsText() = text(OwnerCommand.SMS_DUMP)?.takeIf { "SmsManager for subId" in it }
 
     override suspend fun ccSet(slot: Int, subId: Int, key: String, value: Boolean): CcResult {
         val out = run(OwnerCommand.CC_SET, OwnerArgs(slot = slot, key = key, value = value)) ?: return CcResult(false, "no_answer")
@@ -417,6 +418,9 @@ class PrivilegedPhone(context: Context) : AppSidePhone(context) {
     /** "Permission Denial" when PACKAGE_USAGE_STATS (or its app-op) is missing: then unreadable. */
     override suspend fun iwlanServiceText() = local(OwnerCommand.IWLAN_DUMP)?.takeIf { "IwlanDataServiceProvider" in it }
     override suspend fun qnsText() = local(OwnerCommand.QNS_DUMP)?.takeIf { "QualifiedNetworksServiceImpl" in it }
+
+    /** The SMS service's dump (DUMP): its inbound SMS handler's records say how each SMS came in ([InboundSms]). */
+    override suspend fun smsText() = local(OwnerCommand.SMS_DUMP)?.takeIf { "SmsManager for subId" in it }
 
     override suspend fun emergencyApi(): EmergencyApi = withContext(Dispatchers.IO) {
         val telephony = SystemBinders.telephony()

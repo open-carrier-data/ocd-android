@@ -48,6 +48,9 @@ interface OwnerPhone {
     suspend fun iwlanServiceText(): String? = null
     suspend fun qnsText(): String? = null
 
+    /** `dumpsys isms`, for how an SMS came in ([InboundSms]); null when the route cannot read it. */
+    suspend fun smsText(): String? = null
+
     /** `dumpsys power`, for how long the screen has been off ([PowerDump]); null when the route cannot read it. */
     suspend fun powerText(): String? = null
 

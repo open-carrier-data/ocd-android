@@ -137,6 +137,8 @@ class OwnerActions(
     val setCallsOutLive: (Boolean) -> Unit,
     val dryRunCallsOut: () -> Unit,
     val setSelfSms: (Boolean) -> Unit,
+    /** One test SMS to the phone's own number now. */
+    val selfSmsNow: () -> Unit = {},
     /** Undo of one entry kept after restart (slot and key), or of all (null, null). */
     val undoKept: (Int?, String?) -> Unit = { _, _ -> },
     /** Round 29: stores the owner's token for automatic reports; the callback says whether it was stored. */
@@ -734,6 +736,7 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
                 actions.setSelfSms,
             )
         }
+        item { ToolRow("Send a test SMS now", "One hidden SMS to your own number; it may cost an SMS", onClick = actions.selfSmsNow) }
     }
 
     SectionTitle("Tools")

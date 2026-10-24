@@ -27,6 +27,7 @@ import io.github.open_carrier_data.check.owner.core.PostResult
 import io.github.open_carrier_data.check.owner.core.ReportCell
 import io.github.open_carrier_data.check.owner.core.RunResult
 import io.github.open_carrier_data.check.owner.core.SchemaSubset
+import io.github.open_carrier_data.check.owner.core.SelfSms
 import io.github.open_carrier_data.check.owner.core.SelfSmsCheck
 import io.github.open_carrier_data.check.owner.core.Settled
 import io.github.open_carrier_data.check.owner.core.SettledLevel
@@ -171,10 +172,20 @@ class AutoReportTest {
     }
 
     @Test
-    fun `SMS both ways settles only with IMS read on the way out and back, on this build`() {
-        val both = SelfSmsCheck(sim, t0 - day, "0123456789abcdef", "received", receivedAtMs = t0 - day + 5_000, imsAtSend = true, imsAtReceive = true, build = rom, wifiAtSend = false)
+    fun `SMS both ways settles only with IMS proven on the way out and back, on this build`() {
+        val both = SelfSmsCheck(
+            sim, t0 - day, "0123456789abcdef", "received", receivedAtMs = t0 - day + 5_000, imsAtSend = true, imsAtReceive = true, build = rom, wifiAtSend = false,
+            sentVia = SelfSms.IMS, receivedVia = SelfSms.IMS,
+        )
         assertEquals(SettledLevel("l3", "lte", "self_sms", "2026-10-23"), Settled.sms(listOf(both), sim, rom, t0))
-        assertNull("IMS not read on the way back (today's receiver)", Settled.sms(listOf(both.copy(imsAtReceive = null)), sim, rom, t0))
+        assertEquals("iwlan", Settled.sms(listOf(both.copy(wifiAtSend = true)), sim, rom, t0)!!.bearer)
+        // Telephony's record of the way back is the proof; IMS registered at receipt alone (the indirect reading) never settles.
+        assertNull("way back not told", Settled.sms(listOf(both.copy(receivedVia = null)), sim, rom, t0))
+        assertNull("came back over CS", Settled.sms(listOf(both.copy(receivedVia = SelfSms.CS)), sim, rom, t0))
+        assertNull("way out not told", Settled.sms(listOf(both.copy(sentVia = null)), sim, rom, t0))
+        assertNull("went out over CS", Settled.sms(listOf(both.copy(sentVia = SelfSms.CS)), sim, rom, t0))
+        assertNull("not registered for SMS at the send", Settled.sms(listOf(both.copy(imsAtSend = null)), sim, rom, t0))
+        assertEquals("registration at receipt unread does not undo the record", "l3", Settled.sms(listOf(both.copy(imsAtReceive = null)), sim, rom, t0)!!.level)
         assertNull(Settled.sms(listOf(both.copy(result = "not_received")), sim, rom, t0))
         assertNull(Settled.sms(listOf(both.copy(build = null)), sim, rom, t0))
         assertNull(Settled.sms(listOf(both.copy(build = "other")), sim, rom, t0))

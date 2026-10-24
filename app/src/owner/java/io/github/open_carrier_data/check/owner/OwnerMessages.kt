@@ -19,6 +19,7 @@ import android.telephony.SmsManager
 import android.telephony.SmsMessage
 import android.telephony.SubscriptionManager
 import io.github.open_carrier_data.check.core.ImsService
+import io.github.open_carrier_data.check.owner.core.InboundSms
 import io.github.open_carrier_data.check.owner.core.MmsCheck
 import io.github.open_carrier_data.check.owner.core.MmsEndedFile
 import io.github.open_carrier_data.check.owner.core.MmsProbe
@@ -28,13 +29,17 @@ import io.github.open_carrier_data.check.owner.core.OwnerSession
 import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.SelfSms
 import io.github.open_carrier_data.check.owner.core.SelfSmsCheck
-import io.github.open_carrier_data.check.owner.core.update
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.InetSocketAddress
 import java.security.SecureRandom
+import java.time.ZoneId
 
 /*
  * The two message checks of round 26 as the coordinator refined them on
@@ -125,28 +130,91 @@ object OwnerMms {
 object OwnerSelfSms {
     const val ACTION_SENT = "io.github.open_carrier_data.check.owner.SELF_SMS_SENT"
 
+    /** The SMS_SENT result's extra that says Telephony handed the SMS to the IMS service (SMSDispatcher.SmsTracker). */
+    const val EXTRA_IMS = "ims"
+
+    /** The receiver's work at receipt stays inside the SMS broadcast's 10 s: the readings, then the wait for Telephony's answer to the send. */
+    private const val RECEIPT_MS = 6_000L
+    private const val SENT_WAIT_MS = 2_000L
+
     private fun nonce(): String = ByteArray(8).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
 
+    /**
+     * Sends one data SMS to [sim]'s own number, or records why not. The check is in the ledger
+     * before the SMS goes out, so Telephony's answer and the SMS coming back always find it.
+     */
     @SuppressLint("MissingPermission")
     suspend fun send(context: Context, phone: OwnerPhone, sim: OwnerSim, on: Boolean): SelfSmsCheck {
+        val store = FileStateStore(context)
         val now = System.currentTimeMillis()
         val nonce = nonce()
-        val ims = runCatching { OwnerSession(phone, FileStateStore(context), sim).observe() }.getOrNull()
+        val ims = runCatching { OwnerSession(phone, store, sim).observe() }.getOrNull()
         val smsOverIms = ims?.let { it.ims.registered == true && ImsService.SMSIP in it.ims.services }
         val own = ownNumber(context, sim.subId)
         val refusal = SelfSms.refusal(on, own, smsOverIms, QuietReader.roaming(context))
             ?: if (context.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) "send_sms_not_granted" else null
-        if (refusal != null || own == null) return SelfSmsCheck(sim.key, now, nonce, "refused_${refusal ?: "own_number_unknown"}", imsAtSend = smsOverIms)
+        if (refusal != null || own == null) {
+            return SelfSmsCheck(sim.key, now, nonce, "refused_${refusal ?: "own_number_unknown"}", imsAtSend = smsOverIms).also { record(store, it) }
+        }
         val manager = smsManager(context, sim.subId)
+        // Mutable, so Telephony's fill-in reaches the receiver: its "ims" extra is the way out. The intent names the receiver, so nothing else can take it.
         val sent = PendingIntent.getBroadcast(
-            context, 11, Intent(context, SelfSmsReceiver::class.java).setAction(ACTION_SENT).putExtra(EXTRA_NONCE, nonce),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            context, nonce.hashCode(), Intent(context, SelfSmsReceiver::class.java).setAction(ACTION_SENT).putExtra(EXTRA_NONCE, nonce),
+            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        // Round 29: the build and the IMS bearer, so SMS both ways can settle per build.
+        val build = OwnerBasis.current(context, store.read()).rom
+        val check = SelfSmsCheck(sim.key, now, nonce, "sent", imsAtSend = smsOverIms, build = build, wifiAtSend = ims?.ims?.transport?.isWifi)
+        record(store, check)
         // Always a port: a data SMS to the app's own port reaches only this app, never an inbox; never a Type 0 SMS.
         val ok = runCatching { manager.sendDataMessage(own, null, SelfSms.PORT, SelfSms.payload(nonce), sent, null) }.isSuccess
-        // Round 29: the build and the IMS bearer, so SMS both ways can settle per build.
-        val build = OwnerBasis.current(context, FileStateStore(context).read()).rom
-        return SelfSmsCheck(sim.key, now, nonce, if (ok) "sent" else "send_failed", imsAtSend = smsOverIms, build = build, wifiAtSend = ims?.ims?.transport?.isWifi)
+        if (!ok) store.updateLocked { s -> s.copy(selfSms = SelfSms.sent(s.selfSms, nonce, ok = false, viaIms = null)) }
+        return if (ok) check else check.copy(result = "send_failed")
+    }
+
+    private fun record(store: FileStateStore, check: SelfSmsCheck) = store.updateLocked { it.copy(selfSms = SelfSms.add(it.selfSms, check)) }
+
+    /**
+     * One change of the ledger under the state lock; [line] is logged with it when given. When
+     * the change settles SMS both ways for [nonce] ([SelfSms.settles]), the runtime layer's step
+     * looks at once, as the SMS class check now passes.
+     */
+    fun change(context: Context, store: FileStateStore, nonce: String, atMs: Long, line: ((SelfSmsCheck?) -> String?)?, change: (List<SelfSmsCheck>) -> List<SelfSmsCheck>) {
+        var settled = false
+        store.updateLocked { s ->
+            val next = change(s.selfSms)
+            settled = SelfSms.settles(s.selfSms, next, nonce)
+            val text = line?.invoke(next.lastOrNull { it.nonce == nonce })
+            s.copy(selfSms = next).let { if (text != null) it.logged(atMs, "self_sms", text) else it }
+        }
+        if (settled) OwnerScheduler.layerStep(context)
+    }
+
+    /** Telephony's answer to the send can come a moment after the SMS itself: up to [SENT_WAIT_MS] for it. */
+    suspend fun awaitSent(store: FileStateStore, nonce: String) {
+        withTimeoutOrNull(SENT_WAIT_MS) {
+            while (store.read().selfSms.lastOrNull { it.nonce == nonce }?.let { it.sentVia == null && it.result != "send_failed" } == true) delay(200)
+        }
+    }
+
+    /**
+     * What the phone says at the receipt of the SMS sent at [sentAtMs]: IMS registered with SMS
+     * now (ImsMmTelManager), and Telephony's record of how it came in ([InboundSms], read first,
+     * as later SMS push it out). Each is null when it cannot be read in time.
+     */
+    suspend fun atReceipt(context: Context, subId: Int, sentAtMs: Long, receivedAtMs: Long): Pair<Boolean?, String?> {
+        var via: String? = null
+        var imsNow: Boolean? = null
+        withTimeoutOrNull(RECEIPT_MS) {
+            val handle = runCatching { OwnerAccess.open(context) }.getOrNull()
+            try {
+                via = InboundSms.via(InboundSms.parse(handle?.phone?.smsText(), subId, ZoneId.systemDefault(), receivedAtMs), sentAtMs, receivedAtMs)
+                imsNow = handle?.phone?.imsApi(0, subId)?.state()?.let { s -> s.registered?.let { it && ImsService.SMSIP in s.services } }
+            } finally {
+                handle?.close()
+            }
+        }
+        return imsNow to via
     }
 
     @Suppress("DEPRECATION")
@@ -170,8 +238,10 @@ object OwnerSelfSms {
 
 /**
  * The data SMS on the app's port came back (DATA_SMS_RECEIVED for
- * sms://localhost:16123, sent by the system with BROADCAST_SMS), or the send
- * failed. Only the nonce is compared; the sender's number is never read.
+ * sms://localhost:16123, sent by the system with BROADCAST_SMS), or Telephony
+ * answered the send. Only the nonce is compared; the sender's number is never
+ * read. At receipt it records IMS registered with SMS and Telephony's record
+ * of how the SMS came in, so SMS both ways can settle (round 29).
  */
 class SelfSmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -179,15 +249,33 @@ class SelfSmsReceiver : BroadcastReceiver() {
         val now = System.currentTimeMillis()
         when (intent.action) {
             OwnerSelfSms.ACTION_SENT -> {
-                if (resultCode != android.app.Activity.RESULT_OK) {
-                    val nonce = intent.getStringExtra(OwnerSelfSms.EXTRA_NONCE) ?: return
-                    store.update { s -> s.copy(selfSms = s.selfSms.map { if (it.nonce == nonce && it.result == "sent") it.copy(result = "send_failed") else it }) }
+                val nonce = intent.getStringExtra(OwnerSelfSms.EXTRA_NONCE) ?: return
+                val ok = resultCode == android.app.Activity.RESULT_OK
+                val viaIms = if (intent.hasExtra(OwnerSelfSms.EXTRA_IMS)) intent.getBooleanExtra(OwnerSelfSms.EXTRA_IMS, false) else null
+                // Logged only when this answer is the one that settles SMS both ways (it came after the SMS was back).
+                OwnerSelfSms.change(context, store, nonce, now, { c -> c?.takeIf(SelfSms::bothWays)?.let { "Telephony's answer to the send came after the SMS was back: ${SelfSms.receivedLine(it)}" } }) {
+                    SelfSms.sent(it, nonce, ok, viaIms)
                 }
             }
             Telephony.Sms.Intents.DATA_SMS_RECEIVED_ACTION -> {
                 val payload = runCatching { Telephony.Sms.Intents.getMessagesFromIntent(intent)?.map(SmsMessage::getUserData) }.getOrNull()
                 val nonce = payload?.firstNotNullOfOrNull { SelfSms.nonceOf(it) } ?: return
-                store.update { s -> s.copy(selfSms = SelfSms.received(s.selfSms, nonce, now, null)).logged(now, "self_sms", "the test SMS came back to this phone") }
+                val check = store.read().selfSms.lastOrNull { it.nonce == nonce }
+                if (check == null) {
+                    store.updateLocked { it.logged(now, "self_sms", "a test SMS came back that is not in the ledger") }
+                    return
+                }
+                val subId = intent.getIntExtra(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, SubscriptionManager.INVALID_SUBSCRIPTION_ID).takeIf { it >= 0 } ?: check.sim.subId
+                val pending = goAsync()
+                CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                    try {
+                        val (imsNow, via) = OwnerSelfSms.atReceipt(context, subId, check.sentAtMs, now)
+                        OwnerSelfSms.awaitSent(store, nonce)
+                        OwnerSelfSms.change(context, store, nonce, now, SelfSms::receivedLine) { SelfSms.received(it, nonce, now, imsNow, via) }
+                    } finally {
+                        pending.finish()
+                    }
+                }
             }
         }
     }

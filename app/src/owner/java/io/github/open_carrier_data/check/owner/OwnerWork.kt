@@ -145,6 +145,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 STEP_FEATURE -> feature(store)
                 STEP_APN -> apn(store)
                 STEP_CALLS_OUT -> callsOut(store)
+                STEP_SELF_SMS -> selfSmsNow(store)
                 STEP_DROP_KEEP -> dropKeep(store)
                 STEP_FINISH -> finish(store)
                 STEP_AUTO_REPORT -> try {
@@ -395,10 +396,31 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             }
             val state = store.read()
             if (state.selfSmsOn && night && QuietWindow.trialBlocker(look, nightOnly = true, traffic = false) == null && SelfSms.due(state.selfSms, sim.key, now)) {
+                // The check is in the ledger before the SMS goes out (OwnerSelfSms.send); only the log line here.
                 val sent = runCatching { OwnerSelfSms.send(context, phone, sim, on = true) }.getOrNull() ?: continue
-                store.update { it.copy(selfSms = SelfSms.add(it.selfSms, sent)).logged(now, "self_sms", "slot ${sim.slot + 1}: ${sent.result}") }
+                store.update { it.logged(now, "self_sms", "slot ${sim.slot + 1}: ${sent.result}") }
             }
         }
+    }
+
+    /**
+     * The owner's "Send a test SMS now": one data SMS to each SIM's own number, on the app's
+     * port, under the owner build's refusals (no call, no emergency state, not roaming) and the
+     * self-SMS refusals. The weekly switch stays as the owner set it.
+     */
+    private suspend fun selfSmsNow(store: FileStateStore): Result = withPhone(store) { _, sims, phone ->
+        if (sims.isEmpty()) throw SafetyException("no_sim", "no SIM, nothing to test")
+        for (sim in sims) {
+            val refusal = OwnerSession(phone, store, sim).safety().refusal
+            val line = if (refusal != null) {
+                "slot ${sim.slot + 1}: not sent: ${refusal.plain}"
+            } else {
+                // The check is in the ledger before the SMS goes out (OwnerSelfSms.send).
+                "slot ${sim.slot + 1}: ${OwnerSelfSms.send(applicationContext, phone, sim, on = true).result} (your request)"
+            }
+            store.update { it.logged(System.currentTimeMillis(), "self_sms", line) }
+        }
+        Result.success()
     }
 
     /**
@@ -683,6 +705,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val STEP_FINISH = "finish"
         const val STEP_PROBE = "probe"
         const val STEP_CALLS_OUT = "calls_out"
+        const val STEP_SELF_SMS = "self_sms"
         const val STEP_DROP_KEEP = "drop_keep"
         const val STEP_LAYER = "layer"
         const val STEP_LAYER_UNDO = "layer_undo"
@@ -922,6 +945,14 @@ object OwnerScheduler {
         val first = step(workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_CALLS_OUT), nightConstraints(), expedite = false)
         WorkManager.getInstance(context).beginUniqueWork(RUN, ExistingWorkPolicy.KEEP, first).enqueue()
         return "queued mailbox calls $runId"
+    }
+
+    /** The owner's one test SMS to the phone's own number now ([OwnerWorker] STEP_SELF_SMS). */
+    fun selfSmsNow(context: Context) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "owner-self-sms-now", ExistingWorkPolicy.KEEP,
+            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_SELF_SMS), null, expedite = true),
+        )
     }
 
     /** The owner's dry run of the mailbox call: every guard, then a log line of what it would dial; nothing is dialled. */
