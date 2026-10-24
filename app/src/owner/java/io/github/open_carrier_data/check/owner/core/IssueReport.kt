@@ -19,16 +19,20 @@ import java.time.ZoneOffset
 /**
  * The owner's "upload": a GitHub issue URL on OCD's public repository,
  * prefilled for its "OCD Check report" form with exactly one JSON block, a
- * closed pointer report. Each result names an entry of the OCD release's
+ * closed pointer report. Each result names an entry of the OCD data's
  * closed list ([Pointers]: `volte:on`, `apn:<row key>`, ...) and the result
  * class the phone measured, never a value. The report follows the public
  * `schemas/ocd-check-report.schema.json` (`ocd-check-test-report`, version
  * 1) field for field; a copy of that schema is in this build's test
  * resources and `ReportSchemaTest` checks reports against it.
  *
+ * The report names the data by its OCD commit and data digest (round 29
+ * S13), the pinned main commit or the commit the bundled snapshot was built
+ * from; a run recorded before round 29 still names its release tag.
+ *
  * The app only opens the URL in the browser; the owner reads it and submits
  * it himself, and the app holds no token. The public repository's bot checks
- * that the release and every entry exist and records the report under
+ * that the commit (or release) and every entry exist and records the report under
  * `observed/` as "reported, not checked by OCD": a report is a hint that
  * never moves an OCD value and never makes a phone skip its own test. It
  * holds typed values only, no IMSI, ICCID, IMEI, number, SIP URI, address,
@@ -36,7 +40,7 @@ import java.time.ZoneOffset
  * is built. [hash] is the hash the bot posts for the same text.
  */
 object IssueReport {
-    const val NEW_ISSUE = "${ReleaseSource.REPOSITORY_URL}/issues/new"
+    const val NEW_ISSUE = "${DataSource.REPOSITORY_URL}/issues/new"
     const val TEMPLATE = "ocd-check-report.yml"
 
     /** The form's textarea the report goes in (`id: report`, rendered as JSON, so the issue shows it fenced). */
@@ -60,7 +64,7 @@ object IssueReport {
     fun loginLength(url: String): Int = LOGIN.length + URLEncoder.encode(url, "UTF-8").length
 
     /** Values the privacy scan's phone heuristics skip: an all-digit hash tail or GID1 prefix is not a number. */
-    private val HEX_FIELDS = PrivacyScan.hexFields + setOf("report.ocd_profile", "report.sim.gid1_prefix", "report.release.data_digest")
+    private val HEX_FIELDS = PrivacyScan.hexFields + setOf("report.ocd_profile", "report.sim.gid1_prefix", "report.release.data_digest", "report.release.commit")
 
     private val DIGEST = Regex("sha256:[0-9a-f]{64}")
 
@@ -84,7 +88,7 @@ object IssueReport {
      * The pointer report of [run]. [cell] names the phone, software, SIM and
      * release (the run's own, or for older runs the same phone as it is now);
      * [calls] are this phone's measured call levels (round 26; works is T2). Null
-     * without a SIM, without a release digest, or without a result.
+     * without a SIM, without a data digest, or without a result.
      */
     fun report(run: RunResult, cell: ReportCell, calls: List<CallsTested>, leaveOutApns: Int = 0): JsonObject? {
         val sim = run.sim ?: return null
@@ -104,7 +108,9 @@ object IssueReport {
             }
             put("tested_on", Instant.ofEpochMilli(run.startedMs).atOffset(ZoneOffset.UTC).toLocalDate().toString())
             putJsonObject("release") {
-                put("tag", cell.dataRelease?.takeIf { ReleaseSource.TAG.matches(it) })
+                // Round 29 S13: the data commit and its digest; a run before round 29 names its release tag.
+                val commit = cell.dataCommit?.takeIf { DataSource.SHA.matches(it) }
+                if (commit != null) put("commit", commit) else put("tag", cell.dataRelease?.takeIf { DataSource.RELEASE_TAG.matches(it) })
                 put("data_digest", cell.dataDigest)
             }
             put("data_source", cell.dataSource)
@@ -193,7 +199,7 @@ object IssueReport {
         val hash: String get() = hash(text)
     }
 
-    /** The prefilled issue, or null without a SIM, a release digest or a result, or when the privacy scan finds an identifier. */
+    /** The prefilled issue, or null without a SIM, a data digest or a result, or when the privacy scan finds an identifier. */
     fun prefill(run: RunResult, cell: ReportCell, calls: List<CallsTested>): Prefilled? {
         val title = title(run, cell)
         if (PrivacyScan.scanValue("title", title).isNotEmpty()) return null

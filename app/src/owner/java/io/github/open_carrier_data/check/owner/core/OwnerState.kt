@@ -136,12 +136,19 @@ data class ReportCell(
     val spn: String? = null,
     val gid1Prefix: String? = null,
     val appVersion: String,
-    /** The data release the OCD values came from; null for a bundled snapshot that names none (the bot finds it by its digest). */
+    /** The data release the OCD values came from, in runs before round 29; null for a bundled snapshot that names none (the bot finds it by its digest). */
     val dataRelease: String? = null,
-    /** The release's data digest (sha256:...), which the public bot checks against the release tag. */
+    /** The data's data digest (sha256:...), which the public bot checks against the commit or the release tag. */
     val dataDigest: String,
     /** pulled or bundled. */
     val dataSource: String,
+    /**
+     * The OCD commit the data was read at (round 29 S13): the pinned main
+     * commit, or the commit the bundled snapshot was built from. The pointer
+     * report names it with [dataDigest] instead of a release tag. Null in runs
+     * before round 29, whose reports still name the release.
+     */
+    val dataCommit: String? = null,
 )
 
 @Serializable
@@ -153,6 +160,7 @@ data class RunResult(
     val sim: SimKey? = null,
     val simName: String? = null,
     val profileId: String? = null,
+    /** The data the run used, for the log: "main <commit> (<date>)", "bundled <commit>", or a release tag in runs before round 29. */
     val releaseTag: String? = null,
     val device: String? = null,
     val stack: String? = null,
@@ -177,7 +185,13 @@ data class OwnerState(
     /** Set by a stop event (a failed or unprovable revert, lost voice, a value after reboot); checked before every write. */
     val stop: String? = null,
     val emergencySeen: EmergencySeen? = null,
-    val release: ReleaseInfo? = null,
+    /**
+     * The pinned main commit the OCD data comes from (round 29 F1); null
+     * until the first pull, when the bundled snapshot is used. Builds before
+     * round 29 kept a tagged release here as `release`, which is no longer
+     * read: its folder is removed at the first pin.
+     */
+    val pin: DataPin? = null,
     val runs: List<RunResult> = emptyList(),
     val log: List<LogEvent> = emptyList(),
     val scheduleOn: Boolean = true,
@@ -204,13 +218,13 @@ data class OwnerState(
     val lastResult: LastResult? = null,
     /** The last read-only check of the background job. */
     val lastCheckAtMs: Long? = null,
-    /** The last pull attempt of the background job (once a day). */
+    /** The last pull attempt of the background job (once a day, on Wi-Fi). */
     val lastPullAtMs: Long? = null,
     /** Since when a triggered entry waits for a night window; after [QuietPlan.NIGHT_GRACE_MS] any silent window does. */
     val triggerSinceMs: Long? = null,
-    /** The basis the background job last saw; a new ROM build or data release starts [onOnlyUntilMs]. */
+    /** The basis the background job last saw; a new ROM build or new data values for a SIM start [onOnlyUntilMs]. */
     val basisSeen: TestBasis? = null,
-    /** After a ROM flash or a data release, only on values are tried until then ([QuietPlan.ON_ONLY_MS]). */
+    /** After a ROM flash or new data values for a SIM, only on values are tried until then ([QuietPlan.ON_ONLY_MS]). */
     val onOnlyUntilMs: Long? = null,
     /** The night (its local date) whose one change was made already. */
     val trialNight: String? = null,

@@ -7,7 +7,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Pulls OCD's tagged releases from GitHub (owner direction: "update pulls"). -->
+    <!-- Pulls OCD's newest validated main commit from GitHub, pinned by its SHA (owner direction: "update pulls"; round 29). -->
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- The quiet live-settings notification with its one-tap "Revert all", and a notice on a change or a failure. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

@@ -23,6 +23,10 @@ import io.github.open_carrier_data.check.core.Matcher
 import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.RomFamily
 import io.github.open_carrier_data.check.owner.core.ApnResult
+import io.github.open_carrier_data.check.owner.core.DataBasis
+import io.github.open_carrier_data.check.owner.core.OcdApnRow
+import io.github.open_carrier_data.check.owner.core.PlanWhy
+import io.github.open_carrier_data.check.owner.core.SchemaRefused
 import io.github.open_carrier_data.check.owner.core.CallsOutDue
 import io.github.open_carrier_data.check.owner.core.CallsOutMode
 import io.github.open_carrier_data.check.owner.core.CallsOutPlan
@@ -95,7 +99,18 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 STEP_QUIET -> quiet(store)
                 STEP_CLEANUP -> cleanup(store)
                 STEP_REVERT_ALL -> withPhone(store) { runner, sims, _ -> runner.revertAll(sims); Result.success() }
-                STEP_PULL -> {
+                STEP_PULL -> if (inputData.getBoolean(KEY_IN_RUN, false)) {
+                    // "Test now" pulls first (round 29): the test runs on whatever data the pull leaves, and a failed pull never holds it up.
+                    val line = try {
+                        OwnerData(applicationContext, store).pull()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        "pull failed, the test uses the data it has: ${e.javaClass.simpleName}: ${e.message?.take(160)}"
+                    }
+                    store.update { it.logged(System.currentTimeMillis(), "pull", "before the test: $line") }
+                    Result.success()
+                } else {
                     val line = OwnerData(applicationContext, store).pull(force = inputData.getBoolean(KEY_FORCE, false))
                     store.update { it.logged(System.currentTimeMillis(), "pull", line) }
                     Result.success()
@@ -138,7 +153,8 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             if (step == STEP_CLEANUP && store.read().anyLive && runAttemptCount < 8) Result.retry() else Result.success()
         } catch (e: Exception) {
             store.update { it.logged(System.currentTimeMillis(), "error", "$step: ${e.javaClass.simpleName}: ${e.message?.take(160)}") }
-            if (step == STEP_PULL && runAttemptCount < 3) Result.retry() else Result.success()
+            // A format this build does not know (round 29 F3) stays unknown on a retry.
+            if (step == STEP_PULL && e !is SchemaRefused && runAttemptCount < 3) Result.retry() else Result.success()
         }
         val after = store.read()
         // Routine work is silent; a change or a failure is told. A chain's changes wait for its end (STEP_FINISH).
@@ -195,8 +211,9 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             val last = state.lastCheckAtMs
             val checkDue = !periodic || last == null || now - last >= CHECK_EVERY_MS || now < last || night || state.triggerSinceMs != null
             if (!checkDue) return Result.success()
-            // The data release, once a day, on Wi-Fi.
-            if (look.wifiConnected == true && (state.lastPullAtMs == null || now - state.lastPullAtMs!! >= PULL_EVERY_MS)) {
+            // main's newest validated commit, once a day on Wi-Fi (round 29); every six hours while nothing is pinned yet.
+            val pullDue = state.lastPullAtMs == null || now - state.lastPullAtMs!! >= (if (state.pin == null) CHECK_EVERY_MS else PULL_EVERY_MS) || now < state.lastPullAtMs!!
+            if (look.wifiConnected == true && pullDue) {
                 store.update { it.copy(lastPullAtMs = now) }
                 runCatching { OwnerData(context, store).pull(verbose = false) }
                     .onSuccess { line -> if (!line.startsWith("up to date")) store.update { it.logged(now, "pull", "background: $line") } }
@@ -205,26 +222,38 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             val sims = OwnerData.sims(context)
             if (sims.isEmpty()) return Result.success()
             state = store.read()
-            val basis = OwnerBasis.current(context, state)
+            val data = OwnerData(context, store)
+            val bundle = data.bundle()
+            val rows = sims.associate { it.key to data.apnRows(it) }
+            // Round 29 F4: each SIM's entries rest on its own OCD values, not on the commit; a pin that changes none triggers nothing.
+            val dataKeys = OwnerBasis.dataKeys(context, bundle, sims) { rows[it.key].orEmpty() }
+            val basis = OwnerBasis.current(context, state).copy(release = DataBasis.joined(dataKeys))
             val seen = state.basisSeen
             if (seen != basis) {
-                // A ROM flash or a data release: only on values for two nights (the report of 2026-10-20).
-                val onOnly = seen != null && (seen.rom != basis.rom || seen.release != basis.release)
-                store.update {
-                    it.copy(basisSeen = basis, onOnlyUntilMs = if (onOnly) now + QuietPlan.ON_ONLY_MS else it.onOnlyUntilMs)
-                        .logged(now, "basis", if (seen == null) "basis recorded" else "new ${basis.changesFrom(seen).joinToString()}${if (onOnly) "; only on values for two nights" else ""}")
+                // A ROM flash or new data values for a SIM it had before: only on values for two nights (the report of 2026-10-20).
+                val newValues = seen != null && DataBasis.changed(seen.release, basis.release)
+                val onOnly = seen != null && (seen.rom != basis.rom || newValues)
+                val what = listOfNotNull(
+                    PlanWhy.NEW_DATA_VALUES.takeIf { newValues },
+                    PlanWhy.NEW_ROM_BUILD.takeIf { seen != null && seen.rom != basis.rom },
+                    PlanWhy.NEW_APP_BUILD.takeIf { seen != null && seen.app != basis.app },
+                )
+                val text = when {
+                    seen == null -> "basis recorded"
+                    what.isEmpty() -> "basis recorded again: a SIM came or went, or data from before round 29"
+                    else -> "new ${what.joinToString()}${if (onOnly) "; only on values for two nights" else ""}"
                 }
+                store.update { it.copy(basisSeen = basis, onOnlyUntilMs = if (onOnly) now + QuietPlan.ON_ONLY_MS else it.onOnlyUntilMs).logged(now, "basis", text) }
             }
             val runner = OwnerRunner(phone, store, device(context))
-            val data = OwnerData(context, store)
             val video = VideoStatic.reasons(context)
             val checks = try {
-                sims.map { sim -> runner.check(sim, video, data.apnRows(sim)) }
+                sims.map { sim -> runner.check(sim, video, rows[sim.key].orEmpty()) }
             } catch (e: SafetyException) {
                 quietLog(store, "check", "light check could not read the phone: ${e.reason}")
                 return Result.success()
             }
-            store.update { s -> checks.flatMap { QuietPlan.observedRecords(it, basis, now) }.fold(s) { acc, r -> acc.recorded(r) } }
+            store.update { s -> checks.flatMap { QuietPlan.observedRecords(it, basis.forSim(dataKeys, it.sim.key), now) }.fold(s) { acc, r -> acc.recorded(r) } }
             if (checks.any { it.missingKeeps.isNotEmpty() }) OwnerScheduler.cleanup(context, policy = ExistingWorkPolicy.KEEP)
             // Round 26: provisional keeps reverted when the night ended without calls out or 7 days passed without incoming.
             settleProvisional(context, store.read())
@@ -235,7 +264,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             val reports = if (observed?.pointers.isNullOrEmpty()) {
                 emptyMap()
             } else {
-                OwnerData.observedCells(context, device(context), sims, data.bundle()).associate { (sim, cell) -> sim.key to ObservedReports.forCell(observed, cell) }
+                OwnerData.observedCells(context, device(context), sims, bundle).associate { (sim, cell) -> sim.key to ObservedReports.forCell(observed, cell) }
             }
             val plan = QuietPlan.plan(
                 checks, state.entries, basis, now,
@@ -244,6 +273,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 nightUsed = state.trialNight == QuietWindow.nightOf(nowLocal),
                 undone = state.undone,
                 reports = reports,
+                dataKeys = dataKeys,
             )
             val ims = checks.joinToString { "slot ${it.sim.slot + 1}: ${it.imsLine}" }
             val callsDue = callsOutDue(store, sims, phone, reportsBySim = reports)
@@ -421,7 +451,8 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         store.update { it.logged(System.currentTimeMillis(), kind, text) }
     }
 
-    private fun options(store: FileStateStore, phone: OwnerPhone?, ocd: OcdAnswer?): RunOptions {
+    /** [sim]'s results are recorded against its own data key ([OwnerBasis.forSim], round 29 F4). */
+    private fun options(store: FileStateStore, phone: OwnerPhone?, ocd: OcdAnswer?, sim: OwnerSim, bundle: OcdBundle, rows: List<OcdApnRow>): RunOptions {
         val video = VideoStatic.reasons(applicationContext).let { if (it.isNotEmpty() && ocd?.value != true) it + "no_carrier_offer" else it }
         return RunOptions(
             testOffs = inputData.getBoolean(KEY_OFFS, true),
@@ -432,7 +463,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             apnKeys = inputData.getStringArray(KEY_APN_KEYS)?.toSet(),
             maxApnRows = if (background) QuietPlan.MAX_ON_PER_NIGHT else Int.MAX_VALUE,
             interrupt = if (background) AndroidInterrupt(applicationContext) else null,
-            basis = OwnerBasis.current(applicationContext, store.read()),
+            basis = OwnerBasis.forSim(applicationContext, store.read(), bundle, sim, rows),
             videoUnavailable = video,
         )
     }
@@ -493,7 +524,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             }
             if (background) gate(store, phone, runId)?.let { return@withPhone it }
             val ocd = OwnerRunner.answers(bundle, sim, device(applicationContext)).getValue(feature)
-            val options = options(store, phone, ocd)
+            val options = options(store, phone, ocd, sim, bundle, data.apnRows(sim))
             val before = store.read()
             if (background) RevertAlarm.arm(applicationContext)
             val result = try {
@@ -517,7 +548,8 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         val data = OwnerData(applicationContext, store)
         return withPhone(store) { runner, sims, phone ->
             val sim = sims.firstOrNull { it.slot == slot } ?: return@withPhone Result.success()
-            val run = startRun(store, runId, sim, data.bundle())
+            val bundle = data.bundle()
+            val run = startRun(store, runId, sim, bundle)
             if (background) gate(store, phone, runId)?.let { return@withPhone it }
             val rows = data.apnRows(sim)
             val before = store.read()
@@ -526,7 +558,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 if (rows.isEmpty() && data.currentDir() == null) {
                     listOf(ApnResult("all rows", "", "no_release_pulled"))
                 } else {
-                    runner.testApns(sim, rows, options(store, phone, null))
+                    runner.testApns(sim, rows, options(store, phone, null, sim, bundle, rows))
                 }
             } finally {
                 if (background && !store.read().trialsLive()) RevertAlarm.disarm(applicationContext)
@@ -559,7 +591,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         state.runs.firstOrNull { it.id == runId }?.let { return it }
         val device = device(applicationContext)
         val profile = sim?.let { Matcher.resolve(bundle, it.identity).mostSpecific }
-        val pulled = OwnerData(applicationContext, store).currentDir()?.let { state.release?.tag }
+        val pulled = OwnerData(applicationContext, store).currentDir() != null
         val run = RunResult(
             id = runId,
             startedMs = System.currentTimeMillis(),
@@ -567,7 +599,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             sim = sim?.key,
             simName = sim?.name,
             profileId = profile?.profileId,
-            releaseTag = state.release?.tag ?: "bundled ${bundle.source.commit.take(8)}",
+            releaseTag = state.pin?.takeIf { pulled }?.label ?: "bundled ${bundle.source.commit.take(8)}",
             device = "${device.model} (${device.codename})",
             stack = "${device.romFamily.plain}, Android ${device.androidMajor}, ${Build.TYPE}",
             background = background,
@@ -588,6 +620,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val KEY_APNS = "apns"
         const val KEY_SCHEDULED = "scheduled"
         const val KEY_FORCE = "force"
+        const val KEY_IN_RUN = "in_run"
         const val KEY_BACKGROUND = "background"
         const val KEY_ONLY = "only"
         const val KEY_APN_KEYS = "apn_keys"
@@ -823,6 +856,8 @@ object OwnerScheduler {
             OwnerWorker.KEY_APNS to apns, OwnerWorker.KEY_SCHEDULED to false,
         )
         val steps = mutableListOf<OneTimeWorkRequest>()
+        // Round 29: "Test now" pulls main's newest validated commit first, so the test runs on the newest data.
+        if (sims.isNotEmpty()) steps += step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_PULL, OwnerWorker.KEY_IN_RUN to true), null, expedite = false)
         for (sim in sims) {
             for (feature in OwnerFeature.entries) {
                 steps += step(
@@ -846,7 +881,7 @@ object OwnerScheduler {
         chain.enqueue()
         // The owner asks for a test: what he undid may be kept again if it tests better.
         store.update { it.copy(undone = emptyList()) }
-        store.update { it.logged(System.currentTimeMillis(), "run", "queued run $runId: ${sims.size} SIM(s), ${steps.size - 1} steps${if (offs) ", off values too" else ", on values only"}") }
+        store.update { it.logged(System.currentTimeMillis(), "run", "queued run $runId: ${sims.size} SIM(s), a pull and ${steps.size - 2} steps${if (offs) ", off values too" else ", on values only"}") }
         return "queued run $runId"
     }
 

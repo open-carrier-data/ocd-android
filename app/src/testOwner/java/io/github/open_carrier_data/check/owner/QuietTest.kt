@@ -134,6 +134,26 @@ class QuietTest {
     }
 
     @Test
+    fun `a new pin makes a SIM's entries due only when its own data values changed, not per commit (round 29 F4)`() {
+        val key = "ocd:1111111111111111"
+        val records = changes.map { record(it, now - 3 * day, b = basis.copy(release = key)) }
+        // main moved on several commits, none of them changing this SIM's answers or APN rows: nothing is due.
+        val same = QuietPlan.plan(listOf(check()), records, basis.copy(release = "main@e32fd75687d0"), now, known = setOf(sim.key), dataKeys = mapOf(sim.key to key))
+        assertTrue(same.line, same.all.isEmpty())
+        // Another SIM's values changed: not this SIM's entries.
+        val other = sim.key.copy(subId = 9, mccmnc = "26207")
+        assertTrue(QuietPlan.plan(listOf(check()), records, basis, now, known = setOf(sim.key), dataKeys = mapOf(sim.key to key, other to "ocd:2222222222222222")).all.isEmpty())
+        // This SIM's values changed: its entries are due, as a trigger.
+        val changed = QuietPlan.plan(listOf(check()), records, basis, now, known = setOf(sim.key), dataKeys = mapOf(sim.key to "ocd:3333333333333333"))
+        assertTrue(changed.triggered)
+        assertEquals(setOf(PlanWhy.NEW_DATA_VALUES), changed.entries.map { it.why }.toSet())
+        assertEquals(listOf("volte:on", "volte:off"), changed.entries.map { it.entry })
+        // The records the light check writes carry the SIM's own key.
+        val observed = QuietPlan.observedRecords(check(), basis.forSim(mapOf(sim.key to key), sim.key), now)
+        assertTrue(observed.isNotEmpty() && observed.all { it.basis.release == key })
+    }
+
+    @Test
     fun `a new SIM is new, rotation takes the oldest entry two weeks on, an undecided one is retried after a day`() {
         val fresh = QuietPlan.plan(listOf(check()), emptyList(), basis, now)
         assertEquals(PlanWhy.NEW_SIM, fresh.entries.first().why)

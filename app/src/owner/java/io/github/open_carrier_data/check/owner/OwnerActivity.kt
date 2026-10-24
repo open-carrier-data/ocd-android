@@ -36,7 +36,6 @@ import io.github.open_carrier_data.check.owner.core.ObservedReports
 import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.QuietPlan
-import io.github.open_carrier_data.check.owner.core.ReleaseSource
 import io.github.open_carrier_data.check.owner.core.SimView
 import io.github.open_carrier_data.check.owner.core.WifiCallingDetails
 import io.github.open_carrier_data.check.owner.core.update
@@ -61,11 +60,11 @@ data class OwnerUi(
     val simViews: List<SimView>? = null,
     /** How far this phone's own measured calls went per feature and SIM (round 26: calls out, works). */
     val calls: List<CallsTested> = emptyList(),
-    /** OCD's access point names for each SIM (by subscription ID) in the pulled release; missing: not known. */
+    /** OCD's access point names for each SIM (by subscription ID) at the pinned commit; missing: not known. */
     val apnCandidates: Map<Int, Int> = emptyMap(),
     /** One plain line per entry others reported working or contested on this phone's cell ([ObservedReports.lines]). */
     val reportLines: List<String> = emptyList(),
-    /** The data release the app ships ("2026.10"), shown when none is pulled. */
+    /** The data the app ships ("2026.10"), shown when no commit is pinned yet. */
     val bundledTag: String? = null,
     /** Steps of the owner's or the night's test still to run. */
     val stepsToGo: Int = 0,
@@ -139,11 +138,11 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
 
     private var candidateCache: Pair<String, Map<Int, Set<String>>>? = null
 
-    /** The keys of OCD's access point names in the pulled release for each SIM; read once per release and SIM set. */
+    /** The keys of OCD's access point names at the pinned commit for each SIM; read once per pin and SIM set. */
     private fun candidates(state: OwnerState, sims: List<OwnerSim>?): Map<Int, Set<String>> {
         val data = OwnerData(getApplication(), store)
-        val tag = state.release?.tag?.takeIf { data.currentDir() != null } ?: return emptyMap()
-        val key = tag + sims.orEmpty().joinToString { "${it.subId}/${it.identity.mccmnc}" }
+        val pin = state.pin?.commit?.takeIf { data.currentDir() != null } ?: return emptyMap()
+        val key = pin + sims.orEmpty().joinToString { "${it.subId}/${it.identity.mccmnc}" }
         candidateCache?.takeIf { it.first == key }?.let { return it.second }
         val keys = sims.orEmpty().mapNotNull { sim -> runCatching { sim.subId to QuietPlan.apnCandidates(data.apnRows(sim), sim).map { it.key }.toSet() }.getOrNull() }.toMap()
         candidateCache = key to keys
@@ -152,11 +151,11 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
 
     private var cellCache: Pair<String, List<Pair<OwnerSim, ObservedCell>>>? = null
 
-    /** Details' lines on others' reports for each SIM's own cell; the cells are read once per data release and SIM set. */
+    /** Details' lines on others' reports for each SIM's own cell; the cells are read once per pin and SIM set. */
     private fun reportLines(state: OwnerState, sims: List<OwnerSim>?, apnKeys: Map<Int, Set<String>>): List<String> {
         if (state.observed?.pointers.isNullOrEmpty() || sims.isNullOrEmpty()) return emptyList()
         val context = getApplication<Application>()
-        val key = (state.release?.tag ?: "bundled") + sims.joinToString { "${it.subId}/${it.identity.mccmnc}" }
+        val key = (state.pin?.commit ?: "bundled") + sims.joinToString { "${it.subId}/${it.identity.mccmnc}" }
         val cells = cellCache?.takeIf { it.first == key }?.second
             ?: OwnerData.observedCells(context, OwnerWorker.device(context), sims, OwnerData(context, store).bundle()).also { cellCache = key to it }
         val simCells = cells.map { (sim, cell) ->
@@ -169,11 +168,11 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = _ui.value.copy(message = text, messageId = _ui.value.messageId + 1)
     }
 
-    /** Checks for a new data release, then says how it went: up to date, updated, offline, or failed. */
+    /** Checks main for a newer validated commit, then says how it went: up to date, updated, offline, or failed. */
     fun pull() = viewModelScope.launch {
         val context = getApplication<Application>()
         val startedMs = System.currentTimeMillis()
-        val before = store.read().release?.tag
+        val before = store.read().pin?.commit
         OwnerScheduler.pull(context, force = false)
         if (!online(context)) {
             say("No connection. It updates when you're online")
@@ -186,11 +185,11 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             val state = store.read()
             val ended: LogEvent? = state.log.lastOrNull { it.atMs >= startedMs && (it.kind == "pull" || (it.kind == "error" && it.text.startsWith("pull:"))) }
             if (ended != null) {
-                val after = state.release?.tag
+                val after = state.pin
                 say(
                     when {
                         ended.kind == "error" -> "Couldn't check for an update. See the log in Details"
-                        after != null && after != before -> "Updated to ${after.removePrefix("data-")}"
+                        after != null && after.commit != before -> "Updated to the data of ${after.commitDate.take(10)}"
                         else -> "Up to date"
                     },
                 )
@@ -307,8 +306,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
                     val bundle = data.bundle()
                     val sim = OwnerData.sims(context).firstOrNull { it.subId == key.subId && it.identity.mccmnc == key.mccmnc }
                     val profile = bundle.profiles.firstOrNull { it.profileId == run.profileId }
-                    val pulled = run.releaseTag?.takeIf { ReleaseSource.TAG.matches(it) && data.currentDir() != null }
-                    OwnerData.reportCell(context, OwnerWorker.device(context), sim, profile, pulled, bundle)
+                    OwnerData.reportCell(context, OwnerWorker.device(context), sim, profile, data.currentDir() != null, bundle)
                 } ?: return@runCatching null
                 IssueReport.prefill(run, cell, OwnerData.callsTested(context))
             }.getOrNull()
@@ -388,8 +386,8 @@ class OwnerActivity : ComponentActivity() {
 
     private fun openIssue() = viewModel.report { prefilled ->
         if (prefilled == null) {
-            // The button waits for a finished test, so a missing report is the privacy check's or the release's.
-            android.widget.Toast.makeText(this, "Report held back: it may contain private data, or the test has no data release", android.widget.Toast.LENGTH_LONG).show()
+            // The button waits for a finished test, so a missing report is the privacy check's or the data digest's.
+            android.widget.Toast.makeText(this, "Report held back: it may contain private data, or the test has no data digest", android.widget.Toast.LENGTH_LONG).show()
             return@report
         }
         // Opens the prefilled form; the owner reads it and submits it himself. The app sends nothing.

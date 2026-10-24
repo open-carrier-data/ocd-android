@@ -40,7 +40,7 @@ import java.time.ZoneOffset
  */
 
 object ObservedSource {
-    private const val RAW = "https://raw.githubusercontent.com/${ReleaseSource.REPOSITORY}/main/observed"
+    private const val RAW = "https://raw.githubusercontent.com/${DataSource.REPOSITORY}/main/observed"
     const val SUMMARY_URL = "$RAW/summary.json"
     const val SCHEMA_ASSET = "observed-summary.schema.json"
 

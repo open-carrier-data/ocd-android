@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
 import android.telephony.SubscriptionManager
+import android.util.Log
 import io.github.open_carrier_data.check.BuildConfig
 import io.github.open_carrier_data.check.core.DeviceInfo
 import io.github.open_carrier_data.check.core.OcdBundle
@@ -27,10 +28,12 @@ import io.github.open_carrier_data.check.owner.core.ObservedStore
 import io.github.open_carrier_data.check.owner.core.OcdApnRow
 import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerState
-import io.github.open_carrier_data.check.owner.core.ReleaseCheck
-import io.github.open_carrier_data.check.owner.core.ReleaseException
-import io.github.open_carrier_data.check.owner.core.ReleaseInfo
-import io.github.open_carrier_data.check.owner.core.ReleaseSource
+import io.github.open_carrier_data.check.owner.core.DataException
+import io.github.open_carrier_data.check.owner.core.DataSource
+import io.github.open_carrier_data.check.owner.core.MainPin
+import io.github.open_carrier_data.check.owner.core.MainPull
+import io.github.open_carrier_data.check.owner.core.SchemaRefused
+import io.github.open_carrier_data.check.owner.core.Validation
 import io.github.open_carrier_data.check.owner.core.SimView
 import io.github.open_carrier_data.check.owner.core.StateStore
 import io.github.open_carrier_data.check.owner.core.update
@@ -97,43 +100,49 @@ class FileStateStore(context: Context) : StateStore {
 }
 
 /**
- * OCD's data for the owner build: the latest tagged release from GitHub,
- * every asset checked against SHA256SUMS and release.json, the data digest
- * checked across the files. Until a release is pulled, the bundled asset
- * (the same data-2026.10 snapshot) is used for the IMS values; APN rows need
- * a pulled release. Each pull also fetches OCD's observed/summary.json (others'
- * reports, which only order the night's tests; [ObservedReports]).
+ * OCD's data for the owner build: the newest commit on OCD's public main
+ * whose validate check passed, pinned by its SHA, every file read at that
+ * SHA and checked ([MainPin], round 29 F1 to F3). Until the first pull the
+ * bundled asset is used for the IMS values; APN rows need a pin. Each pull
+ * also fetches OCD's observed/summary.json (others' reports, which only order
+ * the night's tests; [ObservedReports]).
  */
 class OwnerData(private val context: Context, private val store: StateStore) {
-    private val root = File(context.filesDir, "releases")
+    private val root = File(context.filesDir, "data")
 
-    fun currentDir(): File? = store.read().release?.let { File(root, it.tag) }?.takeIf { File(it, "bundle.json.gz").isFile }
+    /** The pinned commit's folder, when its files are in place. */
+    fun currentDir(): File? = store.read().pin?.let { File(root, it.commit) }?.takeIf { File(it, "bundle.json.gz").isFile }
 
     fun bundled(): OcdBundle = context.assets.open(OcdBundle.ASSET_NAME).use(OcdBundle::readGzip)
 
-    /** The pulled release's bundle, else the bundled asset. */
+    /** The pinned commit's bundle, else the bundled asset. */
     fun bundle(): OcdBundle = currentDir()?.let { dir ->
         runCatching { GZIPInputStream(File(dir, "bundle.json.gz").inputStream()).use { OcdBundle.parse(it.readBytes().decodeToString()) } }.getOrNull()
     } ?: bundled()
 
-    /** OCD's APN rows for the SIM's network code, from the pulled release's apns-conf.xml. */
+    /** OCD's APN rows for the SIM's network code, from the pinned commit's apns-conf.xml. */
     fun apnRows(sim: OwnerSim): List<OcdApnRow> {
         val dir = currentDir() ?: return emptyList()
         return File(dir, "apns-conf.xml").bufferedReader().use { ApnConf.rowsFor(it.lineSequence(), sim.identity.mccmnc) }
     }
 
     /**
-     * Pulls the latest release when its tag differs from the current one, and
-     * fetches observed/summary.json either way ([pullObserved]). Returns the
-     * release's line for the log. Throws [ReleaseException] or IOException
-     * when the release could not be checked; the summary has its own log line.
-     * [verbose]: the owner asked ("Check for update"); the background logs
-     * only what is new.
+     * Pins main's newest validated commit when it differs from the current
+     * pin, and fetches observed/summary.json either way ([pullObserved]).
+     * Returns the pin's line for the log. Throws [DataException] (a refused
+     * commit; [SchemaRefused] for a format this build does not know) or
+     * IOException; the current data then stays whole. The summary has its own
+     * log line. [verbose]: the owner asked ("Check for update", "Test now");
+     * the background logs only what is new.
      */
     suspend fun pull(force: Boolean = false, verbose: Boolean = true): String = withContext(Dispatchers.IO) {
-        val release = runCatching { pullRelease(force) }
+        val main = runCatching { pullMain(force) }
+        main.exceptionOrNull()?.let { e ->
+            val line = "pull refused or failed, the data stays at ${store.read().pin?.label ?: "the bundled snapshot"}: ${e.javaClass.simpleName}: ${e.message?.take(200)}"
+            runCatching { Log.w(DATA_TAG, line) }
+        }
         pullObserved(verbose)
-        release.getOrThrow()
+        main.getOrThrow()
     }
 
     /**
@@ -156,45 +165,54 @@ class OwnerData(private val context: Context, private val store: StateStore) {
         return ObservedReports.line(kept, device.model)
     }
 
-    private fun pullRelease(force: Boolean): String {
-        val latest = ReleaseCheck.latest(get(ReleaseSource.LATEST_API, accept = "application/vnd.github+json").decodeToString())
-        if (latest.draft || latest.prerelease) throw ReleaseException("the latest release is a draft or prerelease")
-        val tag = latest.tagName
-        if (!ReleaseSource.TAG.matches(tag)) throw ReleaseException("the latest release $tag is not a data release")
-        val current = store.read().release
-        if (!force && current?.tag == tag && currentDir() != null) return "up to date: $tag"
-        for (asset in ReleaseSource.ASSETS) {
-            val listed = latest.assets.firstOrNull { it.name == asset } ?: throw ReleaseException("the release has no $asset")
-            if (listed.size > ReleaseSource.MAX_ASSET_BYTES) throw ReleaseException("$asset is larger than the cap")
-        }
+    private fun pullMain(force: Boolean): String {
+        val current = store.read().pin
         root.mkdirs()
-        val partial = File(root, "$tag.partial").apply { deleteRecursively(); mkdirs() }
-        for (asset in ReleaseSource.ASSETS) {
-            File(partial, asset).writeBytes(get(ReleaseSource.downloadUrl(tag, asset)))
+        val partial = File(root, "partial").apply { deleteRecursively(); mkdirs() }
+        val now = System.currentTimeMillis()
+        val result = try {
+            MainPin.pull({ url, max -> get(url, maxBytes = max) }, current?.commit?.takeIf { currentDir() != null }, force, partial, bundled(), now)
+        } catch (e: Exception) {
+            partial.deleteRecursively()
+            throw e
         }
-        val info = ReleaseCheck.verify(partial, tag, System.currentTimeMillis())
-        val bundle = ReleaseCheck.bundle(partial, info, ReleaseCheck.manifest(partial), bundled())
-        GZIPOutputStream(File(partial, "bundle.json.gz").outputStream()).use {
-            it.write(Json.encodeToString(OcdBundle.serializer(), bundle).toByteArray())
+        val line = when (result) {
+            is MainPull.Current -> {
+                partial.deleteRecursively()
+                "up to date: ${current?.label ?: result.commit.take(12)}" + passedOver(result.passedOver)
+            }
+            is MainPull.Kept -> {
+                partial.deleteRecursively()
+                "kept ${current?.label ?: "the bundled snapshot"}: ${result.reason}"
+            }
+            is MainPull.Pinned -> {
+                val pin = result.pin
+                GZIPOutputStream(File(partial, "bundle.json.gz").outputStream()).use {
+                    it.write(Json.encodeToString(OcdBundle.serializer(), result.bundle).toByteArray())
+                }
+                // The big JSON files are folded into the bundle; apns-conf.xml and metadata.json stay.
+                File(partial, "lookup.json").delete()
+                File(partial, "carrier-variants.json").delete()
+                val final = File(root, pin.commit)
+                final.deleteRecursively()
+                if (!partial.renameTo(final)) throw IOException("could not move the pinned data into place")
+                val text = "pinned ${pin.label}: ${Validation.PASSED.plain} (check run ${pin.checkRun}); " +
+                    "${pin.sha256.size} files read at the commit, data digest ${pin.dataDigest.take(19)} the same in metadata.json, carrier-variants.json and apns-conf.xml, " +
+                    "schema_version known; ${pin.profiles} profiles" + (pin.previous?.let { "; previous pin ${it.take(12)}" } ?: "") + passedOver(result.passedOver)
+                store.update { s -> s.copy(pin = pin).logged(now, "pull", text) }
+                root.listFiles()?.filter { it.name != pin.commit }?.forEach { it.deleteRecursively() }
+                // The tagged release of the builds before round 29 is no longer read.
+                File(context.filesDir, "releases").deleteRecursively()
+                text
+            }
         }
-        // The big JSON files are folded into the bundle; apns-conf.xml and the manifests stay.
-        File(partial, "lookup.json").delete()
-        File(partial, "carrier-variants.json").delete()
-        val final = File(root, tag)
-        final.deleteRecursively()
-        if (!partial.renameTo(final)) throw IOException("could not move the release into place")
-        val kept = info.copy(profiles = bundle.profiles.size)
-        store.update { s ->
-            s.copy(release = kept).logged(
-                System.currentTimeMillis(), "pull",
-                "pulled $tag: commit ${kept.commit.take(8)}, ${kept.dataDigest.take(19)}, ${kept.profiles} profiles, SHA-256 checked for ${kept.sha256.keys.joinToString()}",
-            )
-        }
-        root.listFiles()?.filter { it.name != tag }?.forEach { it.deleteRecursively() }
-        return "pulled $tag"
+        runCatching { Log.i(DATA_TAG, line) }
+        return line
     }
 
-    private fun get(url: String, accept: String? = null, maxBytes: Long = ReleaseSource.MAX_ASSET_BYTES): ByteArray {
+    private fun passedOver(commits: List<String>): String = if (commits.isEmpty()) "" else "; newer commits passed over: ${commits.joinToString()}"
+
+    private fun get(url: String, maxBytes: Long): ByteArray {
         var target = URL(url)
         repeat(6) {
             require(target.protocol == "https") { "https only" }
@@ -203,20 +221,28 @@ class OwnerData(private val context: Context, private val store: StateStore) {
             connection.connectTimeout = 20_000
             connection.readTimeout = 60_000
             connection.setRequestProperty("User-Agent", "ocd-check-owner")
-            accept?.let { connection.setRequestProperty("Accept", it) }
+            if (target.host == "api.github.com") {
+                connection.setRequestProperty("Accept", "application/vnd.github+json")
+                connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+            }
             try {
                 when (val code = connection.responseCode) {
                     HttpURLConnection.HTTP_OK -> {
-                        if (connection.contentLengthLong > maxBytes) throw ReleaseException("download larger than the cap")
+                        if (connection.contentLengthLong > maxBytes) throw DataException("download larger than the cap")
                         return connection.inputStream.use { capped(it, maxBytes) }
                     }
                     301, 302, 303, 307, 308 -> {
                         val next = URL(target, connection.getHeaderField("Location") ?: throw IOException("redirect without a location"))
-                        // GitHub serves release assets from its own hosts only.
-                        if (!(next.host == "github.com" || next.host.endsWith(".githubusercontent.com"))) {
-                            throw ReleaseException("a redirect to ${next.host} is not GitHub")
+                        // GitHub serves the API and the files from its own hosts only.
+                        if (!(next.host == "github.com" || next.host == "api.github.com" || next.host.endsWith(".githubusercontent.com"))) {
+                            throw DataException("a redirect to ${next.host} is not GitHub")
                         }
                         target = next
+                    }
+                    403, 429 -> {
+                        // The unauthenticated API allows 60 calls an hour; a pull needs two or three.
+                        val left = connection.getHeaderField("x-ratelimit-remaining")
+                        throw IOException(if (left == "0") "GitHub's hourly API limit is used up (HTTP $code); tried again later" else "HTTP $code for ${target.path}")
                     }
                     else -> throw IOException("HTTP $code for ${target.path}")
                 }
@@ -235,11 +261,14 @@ class OwnerData(private val context: Context, private val store: StateStore) {
             val n = input.read(buffer)
             if (n < 0) return out.toByteArray()
             out.write(buffer, 0, n)
-            if (out.size() > maxBytes) throw ReleaseException("download larger than the cap")
+            if (out.size() > maxBytes) throw DataException("download larger than the cap")
         }
     }
 
     companion object {
+        /** The device log tag of the data pull: each pin, up to date, kept or refused, with no identifier. */
+        const val DATA_TAG = "OcdCheckData"
+
         /** The active SIMs, each with what OCD matching reads. Empty without a SIM. */
         suspend fun sims(context: Context): List<OwnerSim> {
             val reader = PhoneReader(context)
@@ -259,11 +288,11 @@ class OwnerData(private val context: Context, private val store: StateStore) {
          * The facts the test report names for a run on [sim] (README
          * "Uploads"): the phone and its software, the IMS stack, the SIM's SPN
          * and the GID1 prefix of the OCD [profile] it matched (never its whole
-         * GID1), the app version and the data release. [pulledTag]: the
-         * release whose files the run used; null when it used the bundled
-         * snapshot.
+         * GID1), the app version and the data: [bundle]'s commit and data
+         * digest (round 29 S13), the pinned main commit when [pulled], else
+         * the commit the bundled snapshot was built from.
          */
-        fun reportCell(context: Context, device: DeviceInfo, sim: OwnerSim?, profile: OcdProfile?, pulledTag: String?, bundle: OcdBundle): ReportCell {
+        fun reportCell(context: Context, device: DeviceInfo, sim: OwnerSim?, profile: OcdProfile?, pulled: Boolean, bundle: OcdBundle): ReportCell {
             val gid1 = sim?.identity?.gid1
             return ReportCell(
                 model = device.model,
@@ -277,9 +306,10 @@ class OwnerData(private val context: Context, private val store: StateStore) {
                     ?.firstOrNull { prefix -> gid1 != null && gid1.startsWith(prefix, ignoreCase = true) }
                     ?.uppercase()?.takeIf { HEX.matches(it) },
                 appVersion = BuildConfig.VERSION_NAME,
-                dataRelease = pulledTag ?: bundle.source.releaseTag,
+                dataRelease = bundle.source.releaseTag.takeIf { !pulled },
                 dataDigest = bundle.source.dataDigest.orEmpty(),
-                dataSource = if (pulledTag != null) "pulled" else "bundled",
+                dataSource = if (pulled) "pulled" else "bundled",
+                dataCommit = bundle.source.commit.takeIf { DataSource.SHA.matches(it) },
             )
         }
 
@@ -325,7 +355,7 @@ class OwnerData(private val context: Context, private val store: StateStore) {
         }.getOrDefault(emptyList())
 
         /**
-         * The data release the app ships ("2026.10"), for when none is pulled.
+         * The data the app ships ("2026.10"), for when none is pinned yet.
          * Read from the bundled data: its release tag when it names one, else
          * the month of its commit (the release tags are named after it).
          */
