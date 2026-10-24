@@ -65,11 +65,21 @@
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
 
-    <!-- Which IMS stack the phone runs, for video calling's static check (PHH IMS has no video). -->
+    <!--
+        Round 29: the writer permission of the ROM's runtime layer (OcdCarrierSettingsLayer,
+        com.android.carriersettings). signature|knownSigner, pinned to this build's own
+        certificate, so only the owner build gets it; not a privileged permission, so the
+        privapp allowlist is unchanged. On a ROM without the layer the permission does not exist
+        and is ignored.
+    -->
+    <uses-permission android:name="com.android.carriersettings.permission.WRITE_OCD_LAYER" />
+
+    <!-- Which IMS stack the phone runs, for video calling's static check (PHH IMS has no video); the runtime layer's provider. -->
     <queries>
         <intent>
             <action android:name="android.telephony.ims.ImsService" />
         </intent>
+        <provider android:authorities="com.android.carriersettings.ocdlayer" />
     </queries>
 
     <!--

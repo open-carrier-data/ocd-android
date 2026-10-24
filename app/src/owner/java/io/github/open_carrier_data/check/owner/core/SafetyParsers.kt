@@ -43,6 +43,11 @@ object RegistrationParser {
     fun wwanPs(block: String): PsRegistration? = NRI.findAll(block)
         .firstOrNull { it.groupValues[1] == "PS" && it.groupValues[2] == "WWAN" }
         ?.let { PsRegistration(it.groupValues[3].lowercase(), it.groupValues[4].lowercase(), it.groupValues[5].toInt()) }
+
+    /** The circuit-switched (voice) registration on WWAN, the same record with domain CS. */
+    fun wwanCs(block: String): PsRegistration? = NRI.findAll(block)
+        .firstOrNull { it.groupValues[1] == "CS" && it.groupValues[2] == "WWAN" }
+        ?.let { PsRegistration(it.groupValues[3].lowercase(), it.groupValues[4].lowercase(), it.groupValues[5].toInt()) }
 }
 
 @Serializable

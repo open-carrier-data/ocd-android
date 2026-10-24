@@ -165,6 +165,8 @@ class OwnerSession(
     /** Drops one kept value: the slot goes back to the phone's own value for that key. */
     suspend fun dropKeep(feature: OwnerFeature, reason: String): Boolean {
         val kept = store.read().overrides.firstOrNull { it.slot == slot && it.key == feature.key && it.hold == Hold.KEPT } ?: return true
+        // The snapshot first, while the value still counts as kept: taken after the change below, it would see an override the build "did not set".
+        takeSnapshot()
         store.update { s -> s.copy(overrides = s.overrides.map { if (it == kept) it.copy(hold = Hold.TRIAL, keptBefore = null) else it }) }
         return revertTrials("drop keep: $reason")?.ok == true
     }
@@ -206,6 +208,7 @@ class OwnerSession(
             ims = imsReading,
             flags = api?.flags() ?: phoneText?.let { ImsFlags.parse(it, slot) } ?: ImsFlags(),
             ps = RegistrationParser.wwanPs(RegistryText.block(registry, slot)),
+            cs = RegistrationParser.wwanCs(RegistryText.block(registry, slot)),
             lteVops = reg?.lteVops,
             nrVops = reg?.nrVops,
             wifiConnected = phone.wifiConnected(),

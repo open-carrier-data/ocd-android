@@ -132,6 +132,8 @@ class OwnerActions(
     val setCallsOutLive: (Boolean) -> Unit,
     val dryRunCallsOut: () -> Unit,
     val setSelfSms: (Boolean) -> Unit,
+    /** Undo of one entry kept after restart (slot and key), or of all (null, null). */
+    val undoKept: (Int?, String?) -> Unit = { _, _ -> },
 )
 
 /** The options under "When you tap Test now" in Details. Off values run at night on their own. */
@@ -332,6 +334,7 @@ private fun OwnerContent(ui: OwnerUi, options: TestOptions, setOptions: (TestOpt
             }
         }
     }
+    KeptAfterRestart(ui, actions)
 
     var open by rememberSaveable { mutableStateOf(false) }
     Spacer(Modifier.padding(top = 24.dp))
@@ -385,7 +388,7 @@ private fun StatusHeader(ui: OwnerUi, sims: List<SimView>?, status: Status, opti
     // At most one filled button: the action the state calls for.
     val running = ui.stepsToGo > 0
     val paused = ui.state.stop != null
-    val undo = ui.state.anyLive && !running && !paused
+    val undo = ui.state.anyKept && !running && !paused
     val test = ui.canTest
     if (running || paused || undo || test) {
         FlowRow(
@@ -406,6 +409,63 @@ private fun StatusHeader(ui: OwnerUi, sims: List<SimView>?, status: Status, opti
 }
 
 /** A section's title above its card, in Settings' style and inset. */
+/**
+ * Round 29 S11: what Open Carrier Data keeps after a restart in the ROM's runtime layer, read
+ * from CarrierSettings: each entry in plain words with its values, class, level, method,
+ * bearer, build, dates and state, an Undo per entry, Undo all, and the kill-switch note. Only
+ * on a ROM with the layer, and only when it holds something or is stopped.
+ */
+@Composable
+private fun KeptAfterRestart(ui: OwnerUi, actions: OwnerActions) {
+    val kept = ui.kept ?: return
+    val status = ui.layerStatus
+    val any = kept.any { it.lines.isNotEmpty() }
+    if (!any && status?.stop == null) return
+    val two = kept.size > 1
+    for (sim in kept.filter { it.lines.isNotEmpty() }) {
+        SectionTitle(if (two) "Kept after restart on ${sim.name}" else "Kept after restart")
+        Group {
+            for (line in sim.lines) {
+                item {
+                    key(sim.slot, line.key) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            Title(line.title)
+                            Summary(line.state)
+                            line.details.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            TextButton(onClick = { actions.undoKept(sim.slot, line.key) }) { Text("Undo") }
+                        }
+                    }
+                }
+            }
+            item { ToolRow("Undo all kept after restart") { actions.undoKept(null, null) } }
+        }
+    }
+    status?.stop?.let {
+        Text(
+            "Kept after restart is stopped: $it. Nothing goes in until you clear it",
+            style = MaterialTheme.typography.bodyMedium,
+            color = StatusColors.text(Tone.PROBLEM),
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+        )
+    }
+    if (status != null && !status.firstUseDone) {
+        Text(
+            "Until the first-use checks are recorded, only values equal to your phone's own are kept after restart",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+        )
+    }
+    if (any) {
+        Text(
+            io.github.open_carrier_data.check.owner.core.LayerWriter.KILL_SWITCH_NOTE,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+        )
+    }
+}
+
 @Composable
 private fun SectionTitle(title: String) {
     Text(

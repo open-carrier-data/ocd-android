@@ -79,10 +79,16 @@ data class OwnerUi(
     /** The MMS line per SIM ("not checked, the network no longer offers MMS", "access point reachable"). */
     val mmsLines: List<String> = emptyList(),
     val selfSmsLine: String? = null,
+    /** Round 29: what is kept after restart in the ROM's runtime layer, per SIM; null on a ROM without the layer. */
+    val kept: List<KeptSim>? = null,
+    val layerStatus: io.github.open_carrier_data.check.owner.core.LayerStatus? = null,
 ) {
     /** Test now may start: system access, a SIM, nothing running, not paused. */
     val canTest: Boolean get() = gate?.canWrite == true && sims?.isNotEmpty() == true && stepsToGo == 0 && state.stop == null
 }
+
+/** One SIM's entries kept after restart, as the screen lists them. */
+data class KeptSim(val slot: Int, val name: String, val lines: List<io.github.open_carrier_data.check.owner.core.LayerLine>, val otherSims: Int)
 
 class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     private val store = FileStateStore(app)
@@ -116,7 +122,10 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         val zone = java.time.ZoneId.systemDefault()
         val now = System.currentTimeMillis()
         val ended = withContext(Dispatchers.IO) { OwnerMms.ended(context) }
+        val kept = withContext(Dispatchers.IO) { runCatching { kept(state, sims, views, zone) }.getOrNull() }
         _ui.value = _ui.value.copy(
+            kept = kept?.first,
+            layerStatus = kept?.second,
             loaded = true,
             gate = gate,
             state = state,
@@ -134,6 +143,43 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             reportLines = withContext(Dispatchers.IO) { runCatching { reportLines(state, sims, keys) }.getOrDefault(emptyList()) },
             stepsToGo = OwnerScheduler.pending(run),
         )
+    }
+
+    private var keptCache: Pair<Long, Pair<List<KeptSim>?, io.github.open_carrier_data.check.owner.core.LayerStatus>>? = null
+
+    /** The runtime layer's entries per SIM from CarrierSettings, read at most every 15 s (a binder call per SIM). */
+    private fun kept(state: OwnerState, sims: List<OwnerSim>?, views: List<SimView>?, zone: java.time.ZoneId): Pair<List<KeptSim>?, io.github.open_carrier_data.check.owner.core.LayerStatus>? {
+        val now = System.currentTimeMillis()
+        keptCache?.takeIf { now - it.first < 15_000 && now >= it.first }?.let { return it.second }
+        val context = getApplication<Application>()
+        val layer = OwnerLayerStep.client(context)
+        val status = layer.status()
+        val list = if (!status.available) null else sims.orEmpty().map { sim ->
+            val view = layer.list(sim.subId)
+            val name = views?.firstOrNull { it.slot == sim.slot }?.name ?: sim.name
+            KeptSim(
+                sim.slot, name,
+                view?.entries.orEmpty().map { e -> io.github.open_carrier_data.check.owner.core.LayerWriter.describe(e, state.layer.firstOrNull { it.sim.sameCard(sim.key) && it.key == e.key }, zone) },
+                view?.otherSims ?: 0,
+            )
+        }
+        val value = list to status
+        keptCache = now to value
+        return value
+    }
+
+    /** Undo of one entry kept after restart, or of all; remembered until "Test now". Works while roaming. */
+    fun undoKept(slot: Int?, key: String?) {
+        OwnerScheduler.layerUndo(getApplication(), slot, key)
+        keptCache = null
+        say(if (slot == null) "Undoing everything kept after restart" else "Undoing")
+    }
+
+    /** Round 29 S15 check 2 (adb only): the first-use probe entry on the SIM in [slot]. */
+    fun layerProbe(slot: Int) {
+        OwnerScheduler.layerProbe(getApplication(), slot)
+        keptCache = null
+        say("First-use probe queued")
     }
 
     private var candidateCache: Pair<String, Map<Int, Set<String>>>? = null
@@ -286,6 +332,9 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearStop() = viewModelScope.launch {
         store.update { it.copy(stop = null).logged(System.currentTimeMillis(), "stop", "the owner cleared the stop flag") }
+        // The runtime layer's own stop flag is cleared by the same tap (round 29 S9: "until the owner clears the flag").
+        withContext(Dispatchers.IO) { runCatching { OwnerLayerStep.clearStop(getApplication(), store) } }
+        keptCache = null
         say("Changes resumed")
         refresh()
     }
@@ -369,9 +418,14 @@ class OwnerActivity : ComponentActivity() {
             setCallsOutLive = { viewModel.setCallsOutLive(it) },
             dryRunCallsOut = viewModel::dryRunCallsOut,
             setSelfSms = { viewModel.setSelfSms(it) },
+            undoKept = { slot, key -> viewModel.undoKept(slot, key) },
         )
         // `am start ... --ez calls_out_dry_run true` (the activity is guarded by MODIFY_PHONE_STATE): a dry run only, never a call.
         if (intent?.getBooleanExtra(EXTRA_CALLS_OUT_DRY_RUN, false) == true) viewModel.dryRunCallsOut()
+        // Round 29's first-use measurements over adb (scripts/ocd-layer-first-use.sh in the S20 workspace):
+        // `--ei layer_probe 0` puts the probe entry on the SIM in slot 1; `--ez layer_undo_all true` is Undo all.
+        intent?.getIntExtra(EXTRA_LAYER_PROBE, -1)?.takeIf { it in 0..3 }?.let { viewModel.layerProbe(it) }
+        if (intent?.getBooleanExtra(EXTRA_LAYER_UNDO_ALL, false) == true) viewModel.undoKept(null, null)
         setContent {
             OcdCheckTheme {
                 val ui by viewModel.ui.collectAsState()
@@ -382,6 +436,8 @@ class OwnerActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_CALLS_OUT_DRY_RUN = "calls_out_dry_run"
+        const val EXTRA_LAYER_PROBE = "layer_probe"
+        const val EXTRA_LAYER_UNDO_ALL = "layer_undo_all"
     }
 
     private fun openIssue() = viewModel.report { prefilled ->
