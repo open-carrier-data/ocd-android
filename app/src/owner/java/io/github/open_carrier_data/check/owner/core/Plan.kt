@@ -12,21 +12,29 @@ import java.util.concurrent.TimeUnit
  * it) and the static ones (VoNR on the S20's modem, video calling on PHH
  * IMS). The rest need a change, and those run at night, one feature a night:
  * at most one off value and two on values. An entry is due on a trigger (a
- * new SIM, a new data release, a new ROM or app build, a kept value failing,
+ * new SIM, new data values for the SIM, a new ROM or app build, a kept value failing,
  * a switch whose value changed under the app, a test that did not finish)
  * and otherwise in rotation once two weeks old. Two failures in a row pause
- * an entry for four weeks; after a ROM flash or a data release only on
- * values run for two nights. Others' reports (OCD's observed/summary.json,
+ * an entry for four weeks; after a ROM flash or new data values only on
+ * values run for two nights. New data means new values for the SIM, not a
+ * new commit: OCD's main publishes several times a day, and a pin that
+ * changes none of the SIM's OCD answers or APN rows triggers nothing (round
+ * 29 F4, [DataBasis]). Others' reports (OCD's observed/summary.json,
  * [ObservedReports]) only move an entry of this phone's own cell earlier:
  * reported working or contested, and not tested here since, it is due the
  * next night, ahead of the plain rotation. A report never adds, skips,
  * pauses or removes an entry, and the test it moves is the same test.
  */
 
-/** What a test result rests on. A change of any of the three tests every entry again. */
+/** What a test result rests on. A change of any of the three tests the SIM's entries again. */
 @Serializable
 data class TestBasis(
-    /** The data release tag and digest, or "bundled" before the first pull. */
+    /**
+     * Per SIM, what its entries rest on in OCD's data ([DataBasis.key]): its
+     * OCD answers on this phone and the APN rows of its scope. A new pin
+     * changes it only when one of them changed (round 29 F4). Records before
+     * round 29 hold the release tag and digest here.
+     */
     val release: String,
     /** Build.FINGERPRINT and the build time: a new ROM build. */
     val rom: String,
@@ -34,10 +42,13 @@ data class TestBasis(
     val app: String,
 ) {
     fun changesFrom(old: TestBasis): List<String> = buildList {
-        if (release != old.release) add(PlanWhy.NEW_RELEASE)
+        if (release != old.release) add(PlanWhy.NEW_DATA_VALUES)
         if (rom != old.rom) add(PlanWhy.NEW_ROM_BUILD)
         if (app != old.app) add(PlanWhy.NEW_APP_BUILD)
     }
+
+    /** This basis with [sim]'s own data key from [keys] (F4); unchanged when the SIM has none. */
+    fun forSim(keys: Map<SimKey, String>, sim: SimKey): TestBasis = keys[sim]?.let { copy(release = it) } ?: this
 }
 
 /** One entry's last result on one SIM. */
@@ -96,7 +107,8 @@ data class SimCheck(
 object PlanWhy {
     const val NEW_SIM = "new_sim"
     const val NOT_TESTED = "not_tested_yet"
-    const val NEW_RELEASE = "new_data_release"
+    /** A value of the SIM's matched OCD profile or an APN row of its scope changed (round 29 F4), not merely the commit. */
+    const val NEW_DATA_VALUES = "new_data_values"
     const val NEW_ROM_BUILD = "new_rom_build"
     const val NEW_APP_BUILD = "new_app_build"
     const val KEPT_FAILING = "kept_value_failing"
@@ -165,7 +177,7 @@ object QuietPlan {
     const val MAX_OFF_PER_NIGHT = 1
     const val MAX_ON_PER_NIGHT = 2
 
-    /** After a ROM flash or a data release, only on values run for this long. */
+    /** After a ROM flash or new data values for a SIM, only on values run for this long. */
     val ON_ONLY_MS: Long = TimeUnit.DAYS.toMillis(2)
 
     /** A trigger that has waited this long for a night runs in the next silent window, night or not. */
@@ -188,7 +200,9 @@ object QuietPlan {
     /**
      * The entries due now ([Plan]). [known] are the SIMs the owner build has
      * tested before, so a SIM without records is "new" only when it is.
-     * [onOnly]: after a ROM flash or a data release, off values wait.
+     * [onOnly]: after a ROM flash or new data values, off values wait.
+     * [dataKeys]: each SIM's own data key ([DataBasis.key]), put into [basis]
+     * for that SIM, so a new pin triggers only where its values changed.
      * [nightUsed]: tonight's change was made already; only reverts run.
      * [undone]: changes the owner undid; never planned again for their SIM.
      * [reports]: others' reports for each SIM's own cell, by entry
@@ -204,12 +218,14 @@ object QuietPlan {
         nightUsed: Boolean = false,
         undone: List<UndoneEntry> = emptyList(),
         reports: Map<SimKey, Map<String, ReportPointer>> = emptyMap(),
+        dataKeys: Map<SimKey, String> = emptyMap(),
     ): Plan {
         val due = mutableListOf<PlannedEntry>()
         val reverts = mutableListOf<PlannedEntry>()
         val paused = mutableListOf<String>()
         for (check in checks) {
             val key = check.sim.key
+            val simBasis = basis.forSim(dataKeys, key)
             val mine = records.filter { it.sim == key }
             for (feature in check.failingKeeps) {
                 val kept = check.effective[feature] ?: continue
@@ -227,7 +243,7 @@ object QuietPlan {
                 val pointed = !pausedNow && reports[key]?.get(entry)?.let { ObservedReports.unanswered(it, last) } == true
                 val why = when {
                     last == null -> if (mine.isEmpty() && key !in known) PlanWhy.NEW_SIM else PlanWhy.NOT_TESTED
-                    else -> basis.changesFrom(last.basis).firstOrNull()
+                    else -> simBasis.changesFrom(last.basis).firstOrNull()
                         ?: PlanWhy.VALUE_CHANGED.takeIf { last.effective != null && now != null && now != last.effective }
                         ?: PlanWhy.RETRY.takeIf { last.works == null && nowMs - last.atMs >= RETRY_AFTER_MS }
                         ?: PlanWhy.ROTATION.takeIf { nowMs - last.atMs >= ROTATION_AGE_MS || nowMs < last.atMs }

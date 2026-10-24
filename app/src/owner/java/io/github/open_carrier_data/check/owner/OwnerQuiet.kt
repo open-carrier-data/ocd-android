@@ -19,14 +19,20 @@ import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import androidx.work.ExistingWorkPolicy
 import io.github.open_carrier_data.check.BuildConfig
+import io.github.open_carrier_data.check.core.OcdBundle
+import io.github.open_carrier_data.check.owner.core.DataBasis
 import io.github.open_carrier_data.check.owner.core.Hold
 import io.github.open_carrier_data.check.owner.core.Interrupt
+import io.github.open_carrier_data.check.owner.core.OcdApnRow
+import io.github.open_carrier_data.check.owner.core.OwnerRunner
+import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerPhone
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.PowerDump
 import io.github.open_carrier_data.check.owner.core.QuietInputs
 import io.github.open_carrier_data.check.owner.core.QuietWindow
 import io.github.open_carrier_data.check.owner.core.RegistryText
+import io.github.open_carrier_data.check.owner.core.SimKey
 import io.github.open_carrier_data.check.owner.core.TestBasis
 import kotlinx.coroutines.delay
 import java.io.File
@@ -160,15 +166,30 @@ class RevertAlarmReceiver : BroadcastReceiver() {
 
 internal fun OwnerState.trialsLive(): Boolean = overrides.any { it.hold == Hold.TRIAL } || apns.any { it.hold == Hold.TRIAL }
 
-/** What the results rest on: the data release, the ROM build, the app build ([TestBasis]). */
+/** What the results rest on: the SIM's OCD data, the ROM build, the app build ([TestBasis]). */
 object OwnerBasis {
+    /**
+     * The ROM and app build, with the data the app holds as [TestBasis.release]
+     * (the pinned main commit, or "bundled"). A record takes the SIM's own data
+     * key instead ([dataKeys], [TestBasis.forSim]); the ROM build alone is what
+     * the calls code reads.
+     */
     fun current(context: Context, state: OwnerState): TestBasis {
-        val release = state.release?.let { "${it.tag}@${it.dataDigest.take(19)}" } ?: "bundled"
         val apk = File(context.applicationInfo.sourceDir)
         return TestBasis(
-            release = release,
+            release = state.pin?.let { "main@${it.commit.take(12)}" } ?: "bundled",
             rom = "${Build.FINGERPRINT}@${Build.TIME}",
             app = "${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE})/${apk.length()}/${apk.lastModified()}",
         )
     }
+
+    /** Round 29 F4: each SIM's own data key: its OCD answers on this phone and OCD's APN rows of its scope ([rows]). */
+    fun dataKeys(context: Context, bundle: OcdBundle, sims: List<OwnerSim>, rows: (OwnerSim) -> List<OcdApnRow>): Map<SimKey, String> {
+        val device = OwnerWorker.device(context)
+        return sims.associate { sim -> sim.key to DataBasis.key(OwnerRunner.answers(bundle, sim, device), rows(sim), sim.identity) }
+    }
+
+    /** The basis one SIM's results are recorded against. */
+    fun forSim(context: Context, state: OwnerState, bundle: OcdBundle, sim: OwnerSim, rows: List<OcdApnRow>): TestBasis =
+        current(context, state).forSim(dataKeys(context, bundle, listOf(sim)) { rows }, sim.key)
 }

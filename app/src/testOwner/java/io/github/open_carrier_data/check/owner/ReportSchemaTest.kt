@@ -48,16 +48,19 @@ class ReportSchemaTest {
 
     private val digest = "sha256:36d5f7ebb084a1a915c4961f8a5f3a11c70150b0fca7f68ccc050ffbe3989d37"
     private val profile = "open.26202.8cebd7550c67"
+
+    /** The main commit the owner build pinned (round 29 S13: the report names it instead of a release tag). */
+    private val commit = "e32fd75687d01e7271b640c3adb41c52d42af6a8"
     private val cell = ReportCell(
         model = "SM-G981B", codename = "x1s", androidMajor = 16, romFamily = "lineageos", buildType = "userdebug", imsStack = "phh_ims",
-        spn = "LIDL Connect", appVersion = "0.3.0-owner", dataRelease = "data-2026.10", dataDigest = digest, dataSource = "pulled",
+        spn = "LIDL Connect", appVersion = "0.3.0-owner", dataDigest = digest, dataSource = "pulled", dataCommit = commit,
     )
     private val ocdOn = OcdAnswer(true, "device_record", profile, recordSource = "samsung_omc", recordStack = "stock", sameStack = false)
 
     /** The S20 with the LIDL SIM on 2026-10-20 (as OverviewTest's run ee4601a5), with OCD's APN rows and an off test of Wi-Fi calling. */
     private fun s20Run() = RunResult(
         id = "ee4601a5", startedMs = 1_792_456_340_000L, scheduled = false, sim = SimKey(3, "26202", 2397), simName = "LIDL Connect",
-        profileId = profile, releaseTag = "data-2026.10",
+        profileId = profile, releaseTag = "main e32fd75687d0 (2026-10-24)",
         features = listOf(
             FeatureResult(OwnerFeature.VOLTE, true, true, ocdOn, offReason = "off_tests_not_chosen", best = true, method = "wfc_override", freshRegister = true, restored = true),
             FeatureResult(OwnerFeature.SMS_OVER_IMS, true, true, OcdAnswer(true, "carrier_profile", profile, capability = "supported"), offReason = "off_tests_not_chosen", best = true),
@@ -127,7 +130,7 @@ class ReportSchemaTest {
         // No value anywhere: no APN string beyond the row key, no CarrierConfig key, no Markdown.
         val text = IssueReport.text(report)
         for (forbidden in listOf("carrier_volte_available_bool", "\"apn\":", "mmsc", "|---|", "| Feature")) assertFalse(forbidden, forbidden in text)
-        assertEquals("""{"tag":"data-2026.10","data_digest":"$digest"}""", report.getValue("release").toString())
+        assertEquals("""{"commit":"$commit","data_digest":"$digest"}""", report.getValue("release").toString())
     }
 
     @Test
@@ -189,10 +192,30 @@ class ReportSchemaTest {
         assertNull(IssueReport.report(s20Run().copy(features = emptyList(), apns = emptyList()), cell, calls))
         assertNull(IssueReport.url(s20Run(), cell.copy(spn = "+491701234567"), calls))
         assertNull(IssueReport.url(s20Run(), cell.copy(spn = "sip:4917012345@ims"), calls))
-        // A bundled snapshot names no tag; the bot finds the release by its digest.
-        val bundled = IssueReport.report(s20Run(), cell.copy(dataRelease = null, dataSource = "bundled"), calls)!!
+        // A bundled snapshot names the commit it was built from.
+        val bundledCommit = "8cb64d63d9a482a40f43a10b37744241f9526e0e"
+        val bundled = IssueReport.report(s20Run(), cell.copy(dataSource = "bundled", dataCommit = bundledCommit), calls)!!
+        assertEquals("""{"commit":"$bundledCommit","data_digest":"$digest"}""", bundled.getValue("release").toString())
+        assertEquals(emptyList<String>(), SchemaSubset.problems(bundled, schema))
+    }
+
+    @Test
+    fun `a run recorded before round 29 still names its release, which the public schema still takes`() {
+        val old = IssueReport.report(s20Run(), cell.copy(dataCommit = null, dataRelease = "data-2026.10"), calls)!!
+        assertEquals("""{"tag":"data-2026.10","data_digest":"$digest"}""", old.getValue("release").toString())
+        assertEquals(emptyList<String>(), SchemaSubset.problems(old, schema))
+        // A bundled snapshot of then named no tag; the bot finds the release by its digest.
+        val bundled = IssueReport.report(s20Run(), cell.copy(dataCommit = null, dataRelease = null, dataSource = "bundled"), calls)!!
         assertEquals(JsonNull, bundled.getValue("release").jsonObject["tag"])
         assertEquals(emptyList<String>(), SchemaSubset.problems(bundled, schema))
+        // Something that is no full commit is never written as one.
+        val short = IssueReport.report(s20Run(), cell.copy(dataCommit = commit.take(12), dataRelease = null), calls)!!
+        assertNull(short.getValue("release").jsonObject["commit"])
+        // The schema takes one form or the other, never both, and no commit of another shape.
+        fun withRelease(release: String) = JsonObject(old + ("release" to Json.parseToJsonElement(release)))
+        assertTrue(SchemaSubset.problems(withRelease("""{"commit":"$commit","tag":"data-2026.10","data_digest":"$digest"}"""), schema).any { "release" in it })
+        assertTrue(SchemaSubset.problems(withRelease("""{"commit":"main","data_digest":"$digest"}"""), schema).any { "release" in it })
+        assertTrue(SchemaSubset.problems(withRelease("""{"commit":"$commit"}"""), schema).any { "release" in it })
     }
 
     @Test

@@ -688,7 +688,8 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
                     .padding(start = 16.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                val tag = state.release?.tag?.removePrefix("data-") ?: ui.bundledTag
+                // The pinned main commit's date (round 29), else the bundled snapshot's month.
+                val tag = state.pin?.commitDate?.take(10) ?: ui.bundledTag
                 Title(if (tag != null) "Carrier data $tag" else "Carrier data", Modifier.weight(1f))
                 TextButton(onClick = actions.pull) { Text("Check for update") }
             }
