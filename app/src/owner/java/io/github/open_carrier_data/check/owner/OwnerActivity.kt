@@ -442,17 +442,8 @@ class OwnerActivity : ComponentActivity() {
             saveToken = { text, done -> viewModel.saveToken(text, done) },
             removeToken = { viewModel.removeToken() },
         )
-        // `am start ... --ez calls_out_dry_run true` (the activity is guarded by MODIFY_PHONE_STATE): a dry run only, never a call.
-        if (intent?.getBooleanExtra(EXTRA_CALLS_OUT_DRY_RUN, false) == true) viewModel.dryRunCallsOut()
-        // Round 30's emergency data test, first use over adb with `adb logcat` streamed: `--ei emergency_data_test 0` runs one
-        // session on the SIM in slot 1 (no call, nothing sent); `--es emergency_data_first_use passed` (or not_meaningful) records
-        // the owner's reading of the radio log. Once per start of the activity.
-        if (savedInstanceState == null) intent?.getIntExtra(EXTRA_EMERGENCY_DATA_TEST, -1)?.takeIf { it in 0..3 }?.let { viewModel.emergencyData(it) }
-        if (savedInstanceState == null) intent?.getStringExtra(EXTRA_EMERGENCY_DATA_FIRST_USE)?.let { viewModel.emergencyFirstUse(it) }
-        // `--ez self_sms_now true` is "Send a test SMS now"; once per start, never again when the activity is recreated, as it may cost an SMS.
-        if (savedInstanceState == null && intent?.getBooleanExtra(EXTRA_SELF_SMS_NOW, false) == true) viewModel.selfSmsNow()
-        // `--ez test_now true` is "Test now" with the screen's default options (pull, hand over, install and test, now); once per start.
-        if (savedInstanceState == null) testNowExtra(intent)
+        // The adb extras, once per start: never again when the activity is recreated (one may cost an SMS).
+        if (savedInstanceState == null) extras(intent)
         // The screen reads the state while it is shown only; with the screen off or the page closed, nothing polls.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -470,18 +461,31 @@ class OwnerActivity : ComponentActivity() {
         }
     }
 
-    /** `am start` on a running page brings a new intent here when the task is reused; "Test now" from adb works then too. */
+    /** `am start` on an open page (singleTop) brings its intent here; the adb extras work then too. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        testNowExtra(intent)
+        extras(intent)
     }
 
-    private fun testNowExtra(intent: Intent?) {
-        if (intent?.getBooleanExtra(EXTRA_TEST_NOW, false) != true) return
-        val options = TestOptions()
-        Log.i(TEST_NOW_TAG, "test now requested by intent")
-        viewModel.test(options.offs, options.voice, options.apns)
+    /** The adb extras (the activity is guarded by MODIFY_PHONE_STATE, which the shell holds). */
+    private fun extras(intent: Intent?) {
+        intent ?: return
+        // `--ez calls_out_dry_run true`: a dry run only, never a call.
+        if (intent.getBooleanExtra(EXTRA_CALLS_OUT_DRY_RUN, false)) viewModel.dryRunCallsOut()
+        // Round 30's emergency data test, first use over adb with `adb logcat` streamed: `--ei emergency_data_test 0` runs one
+        // session on the SIM in slot 1 (no call, nothing sent); `--es emergency_data_first_use passed` (or not_meaningful) records
+        // the owner's reading of the radio log.
+        intent.getIntExtra(EXTRA_EMERGENCY_DATA_TEST, -1).takeIf { it in 0..3 }?.let { viewModel.emergencyData(it) }
+        intent.getStringExtra(EXTRA_EMERGENCY_DATA_FIRST_USE)?.let { viewModel.emergencyFirstUse(it) }
+        // `--ez self_sms_now true` is "Send a test SMS now"; it may cost an SMS.
+        if (intent.getBooleanExtra(EXTRA_SELF_SMS_NOW, false)) viewModel.selfSmsNow()
+        // `--ez test_now true` is "Test now" with the screen's default options: pull, hand over, install and test, now.
+        if (intent.getBooleanExtra(EXTRA_TEST_NOW, false)) {
+            val options = TestOptions()
+            Log.i(TEST_NOW_TAG, "test now requested by intent")
+            viewModel.test(options.offs, options.voice, options.apns)
+        }
     }
 
     companion object {
