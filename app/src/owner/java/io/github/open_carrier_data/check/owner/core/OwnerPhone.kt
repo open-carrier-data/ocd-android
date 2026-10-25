@@ -70,6 +70,19 @@ interface OwnerPhone {
     /** Clears the slot's overrides. */
     suspend fun ccClear(slot: Int, subId: Int): CcResult
 
+    /**
+     * Round 30's override trials: one non-persistent override of several typed keys at once
+     * (a null value is Android's default for the key). Implementations check [TrialGuard] again.
+     * Only the privileged route can set typed bundles; the Shizuku route answers not supported.
+     */
+    suspend fun ccSetBundle(slot: Int, subId: Int, values: Map<String, TypedOverride>): CcResult = CcResult(false, "not_supported_on_this_route")
+
+    /**
+     * `dumpsys activity service com.android.phone`, for the emergency data test's readings
+     * (DataConfigManager, AccessNetworksManager, DataRetryManager); null when unreadable.
+     */
+    suspend fun telephonyText(): String? = phoneText()
+
     suspend fun apnQuery(numeric: String): List<PhoneApnRow>?
 
     /** Rows whose name carries [ApnColumns.MARKER], for every network code. Read only: the owner build never deletes by marker. */

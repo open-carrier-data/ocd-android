@@ -66,20 +66,28 @@
         tools:ignore="ProtectedPermissions" />
 
     <!--
-        Round 29: the writer permission of the ROM's runtime layer (OcdCarrierSettingsLayer,
-        com.android.carriersettings). signature|knownSigner, pinned to this build's own
-        certificate, so only the owner build gets it; not a privileged permission, so the
-        privapp allowlist is unchanged. On a ROM without the layer the permission does not exist
-        and is ignored.
+        Round 30: the emergency data test requests NET_CAPABILITY_EIMS, a restricted network.
+        signature|privileged: granted only with the owner build's privapp file (owner build only).
     -->
-    <uses-permission android:name="com.android.carriersettings.permission.WRITE_OCD_LAYER" />
+    <uses-permission
+        android:name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS"
+        tools:ignore="ProtectedPermissions" />
 
-    <!-- Which IMS stack the phone runs, for video calling's static check (PHH IMS has no video); the runtime layer's provider. -->
+    <!--
+        Round 30: the writer permission of CarrierSettings's dataset installer
+        (content://com.android.carriersettings.ocddata). signature|knownSigner, pinned to this
+        build's own certificate (round 29's array, renamed), so only the owner build gets it; not
+        a privileged permission, so it needs no privapp entry. On a ROM without the installer the
+        permission does not exist and is ignored. Round 29's WRITE_OCD_LAYER is gone with the layer.
+    -->
+    <uses-permission android:name="com.android.carriersettings.permission.WRITE_OCD_DATASET" />
+
+    <!-- Which IMS stack the phone runs, for video calling's static check (PHH IMS has no video); the dataset installer's provider. -->
     <queries>
         <intent>
             <action android:name="android.telephony.ims.ImsService" />
         </intent>
-        <provider android:authorities="com.android.carriersettings.ocdlayer" />
+        <provider android:authorities="com.android.carriersettings.ocddata" />
     </queries>
 
     <!--
@@ -149,8 +157,9 @@
             android:exported="true"
             tools:ignore="ExportedContentProvider" />
 
+        <!-- The notification's "Stop test" and "Safe mode" (round 30 removed Undo). -->
         <receiver
-            android:name=".owner.RevertAllReceiver"
+            android:name=".owner.NoticeActionReceiver"
             android:exported="false" />
 
         <!-- The revert alarm armed before each background change: queues the cleanup if a step died. -->

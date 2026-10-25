@@ -525,9 +525,8 @@ object CallsOutPlan {
                 val bearer = CallLevels.bearerOf(feature) ?: continue
                 if (state.callsOutNights.any { it.sim.sameCard(sim.key) && it.feature == feature && it.bearer == bearer && it.night == night }) continue
                 val provisional = state.provisional.firstOrNull { it.sim.sameCard(sim.key) && it.feature == feature && it.callsOutAtMs == null }
-                // A voice value kept as an override, or kept after restart in the runtime layer (its weekly calls out renews it).
-                val kept = state.overrides.any { it.hold == Hold.KEPT && it.slot == sim.slot && it.sim.sameCard(sim.key) && it.key == feature.key && it.value } ||
-                    state.layer.any { it.sim.sameCard(sim.key) && it.key == feature.key && it.boolValue == true && it.removing == null }
+                // A voice value kept as an override (builds before round 30; its weekly calls out renews it).
+                val kept = state.overrides.any { it.hold == Hold.KEPT && it.slot == sim.slot && it.sim.sameCard(sim.key) && it.key == feature.key && it.value }
                 val on = switches[sim.key]?.get(feature) == true
                 val why = when {
                     provisional != null &&

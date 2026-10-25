@@ -41,6 +41,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -124,7 +125,6 @@ class OwnerActions(
     val back: () -> Unit,
     val testNow: (TestOptions) -> Unit,
     val stopTest: () -> Unit,
-    val revertAll: () -> Unit,
     val pull: () -> Unit,
     val setSchedule: (Boolean) -> Unit,
     val checkNow: () -> Unit,
@@ -139,8 +139,8 @@ class OwnerActions(
     val setSelfSms: (Boolean) -> Unit,
     /** One test SMS to the phone's own number now. */
     val selfSmsNow: () -> Unit = {},
-    /** Undo of one entry kept after restart (slot and key), or of all (null, null). */
-    val undoKept: (Int?, String?) -> Unit = { _, _ -> },
+    /** Round 30: safe mode on or off, through CarrierSettings (which owns it). */
+    val setSafeMode: (Boolean) -> Unit = {},
     /** Round 29: stores the owner's token for automatic reports; the callback says whether it was stored. */
     val saveToken: (String, (Boolean) -> Unit) -> Unit = { _, _ -> },
     val removeToken: () -> Unit = {},
@@ -344,7 +344,7 @@ private fun OwnerContent(ui: OwnerUi, options: TestOptions, setOptions: (TestOpt
             }
         }
     }
-    KeptAfterRestart(ui, actions)
+    CarrierData(ui, actions)
 
     var open by rememberSaveable { mutableStateOf(false) }
     Spacer(Modifier.padding(top = 24.dp))
@@ -398,9 +398,8 @@ private fun StatusHeader(ui: OwnerUi, sims: List<SimView>?, status: Status, opti
     // At most one filled button: the action the state calls for.
     val running = ui.stepsToGo > 0
     val paused = ui.state.stop != null
-    val undo = ui.state.anyKept && !running && !paused
     val test = ui.canTest
-    if (running || paused || undo || test) {
+    if (running || paused || test) {
         FlowRow(
             Modifier.padding(top = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -409,10 +408,7 @@ private fun StatusHeader(ui: OwnerUi, sims: List<SimView>?, status: Status, opti
             when {
                 running -> OutlinedButton(onClick = actions.stopTest) { Text("Stop test") }
                 paused -> Button(onClick = actions.clearStop) { Text("Resume changes") }
-                else -> {
-                    if (undo) Button(onClick = actions.revertAll) { Text("Undo changes") }
-                    if (test) FilledTonalButton(onClick = { actions.testNow(options) }) { Text("Test now") }
-                }
+                else -> if (test) FilledTonalButton(onClick = { actions.testNow(options) }) { Text("Test now") }
             }
         }
     }
@@ -420,58 +416,51 @@ private fun StatusHeader(ui: OwnerUi, sims: List<SimView>?, status: Status, opti
 
 /** A section's title above its card, in Settings' style and inset. */
 /**
- * Round 29 S11: what Open Carrier Data keeps after a restart in the ROM's runtime layer, read
- * from CarrierSettings: each entry in plain words with its values, class, level, method,
- * bearer, build, dates and state, an Undo per entry, Undo all, and the kill-switch note. Only
- * on a ROM with the layer, and only when it holds something or is stopped.
+ * Round 30: the carrier data on the phone, as CarrierSettings reports it: whether the newest data
+ * or the ROM's own serves, safe mode (CarrierSettings's own switch, which also works without this
+ * app and while roaming), a pause after a stop event, and the tests. Undo is gone (round 30).
  */
 @Composable
-private fun KeptAfterRestart(ui: OwnerUi, actions: OwnerActions) {
-    val kept = ui.kept ?: return
-    val status = ui.layerStatus
-    val any = kept.any { it.lines.isNotEmpty() }
-    if (!any && status?.stop == null) return
-    val two = kept.size > 1
-    for (sim in kept.filter { it.lines.isNotEmpty() }) {
-        SectionTitle(if (two) "Kept after restart on ${sim.name}" else "Kept after restart")
-        Group {
-            for (line in sim.lines) {
-                item {
-                    key(sim.slot, line.key) {
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            Title(line.title)
-                            Summary(line.state)
-                            line.details.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                            TextButton(onClick = { actions.undoKept(sim.slot, line.key) }) { Text("Undo") }
-                        }
+private fun CarrierData(ui: OwnerUi, actions: OwnerActions) {
+    val words = io.github.open_carrier_data.check.owner.core.DatasetWords.of(ui.dataset, ui.state)
+    var confirm by remember { mutableStateOf(false) }
+    SectionTitle(words.title)
+    Group {
+        for ((i, line) in words.lines.withIndex()) {
+            item {
+                key("dataset", i) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        if (i == 0) Title(line) else Summary(line)
                     }
                 }
             }
-            item { ToolRow("Undo all kept after restart") { actions.undoKept(null, null) } }
+        }
+        if (words.available) {
+            item {
+                ToolRow(if (words.safeModeOn) "Turn off safe mode" else "Turn on safe mode") { confirm = true }
+            }
         }
     }
-    status?.stop?.let {
+    words.halted?.let {
         Text(
-            "Kept after restart is stopped: $it. Nothing goes in until you clear it",
+            "Tests and changes are paused: $it. Tap Resume changes when calls work",
             style = MaterialTheme.typography.bodyMedium,
             color = StatusColors.text(Tone.PROBLEM),
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
         )
     }
-    if (status != null && !status.firstUseDone) {
-        Text(
-            "Until the first-use checks are recorded, only values equal to your phone's own are kept after restart",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
-        )
-    }
-    if (any) {
-        Text(
-            io.github.open_carrier_data.check.owner.core.LayerWriter.KILL_SWITCH_NOTE,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text(if (words.safeModeOn) "Turn off safe mode?" else "Turn on safe mode?") },
+            text = {
+                Text(
+                    if (words.safeModeOn) "The newest Open Carrier Data serves again, and tests start again when the phone is idle"
+                    else "The ROM's own carrier data and access point names serve, and tests stop until you turn safe mode off. It also works in Settings without this app",
+                )
+            },
+            confirmButton = { TextButton(onClick = { confirm = false; actions.setSafeMode(!words.safeModeOn) }) { Text(if (words.safeModeOn) "Turn off" else "Turn on") } },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } },
         )
     }
 }
@@ -828,7 +817,7 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
             Summary(
                 "Never touches emergency calling. Nothing changes during a call, while roaming, or within 10 minutes of an emergency call. " +
                     "The only number it ever calls is your own mailbox, muted, at night. " +
-                    "Undo changes always brings back your phone's own settings",
+                    "Safe mode always brings back the ROM's own carrier data, also without this app",
                 Modifier.padding(16.dp),
             )
         }

@@ -174,20 +174,13 @@ object OwnerSelfSms {
 
     private fun record(store: FileStateStore, check: SelfSmsCheck) = store.updateLocked { it.copy(selfSms = SelfSms.add(it.selfSms, check)) }
 
-    /**
-     * One change of the ledger under the state lock; [line] is logged with it when given. When
-     * the change settles SMS both ways for [nonce] ([SelfSms.settles]), the runtime layer's step
-     * looks at once, as the SMS class check now passes.
-     */
+    /** One change of the ledger under the state lock; [line] is logged with it when given. */
     fun change(context: Context, store: FileStateStore, nonce: String, atMs: Long, line: ((SelfSmsCheck?) -> String?)?, change: (List<SelfSmsCheck>) -> List<SelfSmsCheck>) {
-        var settled = false
         store.updateLocked { s ->
             val next = change(s.selfSms)
-            settled = SelfSms.settles(s.selfSms, next, nonce)
             val text = line?.invoke(next.lastOrNull { it.nonce == nonce })
             s.copy(selfSms = next).let { if (text != null) it.logged(atMs, "self_sms", text) else it }
         }
-        if (settled) OwnerScheduler.layerStep(context)
     }
 
     /** Telephony's answer to the send can come a moment after the SMS itself: up to [SENT_WAIT_MS] for it. */

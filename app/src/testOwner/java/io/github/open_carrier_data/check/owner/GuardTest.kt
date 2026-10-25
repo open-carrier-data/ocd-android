@@ -191,6 +191,18 @@ class GuardTest {
     }
 
     @Test
+    fun `round 30 - typed override bundles go through the trial guard on the privileged route, and the Shizuku route sets none`() {
+        val access = ownerSources.single { it.name == "OwnerAccess.kt" }.readText()
+        val body = access.substringAfter("override suspend fun ccSetBundle(").substringBefore("override suspend fun telephonyText(")
+        assertTrue(body.indexOf("TrialGuard.check(values.keys)") in 0 until body.indexOf("overrideConfig("))
+        // Only the privileged route overrides a bundle; the interface's default refuses.
+        assertEquals(listOf("OwnerAccess.kt", "OwnerPhone.kt"), ownerSources.filter { "fun ccSetBundle(" in it.readText() }.map { it.name }.sorted())
+        assertTrue("CcResult(false, \"not_supported_on_this_route\")" in ownerSources.single { it.name == "OwnerPhone.kt" }.readText())
+        // The round 29 layer client is gone.
+        assertTrue(ownerSources.none { "com.android.carriersettings.ocdlayer" in it.readText() || "WRITE_OCD_LAYER" in it.readText() })
+    }
+
+    @Test
     fun `only the two routes start a process, each from an OwnerCommand argv`() {
         val starters = Regex("ProcessBuilder|Runtime\\.getRuntime|\\.exec\\(")
         val users = ownerSources.filter { starters.containsMatchIn(it.readText()) }.map { it.name }.sorted()

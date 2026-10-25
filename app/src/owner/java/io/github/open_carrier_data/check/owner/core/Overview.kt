@@ -14,7 +14,7 @@ import java.time.temporal.ChronoUnit
  *
  * Vocabulary: "check" is read-only, "test" changes a setting for a while,
  * "changes" are what Open Carrier Data keeps, and the way back is always
- * "Undo changes". Mobile data uses Android's own "access point names".
+ * "safe mode" (round 30; Undo is gone). Mobile data uses Android's own "access point names".
  */
 
 /** One active SIM as the screen names it: the name Settings shows, and what ties it to the state's records. */
@@ -108,9 +108,8 @@ object Ladders {
         val result = state.runs.lastOrNull { run -> run.sim?.let(sim::owns) == true && run.features.any { it.feature == feature } }
             ?.features?.lastOrNull { it.feature == feature }
         val overrides = state.overrides.filter { it.slot == sim.slot && sim.owns(it.sim) && it.key == feature.key }
-        // A value kept as an override, else one kept after restart in the runtime layer (round 29).
-        val layered = state.heldSwitches().lastOrNull { it.layer != null && it.slot == sim.slot && sim.owns(it.sim) && it.key == feature.key }
-        val kept = overrides.lastOrNull { it.hold == Hold.KEPT }?.value ?: layered?.value
+        // A value kept as an override (builds before round 30; round 30 keeps none).
+        val kept = overrides.lastOrNull { it.hold == Hold.KEPT }?.value
         val trial = overrides.any { it.hold == Hold.TRIAL }
 
         val onReason = on?.outcome ?: result?.onReason
@@ -145,7 +144,6 @@ object Ladders {
         }
         // A changed voice value kept for now: calls out first, then incoming (round 26 check 6).
         val keptText = when {
-            layered?.layer == LayerLevel.PROVISIONAL && overrides.none { it.hold == Hold.KEPT } -> "Switched on by Open Carrier Data, calls out work, incoming not yet seen"
             provisional == null -> "Switched on by Open Carrier Data"
             provisional.callsOutAtMs == null -> "Switched on by Open Carrier Data, calls out not checked yet"
             else -> "Switched on by Open Carrier Data, calls out work, incoming not yet seen"
@@ -327,7 +325,7 @@ object CheckedLine {
                 else -> "Tap Test now to start"
             }
             status.kind == StatusKind.FAILED -> if (scheduleOn) "Nothing to do. It tries again tonight" else "Nothing to do"
-            status.kind == StatusKind.KEPT_BROKEN -> "Tap Undo changes to go back"
+            status.kind == StatusKind.KEPT_BROKEN -> "Turn on safe mode to go back to the ROM's own data"
             status.kind == StatusKind.OWN_NOT_SIGNED_IN && canTest && checked != null -> "$checked. Tap Test now to look for a fix"
             checked == null -> null
             sims.orEmpty().size > 1 -> "$checked on ${joinAnd(sims.orEmpty().map { it.name }.distinct())}"

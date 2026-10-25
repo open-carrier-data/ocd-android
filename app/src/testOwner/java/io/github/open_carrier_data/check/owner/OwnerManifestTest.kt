@@ -33,15 +33,17 @@ class OwnerManifestTest {
             "android.permission.INTERNET", "android.permission.POST_NOTIFICATIONS", "android.permission.RECEIVE_BOOT_COMPLETED",
             "android.permission.MODIFY_PHONE_STATE", "android.permission.READ_PRIVILEGED_PHONE_STATE", "android.permission.READ_PRECISE_PHONE_STATE",
             "android.permission.WRITE_APN_SETTINGS", "android.permission.DUMP", "android.permission.PACKAGE_USAGE_STATS",
-            // Round 29: the runtime layer's writer permission (signature|knownSigner in CarrierSettings, not privileged).
-            "com.android.carriersettings.permission.WRITE_OCD_LAYER",
+            // Round 30: the dataset installer's writer permission (signature|knownSigner in CarrierSettings, not privileged),
+            // and the emergency data test's restricted network (privileged, in the privapp file).
+            "com.android.carriersettings.permission.WRITE_OCD_DATASET", "android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS",
         ) + ROUND_26_RUNTIME + ROUND_26_NORMAL
         val readOnly = setOf("android.permission.READ_PHONE_STATE", "android.permission.ACCESS_NETWORK_STATE", "moe.shizuku.manager.permission.API_V23")
         // WorkManager's own: wake lock and its foreground service (never started by the owner build).
         val work = setOf("android.permission.WAKE_LOCK", "android.permission.FOREGROUND_SERVICE")
         assertEquals(emptySet<String>(), requested - own - readOnly - work)
         assertTrue((own + readOnly).all { it in requested })
-        // 2026-10-20: no device log, no Wi-Fi switching.
+        // 2026-10-20: no device log, no Wi-Fi switching. Round 30: the round 29 layer's permission is gone.
+        assertTrue("com.android.carriersettings.permission.WRITE_OCD_LAYER" !in requested)
         assertTrue("android.permission.READ_LOGS" !in requested)
         assertTrue("android.permission.CHANGE_WIFI_STATE" !in requested)
     }
@@ -63,7 +65,7 @@ class OwnerManifestTest {
         // Settings' summary provider: guarded by the calling uid in code, as call() checks no manifest permission.
         assertEquals("", exported["io.github.open_carrier_data.check.owner.OwnerSettingsProvider"])
         assertTrue("io.github.open_carrier_data.check.owner.OwnerBootReceiver" in exported)
-        assertTrue("io.github.open_carrier_data.check.owner.RevertAllReceiver" !in exported)
+        assertTrue("io.github.open_carrier_data.check.owner.NoticeActionReceiver" !in exported)
         assertTrue("io.github.open_carrier_data.check.owner.RevertAlarmReceiver" !in exported)
         // Round 26: only the system sends these (PHONE_STATE to privileged phone-state holders, the data SMS with BROADCAST_SMS).
         assertEquals("android.permission.READ_PRIVILEGED_PHONE_STATE", exported["io.github.open_carrier_data.check.owner.PhoneStateReceiver"])
@@ -120,12 +122,21 @@ class OwnerManifestTest {
             "android.permission.READ_PHONE_STATE", "android.permission.ACCESS_NETWORK_STATE",
             "moe.shizuku.manager.permission.API_V23", "android.permission.WAKE_LOCK", "android.permission.FOREGROUND_SERVICE",
             // signature|knownSigner in the ROM's CarrierSettings, pinned to the owner certificate: no privapp entry.
-            "com.android.carriersettings.permission.WRITE_OCD_LAYER",
+            "com.android.carriersettings.permission.WRITE_OCD_DATASET",
         ) + ROUND_26_RUNTIME + ROUND_26_NORMAL
         val requested = elements("uses-permission").filter { it.getAttributeNS(tools, "node") != "remove" }.map { it.getAttributeNS(android, "name") }.toSet()
         assertEquals(emptySet<String>(), requested - notPrivileged - listed)
         // Round 26 added no privileged permission: the XML on the phone stays as it is (a mismatch would stop the ROM at boot).
         assertTrue(ROUND_26_RUNTIME.none { it in listed } && ROUND_26_NORMAL.none { it in listed })
+        // Round 30 added exactly one, for the emergency data test; the XML and the APK go together into vendor/extra.
+        assertTrue("android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" in listed && "android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" in requested)
+        assertEquals(7, listed.size)
+    }
+
+    @Test
+    fun `the queries name the dataset installer, not the round 29 layer`() {
+        val providers = elements("provider").filter { (it.parentNode as? Element)?.tagName == "queries" }.map { it.getAttributeNS(android, "authorities") }
+        assertEquals(listOf("com.android.carriersettings.ocddata"), providers)
     }
 
     @Test

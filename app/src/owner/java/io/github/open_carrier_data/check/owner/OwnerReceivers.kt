@@ -23,12 +23,12 @@ import io.github.open_carrier_data.check.owner.core.StatusSentence
 
 /**
  * The owner hears little (2026-10-20, "so the user does not notice it that
- * much"). While a test runs or a change is kept, a quiet notification (the
- * lowest importance: no sound, no status-bar icon, folded at the bottom of
- * the shade) says so with one action: "Stop test" while a test runs, "Undo
- * changes" while changes are kept (round 25 OB5). Neither starts a test.
- * Routine work posts nothing. A normal notification comes only when a kept
- * value came or went, or when something failed ([Notices]).
+ * much"). While a test runs, a quiet notification (the lowest importance: no
+ * sound, no status-bar icon, folded at the bottom of the shade) says so with
+ * "Stop test" and "Safe mode". Round 30 removed Undo: the way back is safe
+ * mode, which CarrierSettings provides and which works without this app.
+ * Routine work posts nothing. A normal notification comes only when a value
+ * changed or something failed ([Notices]); a failure carries "Safe mode" too.
  */
 object OwnerNotifications {
     private const val LIVE_CHANNEL = "owner_live_quiet"
@@ -72,12 +72,7 @@ object OwnerNotifications {
         }
         if (!allowed(context)) return
         channels(context)
-        val testing = state.overrides.any { it.hold == Hold.TRIAL } || state.apns.any { it.hold == Hold.TRIAL }
-        val action = if (testing) RevertAllReceiver.ACTION_STOP else RevertAllReceiver.ACTION
-        val intent = PendingIntent.getBroadcast(
-            context, if (testing) 2 else 1, Intent(context, RevertAllReceiver::class.java).setAction(action),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+        val testing = state.overrides.any { it.hold == Hold.TRIAL } || state.apns.any { it.hold == Hold.TRIAL } || state.trial30 != null
         val text = StatusSentence.keptChanges(state).joinToString(", ")
         val notification = NotificationCompat.Builder(context, LIVE_CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
@@ -88,7 +83,10 @@ object OwnerNotifications {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(open(context))
-            .addAction(0, if (testing) "Stop test" else "Undo changes", intent)
+            .apply {
+                if (testing) addAction(0, "Stop test", action(context, NoticeActionReceiver.ACTION_STOP, 2))
+                if (state.datasetStatus?.available == true && state.datasetStatus.safeMode.on != true) addAction(0, "Safe mode", action(context, NoticeActionReceiver.ACTION_SAFE_MODE, 3))
+            }
             .build()
         runCatching { manager.notify(LIVE_ID, notification) }
     }
@@ -105,23 +103,32 @@ object OwnerNotifications {
             .setStyle(NotificationCompat.BigTextStyle().bigText(notice.text.take(600)))
             .setAutoCancel(true)
             .setContentIntent(open(context))
+            .apply {
+                val status = FileStateStore(context).read().datasetStatus
+                if (notice.failed && status?.available == true && !status.safeMode.on) addAction(0, "Safe mode", action(context, NoticeActionReceiver.ACTION_SAFE_MODE, 4))
+            }
             .build()
         runCatching { NotificationManagerCompat.from(context).notify(EVENT_ID, notification) }
     }
+
+    private fun action(context: Context, what: String, code: Int): PendingIntent = PendingIntent.getBroadcast(
+        context, code, Intent(context, NoticeActionReceiver::class.java).setAction(what), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
 }
 
-/** The notification's "Undo changes" and "Stop test": each queues its work, nothing else. Not exported. */
-class RevertAllReceiver : BroadcastReceiver() {
+/** The notification's "Stop test" and "Safe mode": each queues its work, nothing else. Not exported. */
+class NoticeActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            ACTION -> OwnerScheduler.revertAll(context)
             ACTION_STOP -> OwnerScheduler.stopTests(context)
+            // Safe mode on, through CarrierSettings (round 30): the build's dataset serves and tests stop until the owner turns it off.
+            ACTION_SAFE_MODE -> OwnerScheduler.safeMode(context, on = true)
         }
     }
 
     companion object {
-        const val ACTION = "io.github.open_carrier_data.check.owner.REVERT_ALL"
         const val ACTION_STOP = "io.github.open_carrier_data.check.owner.STOP_TEST"
+        const val ACTION_SAFE_MODE = "io.github.open_carrier_data.check.owner.SAFE_MODE_ON"
     }
 }
 
@@ -147,6 +154,8 @@ class OwnerBootReceiver : BroadcastReceiver() {
                 val state = FileStateStore(context).read()
                 // KEEP: a pass already queued or running is never cancelled by its own writes.
                 if (state.anyLive) OwnerScheduler.cleanup(context, afterBoot = true, policy = ExistingWorkPolicy.KEEP, serverUpMs = serverUpMs())
+                // Round 30's voice-loss trigger: a few minutes after any carrier config change while an installed dataset serves.
+                if (state.datasetStatus?.available == true && state.trial30 == null) OwnerScheduler.voiceCheck(context)
             }
         }
     }

@@ -271,26 +271,47 @@ data class OwnerState(
     /** GitHub refused the token: nothing is sent until the owner enters a token again. */
     val autoRefusedAtMs: Long? = null,
     /**
-     * Round 29 item 3: the entries this app put into CarrierSettings's runtime layer (kept
-     * after a restart, without any override), as it recorded them ([LayerRecord]).
+     * OCD round 30: what CarrierSettings's dataset installer last reported (`status`); null before
+     * the first look. [DatasetStatus.available] false on a ROM without it.
      */
-    val layer: List<LayerRecord> = emptyList(),
-    /** What CarrierSettings last reported about the layer; null before the first look or on a ROM without it. */
-    val layerStatus: LayerStatus? = null,
+    val datasetStatus: DatasetStatus? = null,
+    /** The whole dataset this app pulled last, checked and in its folder ([DatasetCheck.pull]). */
+    val pulled: PulledDataset? = null,
+    /** The last install job this app staged, as `install_status` reported it. */
+    val install: InstallView? = null,
+    /** The dataset step's last line, for the screen. */
+    val datasetLine: String? = null,
+    /** The last pull over a metered network: at most one a day there (round 30). */
+    val lastMeteredPullAtMs: Long? = null,
+    /** Open test campaigns, one per SIM at most ([Campaign]): carried across idle moments when a cap stops one. */
+    val campaigns: List<Campaign> = emptyList(),
+    val campaignEnds: List<CampaignEnd> = emptyList(),
+    /** What the caps count: IMS re-registrations caused by OCD and dialled test calls ([TestCaps]). */
+    val caps: List<CapEvent> = emptyList(),
+    /** A round 30 override trial in place, registered before it is set; the cleanup clears it after a crash. */
+    val trial30: Trial30? = null,
+    /** Measured records put into CarrierSettings and waiting to go to main with the owner's token (JSON). */
+    val pendingRecords: List<String> = emptyList(),
+    val recordsSent: List<SentRecord> = emptyList(),
+    /** Source reviews to open (no value passed, an APN shrink, a coupling mismatch), and the ones opened. */
+    val pendingReviews: List<SourceReview> = emptyList(),
+    val reviewsSent: List<String> = emptyList(),
+    /** The emergency data test's sessions, its first use, and its own stop event. */
+    val emergencySessions: List<EmergencySession> = emptyList(),
+    val emergencyFirstUse: EmergencyFirstUse? = null,
+    val emergencyStop: String? = null,
+    /** The last time the phone saw a call ringing or up (any call), for the idle moment's 10 minutes. */
+    val lastCallSeenAtMs: Long? = null,
+    /** Round 30 keeps no override: the keeps of earlier builds were dropped once. */
+    val keepsDropped: Boolean = false,
 ) {
     val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
 
-    /** Changes Open Carrier Data holds now: live overrides and APN rows, or entries kept after restart in the runtime layer. */
-    val anyKept: Boolean get() = anyLive || layer.isNotEmpty()
+    /** Changes Open Carrier Data holds now: live overrides and APN rows, or a round 30 trial. */
+    val anyKept: Boolean get() = anyLive || trial30 != null
 
-    /**
-     * Every switch value Open Carrier Data holds on a SIM: a kept override, or an entry of the
-     * runtime layer ([layer] the entry's level), not the first-use probe and not one on its way out.
-     */
-    fun heldSwitches(): List<HeldSwitch> =
-        overrides.filter { it.hold == Hold.KEPT }.map { HeldSwitch(it.slot, it.sim, it.key, it.value, null) } +
-            layer.filter { !it.probe && it.removing == null && it.feature != null && it.boolValue != null }
-                .map { HeldSwitch(it.slot, it.sim, it.key, it.boolValue!!, it.level) }
+    /** Every switch value Open Carrier Data holds on a SIM as a kept override (none in round 30, but those of earlier builds until they are dropped). */
+    fun heldSwitches(): List<HeldSwitch> = overrides.filter { it.hold == Hold.KEPT }.map { HeldSwitch(it.slot, it.sim, it.key, it.value) }
 
     fun kept(slot: Int): Map<String, Boolean> =
         overrides.filter { it.slot == slot && it.hold == Hold.KEPT }.associate { it.key to it.value }
@@ -319,8 +340,12 @@ data class OwnerState(
     }
 }
 
-/** A switch value Open Carrier Data holds: a kept override ([layer] null) or a runtime-layer entry with its level. */
-data class HeldSwitch(val slot: Int, val sim: SimKey, val key: String, val value: Boolean, val layer: LayerLevel?)
+/** A switch value Open Carrier Data holds as a kept override. */
+data class HeldSwitch(val slot: Int, val sim: SimKey, val key: String, val value: Boolean)
+
+/** A round 30 override trial in place on one slot: the keys set, since when (registered before the set). */
+@Serializable
+data class Trial30(val slot: Int, val subId: Int, val mccmnc: String, val keys: List<String>, val sinceMs: Long, val label: String = "")
 
 /** Where the state lives. The app's version writes atomically to its private files folder. */
 interface StateStore {

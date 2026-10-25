@@ -9,6 +9,8 @@ import io.github.open_carrier_data.check.owner.core.DataSource
 import io.github.open_carrier_data.check.owner.core.IssuePoster
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.PostResult
+import io.github.open_carrier_data.check.owner.core.RecordReport
+import io.github.open_carrier_data.check.owner.core.SourceReview
 import io.github.open_carrier_data.check.owner.core.RunResult
 import io.github.open_carrier_data.check.owner.core.Settled
 import io.github.open_carrier_data.check.owner.core.SettledLevel
@@ -102,12 +104,19 @@ object OwnerToken {
  * an exception text.
  */
 class GitHubIssues(private val token: String) : IssuePoster {
-    override fun post(title: String, body: String): PostResult {
+    override fun post(title: String, body: String): PostResult = post(title, body, AutoReport.LABEL)
+
+    /**
+     * One issue with [label]: the pointer report's (`ocd-check-report`), a measured record's for the
+     * data side's owner-only intake (`ocd-device-record`, round 30), or a source review's.
+     */
+    fun post(title: String, body: String, label: String): PostResult {
+        require(label in LABELS) { "label" }
         val payload = JsonObject(
             mapOf(
                 "title" to JsonPrimitive(title),
                 "body" to JsonPrimitive(body),
-                "labels" to JsonArray(listOf(JsonPrimitive(AutoReport.LABEL))),
+                "labels" to JsonArray(listOf(JsonPrimitive(label))),
             ),
         ).toString().toByteArray(Charsets.UTF_8)
         val connection = try {
@@ -153,6 +162,7 @@ class GitHubIssues(private val token: String) : IssuePoster {
     companion object {
         const val API = "https://api.github.com/repos/${DataSource.REPOSITORY}/issues"
         private const val MAX_ANSWER = 256 * 1024
+        val LABELS = setOf(AutoReport.LABEL, RecordReport.LABEL, SourceReview.LABEL)
     }
 }
 
@@ -169,9 +179,13 @@ object OwnerAutoReports {
     fun run(context: Context, store: FileStateStore): String? {
         if (!OwnerToken.isSet(context)) return null
         val state = store.read()
+        if (state.autoRefusedAtMs != null) return null
         val now = System.currentTimeMillis()
         val due = AutoReport.plan(state, { OwnerData.callsTested(context, state) }, { settled(context, state, it) }, now)
-        if (due.isEmpty()) return null
+        // Round 30: measured records (one issue each) and source reviews, for the data side's owner-only intake.
+        val records = RecordReport.due(state.pendingRecords.mapNotNull { runCatching { Json.parseToJsonElement(it) as JsonObject }.getOrNull() }, state.recordsSent, now)
+        val reviews = state.pendingReviews.filter { it.key !in state.reviewsSent }
+        if (due.isEmpty() && records.isEmpty() && reviews.isEmpty()) return null
         val token = OwnerToken.read(context) ?: return "automatic report: the stored token cannot be read; enter it again".also {
             store.update { s -> s.copy(autoLine = "The stored token can't be read. Enter it again") }
         }
@@ -182,6 +196,30 @@ object OwnerAutoReports {
             store.update { s -> AutoReport.after(s, item, result, System.currentTimeMillis()) }
             line = when (result) {
                 is PostResult.Created -> "sent #${result.number}"
+                is PostResult.Refused -> return "refused (HTTP ${result.code})"
+                is PostResult.Failed -> throw IOException(result.why)
+            }
+        }
+        for (record in records) {
+            val issue = RecordReport.issue(record)
+            when (val result = poster.post(issue.title, issue.body, RecordReport.LABEL)) {
+                is PostResult.Created -> {
+                    store.update { s -> s.copy(recordsSent = RecordReport.record(s.recordsSent, record, System.currentTimeMillis(), result.number), autoLine = "Record sent as #${result.number}") }
+                    line = "record ${issue.recordKey} sent #${result.number}"
+                }
+                is PostResult.Refused -> {
+                    store.update { s -> s.copy(autoRefusedAtMs = System.currentTimeMillis(), autoLine = "GitHub refused the token (HTTP ${result.code}). Enter a new one") }
+                    return "refused (HTTP ${result.code})"
+                }
+                is PostResult.Failed -> throw IOException(result.why)
+            }
+        }
+        for (review in reviews) {
+            when (val result = poster.post(review.title, review.body, SourceReview.LABEL)) {
+                is PostResult.Created -> {
+                    store.update { s -> s.copy(reviewsSent = (s.reviewsSent + review.key).takeLast(SourceReview.MAX * 4), pendingReviews = s.pendingReviews.filterNot { it.key == review.key }) }
+                    line = "source review #${result.number}"
+                }
                 is PostResult.Refused -> return "refused (HTTP ${result.code})"
                 is PostResult.Failed -> throw IOException(result.why)
             }
