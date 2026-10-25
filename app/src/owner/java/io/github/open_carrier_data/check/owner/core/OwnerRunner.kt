@@ -44,6 +44,12 @@ data class RunOptions(
     val basis: TestBasis? = null,
     /** Why video calling cannot work on this build (static checks), from the app side; empty: no static reason. */
     val videoUnavailable: List<String> = emptyList(),
+    /**
+     * Whether the best working value is kept as an override. OCD round 30 keeps none: values come
+     * from the dataset CarrierSettings installs and from measured records, and the way back is safe
+     * mode, so the owner build passes false; the tests and their reports stay.
+     */
+    val keepValues: Boolean = true,
 )
 
 /**
@@ -126,7 +132,7 @@ class OwnerRunner(
                     result = result.copy(offReason = skip)
                 }
             }
-            val chosen = choose(session, result)
+            val chosen = choose(session, result, options)
             finished = true
             val effective = runCatching { session.dump().effective(sim.slot)[feature.key].asBool() }.getOrNull()
             record(sim, chosen, options, effective)
@@ -408,7 +414,7 @@ class OwnerRunner(
      * measured not working is dropped (smart revert); one that could not be
      * measured stays.
      */
-    private suspend fun choose(session: OwnerSession, r: FeatureResult): FeatureResult {
+    private suspend fun choose(session: OwnerSession, r: FeatureResult, options: RunOptions = RunOptions()): FeatureResult {
         val baseline = r.baseline ?: return r
         val feature = r.feature
         val onWorks = if (baseline) r.baselineWorks else r.onWorks
@@ -423,6 +429,10 @@ class OwnerRunner(
         }
         val keptNow = store.read().overrides.firstOrNull { it.slot == session.slot && it.key == feature.key && it.hold == Hold.KEPT }
         var applied = false
+        if (best != null && best != baseline && !options.keepValues) {
+            log("keep_waits", "${feature.wire}=$best would work better; round 30 keeps no override: the dataset and measured records serve values")
+            return r.copy(best = best, bestWhy = "$why; not kept: round 30 keeps no override", applied = false)
+        }
         if (best != null && best != baseline && !store.read().rebootCleared) {
             log("keep_waits", "${feature.wire}=$best would be kept; first-use check 3 (an override gone after a reboot) comes first")
             return r.copy(best = best, bestWhy = "$why; not kept until the reboot check is done", applied = false)
@@ -635,7 +645,7 @@ class OwnerRunner(
                 if (RegistryText.anyCallActive(phone.registryText())) break
             }
             log("apn_trial", "${row.label}: test row $id (carrier ID $carrierId), data ${if (works) "validated" else "not validated"}")
-            if (works && keepIfWorks && store.read().rebootCleared) {
+            if (works && keepIfWorks && options.keepValues && store.read().rebootCleared) {
                 store.update { s -> s.copy(apns = s.apns.map { if (it.rowId == id) it.copy(hold = Hold.KEPT) else it }) }
                 log("keep", "APN ${row.label} kept as the preferred APN: mobile data worked only with it")
                 return ApnResult(row.label, row.key, "inserted", dataWorks = true, kept = true)

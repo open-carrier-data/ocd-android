@@ -24,6 +24,10 @@
           QNS (Wi-Fi calling's tunnel, errors and back-off) in place of the device log.
           READ_LOGS is gone (2026-10-20): reading the log makes Android ask the owner, and a
           privileged app cannot skip that prompt.
+    CONNECTIVITY_USE_RESTRICTED_NETWORKS (OCD round 30, emergencyDataTest): the emergency data
+          test's request for NET_CAPABILITY_EIMS, a restricted network, on the home mobile network
+          with the SIM's emergency APN row; waits at most 15 s, released within 5 s, no call and
+          nothing sent. Owner build only (signature|privileged, frameworks/base AndroidManifest.xml).
 -->
 <permissions>
     <privapp-permissions package="io.github.open_carrier_data.check.owner">
@@ -33,6 +37,7 @@
         <permission name="android.permission.WRITE_APN_SETTINGS" />
         <permission name="android.permission.DUMP" />
         <permission name="android.permission.PACKAGE_USAGE_STATS" />
+        <permission name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />
     </privapp-permissions>
 
     <!--

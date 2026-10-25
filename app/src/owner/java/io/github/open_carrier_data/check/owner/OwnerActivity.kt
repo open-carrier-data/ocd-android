@@ -79,18 +79,14 @@ data class OwnerUi(
     /** The MMS line per SIM ("not checked, the network no longer offers MMS", "access point reachable"). */
     val mmsLines: List<String> = emptyList(),
     val selfSmsLine: String? = null,
-    /** Round 29: what is kept after restart in the ROM's runtime layer, per SIM; null on a ROM without the layer. */
-    val kept: List<KeptSim>? = null,
-    val layerStatus: io.github.open_carrier_data.check.owner.core.LayerStatus? = null,
+    /** Round 30: CarrierSettings's dataset installer as it last answered (serving, safe mode, changes halted); null before the first look. */
+    val dataset: io.github.open_carrier_data.check.owner.core.DatasetStatus? = null,
     /** Round 29: the owner entered a token for automatic reports ([OwnerToken]); its value is never in the UI state. */
     val tokenSet: Boolean = false,
 ) {
     /** Test now may start: system access, a SIM, nothing running, not paused. */
     val canTest: Boolean get() = gate?.canWrite == true && sims?.isNotEmpty() == true && stepsToGo == 0 && state.stop == null
 }
-
-/** One SIM's entries kept after restart, as the screen lists them. */
-data class KeptSim(val slot: Int, val name: String, val lines: List<io.github.open_carrier_data.check.owner.core.LayerLine>, val otherSims: Int)
 
 class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     private val store = FileStateStore(app)
@@ -124,10 +120,9 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         val zone = java.time.ZoneId.systemDefault()
         val now = System.currentTimeMillis()
         val ended = withContext(Dispatchers.IO) { OwnerMms.ended(context) }
-        val kept = withContext(Dispatchers.IO) { runCatching { kept(state, sims, views, zone) }.getOrNull() }
+        val dataset = withContext(Dispatchers.IO) { runCatching { datasetStatus() }.getOrNull() }
         _ui.value = _ui.value.copy(
-            kept = kept?.first,
-            layerStatus = kept?.second,
+            dataset = dataset,
             loaded = true,
             gate = gate,
             state = state,
@@ -148,41 +143,35 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    private var keptCache: Pair<Long, Pair<List<KeptSim>?, io.github.open_carrier_data.check.owner.core.LayerStatus>>? = null
+    private var datasetCache: Pair<Long, io.github.open_carrier_data.check.owner.core.DatasetStatus>? = null
 
-    /** The runtime layer's entries per SIM from CarrierSettings, read at most every 15 s (a binder call per SIM). */
-    private fun kept(state: OwnerState, sims: List<OwnerSim>?, views: List<SimView>?, zone: java.time.ZoneId): Pair<List<KeptSim>?, io.github.open_carrier_data.check.owner.core.LayerStatus>? {
+    /** The installer's status from CarrierSettings, read at most every 15 s (one binder call). */
+    private fun datasetStatus(): io.github.open_carrier_data.check.owner.core.DatasetStatus {
         val now = System.currentTimeMillis()
-        keptCache?.takeIf { now - it.first < 15_000 && now >= it.first }?.let { return it.second }
-        val context = getApplication<Application>()
-        val layer = OwnerLayerStep.client(context)
-        val status = layer.status()
-        val list = if (!status.available) null else sims.orEmpty().map { sim ->
-            val view = layer.list(sim.subId)
-            val name = views?.firstOrNull { it.slot == sim.slot }?.name ?: sim.name
-            KeptSim(
-                sim.slot, name,
-                view?.entries.orEmpty().map { e -> io.github.open_carrier_data.check.owner.core.LayerWriter.describe(e, state.layer.firstOrNull { it.sim.sameCard(sim.key) && it.key == e.key }, zone) },
-                view?.otherSims ?: 0,
-            )
-        }
-        val value = list to status
-        keptCache = now to value
-        return value
+        datasetCache?.takeIf { now - it.first < 15_000 && now >= it.first }?.let { return it.second }
+        val status = OwnerDatasetStep.status(getApplication(), store)
+        datasetCache = now to status
+        return status
     }
 
-    /** Undo of one entry kept after restart, or of all; remembered until "Test now". Works while roaming. */
-    fun undoKept(slot: Int?, key: String?) {
-        OwnerScheduler.layerUndo(getApplication(), slot, key)
-        keptCache = null
-        say(if (slot == null) "Undoing everything kept after restart" else "Undoing")
+    /** Safe mode on or off, through CarrierSettings, which owns it (round 30). */
+    fun setSafeMode(on: Boolean) {
+        OwnerScheduler.safeMode(getApplication(), on)
+        datasetCache = null
+        say(if (on) "Turning on safe mode" else "Turning off safe mode")
     }
 
-    /** Round 29 S15 check 2 (adb only): the first-use probe entry on the SIM in [slot]. */
-    fun layerProbe(slot: Int) {
-        OwnerScheduler.layerProbe(getApplication(), slot)
-        keptCache = null
-        say("First-use probe queued")
+    /** The emergency data test by hand (its first use, with adb logcat streamed). */
+    fun emergencyData(slot: Int) {
+        OwnerScheduler.emergencyData(getApplication(), slot)
+        say("Emergency data test queued")
+    }
+
+    /** The owner records the emergency data test's first use: passed, or not meaningful on this phone. */
+    fun emergencyFirstUse(result: String) = viewModelScope.launch {
+        if (result !in setOf(io.github.open_carrier_data.check.owner.core.EmergencyFirstUse.PASSED, io.github.open_carrier_data.check.owner.core.EmergencyFirstUse.NOT_MEANINGFUL)) return@launch
+        store.update { it.copy(emergencyFirstUse = io.github.open_carrier_data.check.owner.core.EmergencyFirstUse(result, System.currentTimeMillis())).logged(System.currentTimeMillis(), "emergency_data", "the owner recorded the first use: $result") }
+        refresh()
     }
 
     private var candidateCache: Pair<String, Map<Int, Set<String>>>? = null
@@ -294,11 +283,6 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = _ui.value.copy(details = lines)
     }
 
-    fun revertAll() {
-        OwnerScheduler.revertAll(getApplication())
-        say("Undoing changes")
-    }
-
     fun rebootProbe() {
         OwnerScheduler.rebootProbe(getApplication())
         say("Restart check started")
@@ -364,10 +348,10 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearStop() = viewModelScope.launch {
-        store.update { it.copy(stop = null).logged(System.currentTimeMillis(), "stop", "the owner cleared the stop flag") }
-        // The runtime layer's own stop flag is cleared by the same tap (round 29 S9: "until the owner clears the flag").
-        withContext(Dispatchers.IO) { runCatching { OwnerLayerStep.clearStop(getApplication(), store) } }
-        keptCache = null
+        // The emergency data test's own stop stays until a judged round; Resume clears the app's flag and CarrierSettings's "changes halted".
+        store.update { it.copy(stop = null).logged(System.currentTimeMillis(), "stop", "the owner tapped Resume") }
+        withContext(Dispatchers.IO) { runCatching { OwnerDatasetStep.resume(getApplication(), store) } }
+        datasetCache = null
         say("Changes resumed")
         refresh()
     }
@@ -440,7 +424,6 @@ class OwnerActivity : ComponentActivity() {
             back = ::finish,
             testNow = { viewModel.test(it.offs, it.voice, it.apns) },
             stopTest = { viewModel.stopTest() },
-            revertAll = viewModel::revertAll,
             pull = { viewModel.pull() },
             setSchedule = { viewModel.setSchedule(it) },
             checkNow = viewModel::checkNow,
@@ -454,16 +437,17 @@ class OwnerActivity : ComponentActivity() {
             dryRunCallsOut = viewModel::dryRunCallsOut,
             setSelfSms = { viewModel.setSelfSms(it) },
             selfSmsNow = { viewModel.selfSmsNow() },
-            undoKept = { slot, key -> viewModel.undoKept(slot, key) },
+            setSafeMode = { viewModel.setSafeMode(it) },
             saveToken = { text, done -> viewModel.saveToken(text, done) },
             removeToken = { viewModel.removeToken() },
         )
         // `am start ... --ez calls_out_dry_run true` (the activity is guarded by MODIFY_PHONE_STATE): a dry run only, never a call.
         if (intent?.getBooleanExtra(EXTRA_CALLS_OUT_DRY_RUN, false) == true) viewModel.dryRunCallsOut()
-        // Round 29's first-use measurements over adb (scripts/ocd-layer-first-use.sh in the S20 workspace):
-        // `--ei layer_probe 0` puts the probe entry on the SIM in slot 1; `--ez layer_undo_all true` is Undo all.
-        intent?.getIntExtra(EXTRA_LAYER_PROBE, -1)?.takeIf { it in 0..3 }?.let { viewModel.layerProbe(it) }
-        if (intent?.getBooleanExtra(EXTRA_LAYER_UNDO_ALL, false) == true) viewModel.undoKept(null, null)
+        // Round 30's emergency data test, first use over adb with `adb logcat` streamed: `--ei emergency_data_test 0` runs one
+        // session on the SIM in slot 1 (no call, nothing sent); `--es emergency_data_first_use passed` (or not_meaningful) records
+        // the owner's reading of the radio log. Once per start of the activity.
+        if (savedInstanceState == null) intent?.getIntExtra(EXTRA_EMERGENCY_DATA_TEST, -1)?.takeIf { it in 0..3 }?.let { viewModel.emergencyData(it) }
+        if (savedInstanceState == null) intent?.getStringExtra(EXTRA_EMERGENCY_DATA_FIRST_USE)?.let { viewModel.emergencyFirstUse(it) }
         // `--ez self_sms_now true` is "Send a test SMS now"; once per start, never again when the activity is recreated, as it may cost an SMS.
         if (savedInstanceState == null && intent?.getBooleanExtra(EXTRA_SELF_SMS_NOW, false) == true) viewModel.selfSmsNow()
         setContent {
@@ -476,8 +460,8 @@ class OwnerActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_CALLS_OUT_DRY_RUN = "calls_out_dry_run"
-        const val EXTRA_LAYER_PROBE = "layer_probe"
-        const val EXTRA_LAYER_UNDO_ALL = "layer_undo_all"
+        const val EXTRA_EMERGENCY_DATA_TEST = "emergency_data_test"
+        const val EXTRA_EMERGENCY_DATA_FIRST_USE = "emergency_data_first_use"
         const val EXTRA_SELF_SMS_NOW = "self_sms_now"
     }
 

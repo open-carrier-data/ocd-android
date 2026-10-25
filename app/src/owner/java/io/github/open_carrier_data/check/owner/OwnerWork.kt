@@ -98,30 +98,26 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 }
                 STEP_QUIET -> quiet(store)
                 STEP_CLEANUP -> cleanup(store)
-                STEP_REVERT_ALL -> withPhone(store) { runner, sims, phone ->
-                    runner.revertAll(sims)
-                    // Undo changes also clears what is kept after restart (round 29 S11, S12); it works while roaming.
-                    val line = OwnerLayerStep.undo(applicationContext, store, phone, sims, null, null)
-                    if (!line.startsWith("no runtime layer") && line != "nothing kept after restart") store.update { it.logged(System.currentTimeMillis(), "layer", line) }
+                // Round 30: stage, activate in the idle moment, test, record; also the voice-loss trigger.
+                STEP_DATASET, STEP_VOICE_CHECK -> withPhone(store) { _, sims, phone ->
+                    val testNow = inputData.getBoolean(KEY_TEST_NOW, false)
+                    val line = OwnerDatasetStep.run(applicationContext, store, phone, sims, testNow)
+                    if (!line.startsWith("no dataset installer")) store.update { it.logged(System.currentTimeMillis(), "dataset", (if (testNow) "test now: " else "") + line) }
+                    OwnerScheduler.autoReport(applicationContext)
                     Result.success()
                 }
-                STEP_LAYER -> withPhone(store) { _, sims, phone ->
-                    val line = OwnerLayerStep.run(applicationContext, store, phone, sims, null, quietOpen = false)
-                    if (!line.startsWith("no runtime layer") && line != "layer: nothing to do") store.update { it.logged(System.currentTimeMillis(), "layer", line) }
+                // The emergency data test by hand (its first use, with adb logcat streamed): one session on the SIM in the slot.
+                STEP_EMERGENCY_DATA -> withPhone(store) { _, sims, phone ->
+                    val sim = sims.firstOrNull { it.slot == inputData.getInt(KEY_SLOT, 0) } ?: throw SafetyException("no_sim", "no SIM in that slot")
+                    val line = OwnerEmergencyData.session(applicationContext, store, phone, OwnerDatasetStep.client(applicationContext), sim, manual = true)
+                    store.update { it.logged(System.currentTimeMillis(), "emergency_data", line ?: "nothing to do") }
                     Result.success()
                 }
-                STEP_LAYER_UNDO -> withPhone(store) { _, sims, phone ->
-                    val slot = inputData.getInt(KEY_SLOT, -1).takeIf { it >= 0 }
-                    val line = OwnerLayerStep.undo(applicationContext, store, phone, sims, slot, inputData.getString(KEY_LAYER_KEY))
-                    store.update { it.logged(System.currentTimeMillis(), "layer", line) }
+                STEP_SAFE_MODE -> {
+                    OwnerDatasetStep.setSafeMode(applicationContext, store, inputData.getBoolean(KEY_ON, true))
                     Result.success()
                 }
-                STEP_LAYER_PROBE -> withPhone(store) { _, sims, phone ->
-                    val line = OwnerLayerStep.probe(applicationContext, store, phone, sims, inputData.getInt(KEY_SLOT, 0))
-                    store.update { it.logged(System.currentTimeMillis(), "layer", line) }
-                    Result.success()
-                }
-                STEP_PULL -> if (inputData.getBoolean(KEY_IN_RUN, false)) {
+                STEP_PULL -> (if (inputData.getBoolean(KEY_IN_RUN, false)) {
                     // "Test now" pulls first (round 29): the test runs on whatever data the pull leaves, and a failed pull never holds it up.
                     val line = try {
                         OwnerData(applicationContext, store).pull()
@@ -136,6 +132,9 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                     val line = OwnerData(applicationContext, store).pull(force = inputData.getBoolean(KEY_FORCE, false))
                     store.update { it.logged(System.currentTimeMillis(), "pull", line) }
                     Result.success()
+                }).also {
+                    // Round 30: a new dataset is handed over soon and activated in the next idle moment ("Test now" chains its own step).
+                    if (!inputData.getBoolean(KEY_IN_RUN, false) && store.read().datasetStatus?.available == true) OwnerScheduler.dataset(applicationContext, delayMs = TimeUnit.MINUTES.toMillis(5))
                 }
                 STEP_PROBE -> withPhone(store) { runner, sims, _ ->
                     val sim = sims.firstOrNull() ?: throw SafetyException("no_sim", "no SIM, nothing to test")
@@ -188,7 +187,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         }
         val after = store.read()
         // Routine work is silent; a change or a failure is told. A chain's changes wait for its end (STEP_FINISH).
-        if (step !in CHAIN_STEPS && step != STEP_REVERT_ALL) Notices.of(before, after)?.let { OwnerNotifications.notice(applicationContext, it) }
+        if (step !in CHAIN_STEPS) Notices.of(before, after)?.let { OwnerNotifications.notice(applicationContext, it) }
         OwnerNotifications.refresh(applicationContext, after)
         return result
     }
@@ -207,7 +206,18 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
 
     /** Leftover cleanup and the per-SIM re-apply; retried while a refusal holds (in a call, just booted, Shizuku not up yet). */
     private suspend fun cleanup(store: FileStateStore): Result {
-        val summary = withPhone(store) { runner, sims, _ -> runner.reconcile(sims) }
+        val summary = withPhone(store) { runner, sims, phone ->
+            // Round 30: a trial a crash left goes first; then the keeps of earlier builds go once (values come from the dataset now).
+            val leftover = OwnerDatasetStep.clearLeftoverTrial(applicationContext, store, phone, sims)
+            if (!store.read().keepsDropped && store.read().stop == null) {
+                val anyKept = store.read().let { s -> s.overrides.any { it.hold == io.github.open_carrier_data.check.owner.core.Hold.KEPT } || s.apns.any { it.hold == io.github.open_carrier_data.check.owner.core.Hold.KEPT } }
+                val dropped = if (anyKept) runner.revertAll(sims) else "none"
+                if (store.read().overrides.none { it.hold == io.github.open_carrier_data.check.owner.core.Hold.KEPT } && store.read().apns.none { it.hold == io.github.open_carrier_data.check.owner.core.Hold.KEPT }) {
+                    store.update { it.copy(keepsDropped = true, undone = emptyList(), provisional = emptyList()).logged(System.currentTimeMillis(), "round30", "round 30 keeps no override; the keeps of earlier builds: $dropped") }
+                }
+            }
+            listOfNotNull(leftover, runner.reconcile(sims)).joinToString("; ")
+        }
         if (!store.read().trialsLive()) RevertAlarm.disarm(applicationContext)
         return if ("refused" in summary || "waits" in summary) {
             if (runAttemptCount < 8) Result.retry() else Result.success()
@@ -243,8 +253,11 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             if (!checkDue) return Result.success()
             // main's newest validated commit, once a day on Wi-Fi (round 29); every six hours while nothing is pinned yet.
             val pullDue = state.lastPullAtMs == null || now - state.lastPullAtMs!! >= (if (state.pin == null) CHECK_EVERY_MS else PULL_EVERY_MS) || now < state.lastPullAtMs!!
-            if (look.wifiConnected == true && pullDue) {
-                store.update { it.copy(lastPullAtMs = now) }
+            // Round 30: on metered data at most one pull a day, and only with the dataset installer; other pulls wait for Wi-Fi.
+            val meteredOk = look.wifiConnected != true && state.datasetStatus?.available == true &&
+                (state.lastMeteredPullAtMs == null || now - state.lastMeteredPullAtMs!! >= TimeUnit.DAYS.toMillis(1) || now < state.lastMeteredPullAtMs!!)
+            if ((look.wifiConnected == true || meteredOk) && (pullDue || state.datasetStatus?.pullAgain == true)) {
+                store.update { it.copy(lastPullAtMs = now, lastMeteredPullAtMs = if (meteredOk) now else it.lastMeteredPullAtMs) }
                 runCatching { OwnerData(context, store).pull(verbose = false) }
                     .onSuccess { line -> if (!line.startsWith("up to date")) store.update { it.logged(now, "pull", "background: $line") } }
                     .onFailure { e -> quietLog(store, "pull", "background pull failed: ${e.message?.take(120)}") }
@@ -288,15 +301,28 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             // Round 26: provisional keeps reverted when the night ended without calls out or 7 days passed without incoming.
             settleProvisional(context, store.read())
             messageChecks(store, phone, sims, look, night)
-            // Round 29: the runtime layer. Reverts and renewals at every light check; what passed its class check goes in only in a silent window.
-            val quietOpen = QuietWindow.trialBlocker(look, nightOnly = false, traffic = false) == null
-            try {
-                val line = OwnerLayerStep.run(context, store, phone, sims, checks, quietOpen)
-                if (!line.startsWith("no runtime layer") && line != "layer: nothing to do") quietLog(store, "layer", line)
+            // Round 30: the dataset installer. With it, the dataset serves, the idle moment decides when a newer one goes in,
+            // and the tests of the changed values replace the night's trials; without it (the switch off, a round 29 ROM)
+            // the app keeps to its checks, its night tests and its reports, and keeps no value.
+            val round30 = try {
+                val line = OwnerDatasetStep.run(context, store, phone, sims)
+                if (!line.startsWith("no dataset installer")) quietLog(store, "dataset", line)
+                store.read().datasetStatus?.available == true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                quietLog(store, "layer", "the layer step failed: ${e.javaClass.simpleName}: ${e.message?.take(120)}")
+                quietLog(store, "dataset", "the dataset step failed: ${e.javaClass.simpleName}: ${e.message?.take(120)}")
+                store.read().datasetStatus?.available == true
+            }
+            if (round30) {
+                for (sim in sims) {
+                    runCatching { OwnerEmergencyData.session(context, store, phone, OwnerDatasetStep.client(context), sim, manual = false) }
+                        .onSuccess { line -> if (line != null) quietLog(store, "emergency_data", "slot ${sim.slot + 1}: $line") }
+                        .onFailure { e -> if (e is CancellationException) throw e }
+                }
+                OwnerScheduler.autoReport(context)
+                store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, store.read().datasetLine ?: "checked")) }
+                return Result.success()
             }
             // Round 29: settled results go out as report issues when the owner set a token (its own work, with a network).
             OwnerScheduler.autoReport(context)
@@ -525,6 +551,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             only = if (inputData.keyValueMap.containsKey(KEY_ONLY)) inputData.getBoolean(KEY_ONLY, true) else null,
             apnKeys = inputData.getStringArray(KEY_APN_KEYS)?.toSet(),
             maxApnRows = if (background) QuietPlan.MAX_ON_PER_NIGHT else Int.MAX_VALUE,
+            keepValues = false,
             interrupt = if (background) AndroidInterrupt(applicationContext) else null,
             basis = OwnerBasis.forSim(applicationContext, store.read(), bundle, sim, rows),
             videoUnavailable = video,
@@ -698,7 +725,6 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val STEP_WEEKLY = "weekly"
         const val STEP_QUIET = "quiet"
         const val STEP_CLEANUP = "cleanup"
-        const val STEP_REVERT_ALL = "revert_all"
         const val STEP_PULL = "pull"
         const val STEP_FEATURE = "feature"
         const val STEP_APN = "apn"
@@ -707,11 +733,13 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val STEP_CALLS_OUT = "calls_out"
         const val STEP_SELF_SMS = "self_sms"
         const val STEP_DROP_KEEP = "drop_keep"
-        const val STEP_LAYER = "layer"
-        const val STEP_LAYER_UNDO = "layer_undo"
-        const val STEP_LAYER_PROBE = "layer_probe"
         const val STEP_AUTO_REPORT = "auto_report"
-        const val KEY_LAYER_KEY = "layer_key"
+        const val STEP_DATASET = "dataset"
+        const val STEP_VOICE_CHECK = "voice_check"
+        const val STEP_EMERGENCY_DATA = "emergency_data"
+        const val STEP_SAFE_MODE = "safe_mode"
+        const val KEY_TEST_NOW = "test_now"
+        const val KEY_ON = "on"
 
         /** At most this many mailbox calls in one step: one per bearer. */
         const val MAX_CALLS_PER_STEP = 2
@@ -743,11 +771,11 @@ object OwnerScheduler {
     const val QUIET = "owner-quiet"
     const val RUN = "owner-run"
     const val CLEANUP = "owner-cleanup"
-    const val REVERT_ALL = "owner-revert-all"
     const val AUTO_REPORT = "owner-auto-report"
     const val PULL = "owner-pull"
-    const val LAYER = "owner-layer"
-    const val LAYER_UNDO = "owner-layer-undo"
+    const val DATASET = "owner-dataset"
+    const val VOICE_CHECK = "owner-voice-check"
+    const val EMERGENCY_DATA = "owner-emergency-data"
 
     /** The quiet job runs while Android counts the phone idle (screen off about half an hour); the job checks the rest itself. */
     private fun quietConstraints(): Constraints = Constraints.Builder().setRequiresDeviceIdle(true).build()
@@ -814,34 +842,47 @@ object OwnerScheduler {
         cleanup(context, policy = ExistingWorkPolicy.KEEP)
     }
 
-    fun revertAll(context: Context) {
+    /** Round 30: the dataset step soon (stage, activate in the idle moment, test); [testNow] runs at once under the refusals. */
+    fun dataset(context: Context, testNow: Boolean = false, delayMs: Long = 0) {
+        val request = OneTimeWorkRequestBuilder<OwnerWorker>()
+            .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_DATASET, OwnerWorker.KEY_TEST_NOW to testNow))
+            .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
+            .build()
+        val wm = WorkManager.getInstance(context)
+        if (!testNow) {
+            wm.enqueueUniqueWork(DATASET, ExistingWorkPolicy.KEEP, request)
+            return
+        }
+        // "Test now": the pull first (a failed pull never holds the test up), then the hand-over, the install and the tests.
+        val pull = OneTimeWorkRequestBuilder<OwnerWorker>()
+            .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_PULL, OwnerWorker.KEY_IN_RUN to true))
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .build()
+        wm.beginUniqueWork(DATASET, ExistingWorkPolicy.REPLACE, pull).then(request).enqueue()
+    }
+
+    /** The voice-loss trigger a few minutes after a change (an install, a record, a carrier config change). */
+    fun voiceCheck(context: Context, delayMs: Long = TimeUnit.MINUTES.toMillis(3)) {
+        val request = OneTimeWorkRequestBuilder<OwnerWorker>()
+            .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_VOICE_CHECK))
+            .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(VOICE_CHECK, ExistingWorkPolicy.KEEP, request)
+    }
+
+    /** The emergency data test by hand on the SIM in [slot] (its first use, with adb logcat streamed). */
+    fun emergencyData(context: Context, slot: Int) {
         WorkManager.getInstance(context).enqueueUniqueWork(
-            REVERT_ALL, ExistingWorkPolicy.KEEP,
-            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_REVERT_ALL), null, expedite = true),
+            EMERGENCY_DATA, ExistingWorkPolicy.KEEP,
+            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_EMERGENCY_DATA, OwnerWorker.KEY_SLOT to slot), null, expedite = true),
         )
     }
 
-    /** The runtime layer's step on its own: reverts and renewals (after a measured call settles a voice entry). */
-    fun layerStep(context: Context) {
+    /** The owner's safe-mode switch: CarrierSettings serves the build's dataset while it is on. */
+    fun safeMode(context: Context, on: Boolean) {
         WorkManager.getInstance(context).enqueueUniqueWork(
-            LAYER, ExistingWorkPolicy.KEEP,
-            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_LAYER), null, expedite = false),
-        )
-    }
-
-    /** Undo of what is kept after restart: one entry ([slot] and [key]) or all ([slot] null). Works while roaming. */
-    fun layerUndo(context: Context, slot: Int?, key: String?) {
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            LAYER_UNDO, ExistingWorkPolicy.APPEND_OR_REPLACE,
-            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_LAYER_UNDO, OwnerWorker.KEY_SLOT to (slot ?: -1), OwnerWorker.KEY_LAYER_KEY to key), null, expedite = true),
-        )
-    }
-
-    /** Round 29 S15 check 2: the first-use probe entry, equal to the build's own value. */
-    fun layerProbe(context: Context, slot: Int) {
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            LAYER_UNDO, ExistingWorkPolicy.APPEND_OR_REPLACE,
-            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_LAYER_PROBE, OwnerWorker.KEY_SLOT to slot), null, expedite = true),
+            "owner-safe-mode", ExistingWorkPolicy.APPEND_OR_REPLACE,
+            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_SAFE_MODE, OwnerWorker.KEY_ON to on), null, expedite = true),
         )
     }
 
@@ -965,6 +1006,13 @@ object OwnerScheduler {
 
     /** The owner's "Test now": one step per SIM and feature, then the APN rows, then the end mark. */
     suspend fun runTests(context: Context, offs: Boolean, voiceCheckMs: Long, apns: Boolean): String {
+        // Round 30: "Test now" pulls, hands over and installs at once (still under the refusals), then tests every changed value together.
+        val status = OwnerDatasetStep.status(context, FileStateStore(context))
+        if (status.available) {
+            dataset(context, testNow = true)
+            FileStateStore(context).update { it.copy(undone = emptyList()).logged(System.currentTimeMillis(), "run", "test now: pull, hand over, install in this idle moment, and test together") }
+            return "queued: pull, install and test"
+        }
         val sims = OwnerData.sims(context)
         val runId = UUID.randomUUID().toString().take(8)
         val common = arrayOf(

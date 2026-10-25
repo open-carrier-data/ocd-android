@@ -22,8 +22,8 @@ android {
         applicationId = "io.github.open_carrier_data.check"
         minSdk = 29
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
         // True only in the owner build type; debug and release stay read-only.
         buildConfigField("boolean", "OWNER", "false")
     }

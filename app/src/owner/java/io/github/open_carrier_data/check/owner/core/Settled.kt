@@ -119,10 +119,7 @@ object Settled {
         if (publicBuild == null || cell.romBuild != publicBuild || cell.dataCommit?.let(DataSource.SHA::matches) != true) return emptyMap()
         val out = LinkedHashMap<String, SettledLevel>()
         for (feature in listOf(OwnerFeature.VOLTE, OwnerFeature.VOWIFI)) {
-            val since = listOfNotNull(
-                state.overrides.lastOrNull { it.hold == Hold.KEPT && it.sim.sameCard(sim) && it.key == feature.key && it.value }?.sinceMs,
-                state.layer.lastOrNull { it.sim.sameCard(sim) && it.key == feature.key && it.boolValue == true && it.removing == null && !it.probe }?.appliedAtMs,
-            ).maxOrNull() ?: 0L
+            val since = state.overrides.lastOrNull { it.hold == Hold.KEPT && it.sim.sameCard(sim) && it.key == feature.key && it.value }?.sinceMs ?: 0L
             voice(state.calls, sim, feature, romKey, since, nowMs, zone)?.let { out[QuietPlan.entry(feature, true)] = it }
         }
         sms(state.selfSms, sim, romKey, nowMs)?.let { out[SMS_ON] = it }

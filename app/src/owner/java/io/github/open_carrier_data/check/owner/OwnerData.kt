@@ -32,6 +32,7 @@ import io.github.open_carrier_data.check.owner.core.DataException
 import io.github.open_carrier_data.check.owner.core.DataSource
 import io.github.open_carrier_data.check.owner.core.MainPin
 import io.github.open_carrier_data.check.owner.core.MainPull
+import io.github.open_carrier_data.check.owner.core.NotFound
 import io.github.open_carrier_data.check.owner.core.SchemaRefused
 import io.github.open_carrier_data.check.owner.core.Validation
 import io.github.open_carrier_data.check.owner.core.SimView
@@ -148,7 +149,29 @@ class OwnerData(private val context: Context, private val store: StateStore) {
             runCatching { Log.w(DATA_TAG, line) }
         }
         pullObserved(verbose)
-        main.getOrThrow()
+        val line = main.getOrThrow()
+        // Round 30: the whole dataset of the same commit, for CarrierSettings's installer; only on a ROM that has one.
+        val dataset = pullDataset(force)
+        if (dataset == null) line else "$line; $dataset"
+    }
+
+    /**
+     * The dataset of the pinned commit (F1 to F3 and the blob check, [DatasetCheck.pull]) when the
+     * ROM has the installer; null without one. A refused dataset keeps the last good set whole and
+     * says why; it never undoes the main pin, whose files passed their own checks.
+     */
+    private fun pullDataset(force: Boolean): String? {
+        val status = OwnerDatasetStep.status(context, store)
+        if (!status.available) return null
+        val pin = store.read().pin ?: return "no dataset: nothing is pinned yet"
+        return try {
+            OwnerDatasetStep.pullDataset(context, store, { url, max -> get(url, maxBytes = max) }, pin, force || status.pullAgain)
+        } catch (e: Exception) {
+            val text = "dataset of ${pin.label} refused or failed, the last good set stays: ${e.javaClass.simpleName}: ${e.message?.take(200)}"
+            store.update { it.logged(System.currentTimeMillis(), "dataset", text) }
+            runCatching { Log.w(DATA_TAG, text) }
+            text
+        }
     }
 
     /**
@@ -245,6 +268,7 @@ class OwnerData(private val context: Context, private val store: StateStore) {
                         }
                         target = next
                     }
+                    404 -> throw NotFound("HTTP 404 for ${target.path}")
                     403, 429 -> {
                         // The unauthenticated API allows 60 calls an hour; a pull needs two or three.
                         val left = connection.getHeaderField("x-ratelimit-remaining")

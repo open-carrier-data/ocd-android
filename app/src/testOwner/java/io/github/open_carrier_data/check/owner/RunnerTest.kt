@@ -61,6 +61,19 @@ class RunnerTest {
     }
 
     @Test
+    fun `round 30 - the owner build tests and reports the better value but keeps no override`() = runBlocking {
+        val phone = FakePhone()
+        val result = runner(phone).testFeature(sim, OwnerFeature.VOLTE, ocdOn, fast.copy(keepValues = false))
+        assertEquals(true, result.onWorks)
+        assertEquals(true, result.best)
+        assertFalse(result.applied)
+        assertTrue(result.bestWhy!!.contains("round 30 keeps no override"))
+        assertTrue(phone.store.state.overrides.isEmpty())
+        assertTrue(phone.overrides.isNullOrEmpty())
+        assertNull(phone.store.state.stop)
+    }
+
+    @Test
     fun `an on that does not register is reverted and nothing is kept`() = runBlocking {
         val phone = FakePhone().apply { imsWorks = false }
         val result = runner(phone).testFeature(sim, OwnerFeature.VOLTE, ocdOn, fast)

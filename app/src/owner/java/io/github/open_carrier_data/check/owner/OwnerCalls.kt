@@ -346,8 +346,6 @@ fun settleProvisional(context: Context, state: OwnerState): OwnerState {
         next
     }
     OwnerScheduler.dropKeeps(context, reverts)
-    // A voice value kept after restart is decided by the same calls (round 26 rule 7 in the layer): the layer step reverts or promotes it.
-    if (after.layer.any { it.cls == io.github.open_carrier_data.check.owner.core.LayerClass.VOICE_IMS && it.removing == null }) OwnerScheduler.layerStep(context)
     return after
 }
 

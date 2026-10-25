@@ -35,6 +35,8 @@ import io.github.open_carrier_data.check.owner.core.RegistrationWatch
 import io.github.open_carrier_data.check.owner.core.Route
 import io.github.open_carrier_data.check.owner.core.SafetyException
 import io.github.open_carrier_data.check.owner.core.ServerStart
+import io.github.open_carrier_data.check.owner.core.TrialGuard
+import io.github.open_carrier_data.check.owner.core.TypedOverride
 import io.github.open_carrier_data.check.owner.core.retrying
 import io.github.open_carrier_data.check.owner.core.sha256
 import kotlinx.coroutines.CompletableDeferred
@@ -84,6 +86,8 @@ object OwnerAccess {
         "android.permission.WRITE_APN_SETTINGS",
         "android.permission.DUMP",
         "android.permission.PACKAGE_USAGE_STATS",
+        // Round 30: the emergency data test's request for NET_CAPABILITY_EIMS, a restricted network.
+        "android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS",
     )
 
     fun privilegedGranted(context: Context): Boolean {
@@ -468,6 +472,24 @@ class PrivilegedPhone(context: Context) : AppSidePhone(context) {
 
     override suspend fun ccClear(slot: Int, subId: Int): CcResult =
         withContext(Dispatchers.IO) { overrideConfig(subId, null) }.also { waitForLoad() }
+
+    /** Round 30's override trials: one typed bundle, never persistent; the trial guard again (never group A or B). */
+    override suspend fun ccSetBundle(slot: Int, subId: Int, values: Map<String, TypedOverride>): CcResult {
+        TrialGuard.check(values.keys)
+        val bundle = try {
+            OverrideBundle.of(values)
+        } catch (e: RuntimeException) {
+            return CcResult(false, "a value does not fit its type")
+        }
+        return withContext(Dispatchers.IO) { overrideConfig(subId, bundle) }.also { waitForLoad() }
+    }
+
+    /**
+     * The phone service's dump, read only for the emergency data test (DataConfigManager,
+     * AccessNetworksManager, DataRetryManager): DUMP and PACKAGE_USAGE_STATS, held since the IWLAN
+     * dumps (2026-10-20). The emergency state and IMS still come from the system APIs.
+     */
+    override suspend fun telephonyText(): String? = local(OwnerCommand.PHONE)?.takeIf { "DataConfigManager-" in it }
 
     /** overrideConfig posts to the loader's handler; give it a moment before the dump is read. */
     private suspend fun waitForLoad() = delay(1_500)
