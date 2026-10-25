@@ -170,10 +170,13 @@
         <!--
             Round 26's passive call watch: the system's PHONE_STATE broadcast (protected; sent to
             holders of READ_PHONE_STATE, waking them) starts the watch of a real call. It reads
-            the call from the registry and never keeps a number.
+            the call from the registry and never keeps a number. Direct-boot aware (2026-10-25):
+            it also notes when each call starts and ends, in device-protected storage, before the
+            first unlock too, so a restart refuses changes only when a call ended just before it.
         -->
         <receiver
             android:name=".owner.PhoneStateReceiver"
+            android:directBootAware="true"
             android:exported="true"
             android:permission="android.permission.READ_PRIVILEGED_PHONE_STATE"
             tools:ignore="ExportedReceiver">

@@ -31,7 +31,9 @@ import io.github.open_carrier_data.check.owner.core.Fetch
 import io.github.open_carrier_data.check.owner.core.Groups
 import io.github.open_carrier_data.check.owner.core.IdleBlock
 import io.github.open_carrier_data.check.owner.core.IdleInputs
+import io.github.open_carrier_data.check.owner.core.DatasetRetry
 import io.github.open_carrier_data.check.owner.core.IdleMoment
+import io.github.open_carrier_data.check.owner.core.RestartWindow
 import io.github.open_carrier_data.check.owner.core.InstallRefusal
 import io.github.open_carrier_data.check.owner.core.InstallState
 import io.github.open_carrier_data.check.owner.core.InstallView
@@ -229,7 +231,8 @@ object OwnerDatasetStep {
     /** The installer's status, stored for the screen. */
     fun status(context: Context, store: StateStore): DatasetStatus {
         val status = DatasetStatus.parse(client(context).status(), System.currentTimeMillis())
-        store.update { it.copy(datasetStatus = status) }
+        // Written only when it changed (the screen asks every 15 s; the time of the read alone is no change).
+        if (store.read().datasetStatus?.copy(readAtMs = 0) != status.copy(readAtMs = 0)) store.update { it.copy(datasetStatus = status) }
         return status
     }
 
@@ -272,38 +275,58 @@ object OwnerDatasetStep {
     }
 
     /**
-     * One round 30 pass: voice loss first (always on, also roaming), then what the stop, safe mode
-     * and roaming allow: stage a newer dataset, activate it in the idle moment, and test. [testNow]:
-     * the owner's "Test now", which runs at once but still under the refusals.
+     * One round 30 pass. First the readiness after a boot, a SIM change or a restart ([OwnerReady]: the SIM loaded,
+     * CarrierSettings's config served, IMS settled; a bounded wait on those events). Then voice loss (always on, also
+     * roaming), then what the stop, safe mode and roaming allow: stage a newer dataset, activate it, and test.
+     * [testNow]: the owner's "Test now" (or its adb trigger), which does all of it in this moment (2026-10-25, "what can
+     * be done now should be done now"): no screen-off, charging or idle wait, only the refusals that name a harm
+     * (a call, emergency callback or SMS mode, 10 minutes after an emergency call, roaming) and safe mode or a halt.
+     * A background pass waits for the idle moment, as it must not disturb the person using the phone.
      */
     suspend fun run(context: Context, store: StateStore, phone: OwnerPhone, sims: List<OwnerSim>, testNow: Boolean = false): String {
         val client = client(context)
         val status = status(context, store)
         if (!status.available) return "no dataset installer (${status.why})"
         val notes = mutableListOf<String>()
+        val (ready, readySims) = if (sims.isEmpty() && !testNow) Pair(null, sims) else OwnerReady.await(context, phone, store)
+        if (ready != null && !ready.ok) return "not ready after ${ready.waitedMs / 1000} s: ${ready.line}; nothing installed or tested now"
+        if (ready != null && ready.waitedMs >= 1_000) notes += "ready after ${ready.waitedMs / 1000} s"
+        val present = readySims.ifEmpty { sims }
         val deadline = System.currentTimeMillis() + TRIALS_START_WITHIN_MS
-        clearLeftoverTrial(context, store, phone, sims)?.let { notes += it }
+        clearLeftoverTrial(context, store, phone, present)?.let { notes += it }
         // The voice-loss trigger, always on (but not while a stop event halts tests and changes: then safe mode is the owner's).
-        if (store.read().stop == null) for (sim in sims) voiceLoss(context, store, phone, client, status, sim)?.let { return (notes + it).joinToString("; ") }
+        if (store.read().stop == null) for (sim in present) voiceLoss(context, store, phone, client, status, sim)?.let { return (notes + it).joinToString("; ") }
         val state = store.read()
         if (status.safeMode.on) return (notes + "safe mode is on (${status.safeMode.by ?: "?"}): the build's dataset serves and tests are stopped").joinToString("; ")
         val halt = state.stop ?: status.changesHalted.reason?.takeIf { status.changesHalted.on } ?: "changes halted".takeIf { status.changesHalted.on }
         if (halt != null) return (notes + "changes halted until you tap Resume: $halt").joinToString("; ")
         if (status.pullAgain) OwnerScheduler.pull(context, force = true)
-        stage(context, store, client, status)?.let { notes += it }
-        val idle = idleBlock(context, store, phone, sims)
-        if (idle != null && !testNow) return (notes + "waits for the idle moment: ${idle.plain}").joinToString("; ")
-        if (idle != null && idle in setOf(IdleBlock.IN_CALL, IdleBlock.CALL_RECENT, IdleBlock.EMERGENCY_MODE, IdleBlock.EMERGENCY_RECENT, IdleBlock.ROAMING)) {
-            return (notes + "not now: ${idle.plain}").joinToString("; ")
+        stage(context, store, client, status, testNow)?.let { notes += it }
+        if (testNow) {
+            ownerBlock(store, phone, present)?.let { return (notes + "not now: $it").joinToString("; ") }
+        } else {
+            idleBlock(context, store, phone, present)?.let { return (notes + "waits for the idle moment: ${it.plain}").joinToString("; ") }
         }
-        activate(context, store, phone, client, sims)?.let { notes += it }
-        notes += campaigns(context, store, phone, client, sims, testNow, deadline)
+        activate(context, store, phone, client, present)?.let { notes += it }
+        notes += campaigns(context, store, phone, client, present, testNow, deadline)
         publish(context, store)
         return notes.joinToString("; ").ifEmpty { "nothing to do" }
     }
 
+    /** What stops "Test now" before it installs: the refusals of every SIM (a call, an emergency state, roaming); null when none holds. */
+    private suspend fun ownerBlock(store: StateStore, phone: OwnerPhone, sims: List<OwnerSim>): String? {
+        for (sim in sims) {
+            val verdict = runCatching { OwnerSession(phone, store, sim).safety() }.getOrNull() ?: return "the refusals could not be read on slot ${sim.slot + 1}"
+            verdict.refusal?.let { return "slot ${sim.slot + 1}: ${it.plain}" }
+        }
+        return null
+    }
+
     /** The idle moment (testsDecide's conditions); null when it holds. */
-    suspend fun idleBlock(context: Context, store: StateStore, phone: OwnerPhone, sims: List<OwnerSim>): IdleBlock? {
+    suspend fun idleBlock(context: Context, store: StateStore, phone: OwnerPhone, sims: List<OwnerSim>): IdleBlock? = IdleMoment.blocker(idleInputs(context, store, phone, sims))
+
+    /** What the idle moment reads, in one pass. The quiet after a call counts real calls, not the app's own mailbox calls. */
+    suspend fun idleInputs(context: Context, store: StateStore, phone: OwnerPhone, sims: List<OwnerSim>): IdleInputs {
         val look = QuietReader(context).read(phone, sampleMs = 0)
         val sim = sims.firstOrNull()
         val verdict = sim?.let { runCatching { OwnerSession(phone, store, it).safety() }.getOrNull() }
@@ -311,37 +334,43 @@ object OwnerDatasetStep {
         val audio = context.getSystemService(AudioManager::class.java)
         val now = System.currentTimeMillis()
         val serverUp = sim?.let { runCatching { OwnerSession(phone, store, it).serverUpMs() }.getOrNull() }
-        return IdleMoment.blocker(
-            IdleInputs(
-                interactive = look.interactive,
-                screenOffForMs = look.screenOffForMs,
-                inCall = look.inCall,
-                lastCallSeenAtMs = state.lastCallSeenAtMs,
-                mediaActive = look.audioIdle?.not(),
-                recording = runCatching { audio?.activeRecordingConfigurations?.isNotEmpty() }.getOrNull(),
-                ecbm = verdict?.emergency?.ecbm,
-                emergencySmsMode = verdict?.emergency?.emergencySmsMode ?: verdict?.emergency?.let { false },
-                emergencySeenAtMs = state.emergencySeen?.firstSeenAtMs,
-                upMs = minOf(SystemClock.elapsedRealtime(), serverUp ?: Long.MAX_VALUE),
-                batteryPercent = look.batteryPercent,
-                charging = look.plugged,
-                roaming = look.roaming,
-                nowMs = now,
-            ),
+        val calls = runCatching { phone.callsSeen() }.getOrNull()
+        return IdleInputs(
+            interactive = look.interactive,
+            screenOffForMs = look.screenOffForMs,
+            inCall = look.inCall,
+            lastCallSeenAtMs = listOfNotNull(state.lastCallSeenAtMs, RestartWindow.lastCallAtMs(calls, own = false)).maxOrNull(),
+            mediaActive = look.audioIdle?.not(),
+            recording = runCatching { audio?.activeRecordingConfigurations?.isNotEmpty() }.getOrNull(),
+            ecbm = verdict?.emergency?.ecbm,
+            emergencySmsMode = verdict?.emergency?.emergencySmsMode ?: verdict?.emergency?.let { false },
+            emergencySeenAtMs = state.emergencySeen?.firstSeenAtMs,
+            upMs = minOf(SystemClock.elapsedRealtime(), serverUp ?: Long.MAX_VALUE),
+            batteryPercent = look.batteryPercent,
+            charging = look.plugged,
+            roaming = look.roaming,
+            nowMs = now,
+            callsSeen = calls,
         )
     }
 
-    /** Stage the pulled dataset when it is newer than the installed one and not staged yet; poll until verified or refused. */
-    private suspend fun stage(context: Context, store: StateStore, client: DatasetClient, status: DatasetStatus): String? {
+    /**
+     * Stage the pulled dataset when it is newer than the installed one and not staged yet; poll until verified or refused.
+     * An install of the same dataset that ended without serving goes again once for each new CarrierSettings and on every
+     * "Test now" ([DatasetRetry]).
+     */
+    private suspend fun stage(context: Context, store: StateStore, client: DatasetClient, status: DatasetStatus, testNow: Boolean): String? {
         val state = store.read()
         val pulled = state.pulled ?: return null
         val dir = dir(context, pulled) ?: return null
         if (status.installed?.datasetDigest == pulled.datasetDigest) return null
         val last = state.install
+        var again: String? = null
         if (last != null && last.datasetDigest == pulled.datasetDigest && last.state != InstallState.CANCELLED && last.state != InstallState.SUPERSEDED) {
-            // Staged already: verified waits for the idle moment, a refusal waits for the next pull.
-            if (last.final || last.state == InstallState.VERIFIED) return null
-            return poll(store, client, last.installId)
+            // Staged already: verified waits for its moment; an ended install goes again only for a new CarrierSettings or "Test now".
+            if (last.state == InstallState.VERIFIED) return null
+            if (!last.final) return poll(store, client, last.installId)
+            again = DatasetRetry.again(last, status, testNow) ?: return null
         }
         val request = StageRequest(File(dir, DatasetFiles.PIN).readText(), pulled.names, pulled.names.associateWith { File(dir, it).path })
         val a = client.stage(request)
@@ -352,8 +381,8 @@ object OwnerDatasetStep {
             return "stage refused: ${a.error}"
         }
         val id = a.str(OcdDataProtocol.INSTALL_ID) ?: return "stage gave no install ID"
-        val first = InstallView(id, a.str(OcdDataProtocol.STATE) ?: InstallState.VERIFYING, datasetDigest = pulled.datasetDigest, commit = pulled.commit)
-        store.update { it.copy(install = first).logged(now, "dataset", "staged ${pulled.label} as $id: ${first.state}") }
+        val first = InstallView(id, a.str(OcdDataProtocol.STATE) ?: InstallState.VERIFYING, datasetDigest = pulled.datasetDigest, commit = pulled.commit, carrierSettings = DatasetRetry.key(status))
+        store.update { it.copy(install = first).logged(now, "dataset", "staged ${pulled.label} as $id: ${first.state}" + (again?.let { " (handed over again: $it)" } ?: "")) }
         if (first.state == InstallState.ALREADY_INSTALLED) return "already installed"
         return poll(store, client, id)
     }
@@ -368,8 +397,8 @@ object OwnerDatasetStep {
             kotlinx.coroutines.delay(2_000)
             waited += 2_000
         }
-        val before = store.read().install
-        store.update { s -> s.copy(install = view.copy(datasetDigest = view.datasetDigest.ifEmpty { before?.datasetDigest.orEmpty() }, commit = view.commit.ifEmpty { before?.commit.orEmpty() })) }
+        val before = store.read().install?.takeIf { it.installId == id }
+        store.update { s -> s.copy(install = view.copy(datasetDigest = view.datasetDigest.ifEmpty { before?.datasetDigest.orEmpty() }, commit = view.commit.ifEmpty { before?.commit.orEmpty() }, carrierSettings = before?.carrierSettings.orEmpty())) }
         val line = "install $id: ${view.state}" + (view.error?.let { " ($it${view.reason?.let { r -> ": $r" } ?: ""})" } ?: "") +
             (if (view.failedChecks.isNotEmpty()) "; failed checks: ${view.failedChecks.joinToString()}" else "")
         store.update { it.logged(System.currentTimeMillis(), "dataset", line).copy(datasetLine = line) }
@@ -720,7 +749,7 @@ class TrialRunner(
     private val sim: OwnerSim,
     private val ctx: DatasetContext?,
     private val status: DatasetStatus,
-    /** What stops the chain for this idle moment; "Test now" stops only for a call, an emergency state or roaming. */
+    /** What stops the chain for this idle moment; "Test now" stops only for a call, an emergency state or roaming ([IdleMoment.OWNER]). */
     private val interrupts: Set<IdleBlock> = INTERRUPTS,
     /** No new trial starts after this (a worker has about 10 minutes); the campaign goes on next time. */
     private val deadline: Long = Long.MAX_VALUE,
@@ -752,8 +781,9 @@ class TrialRunner(
                     notes += "slot ${sim.slot + 1}: the hourly or daily cap of IMS re-registrations is reached; the tests go on in the next idle moment"
                     break
                 }
-                if (OwnerDatasetStep.idleBlock(context, store, phone, listOf(sim))?.let { it in interrupts } == true) {
-                    notes += "slot ${sim.slot + 1}: the phone is in use; the tests go on in the next idle moment"
+                val block = IdleMoment.blockers(OwnerDatasetStep.idleInputs(context, store, phone, listOf(sim))).firstOrNull { it in interrupts }
+                if (block != null) {
+                    notes += "slot ${sim.slot + 1}: ${block.plain}; the tests go on next time"
                     break
                 }
                 val verdict = trial(plan, before, explain)
@@ -1013,8 +1043,11 @@ class TrialRunner(
 
     companion object {
         const val SETTLE_MS = 120_000L
+        /** A background campaign stops when the person picks up the phone: the screen, a call, media, an emergency state, roaming. */
         val INTERRUPTS = setOf(IdleBlock.SCREEN_ON, IdleBlock.IN_CALL, IdleBlock.CALL_RECENT, IdleBlock.MEDIA, IdleBlock.EMERGENCY_MODE, IdleBlock.EMERGENCY_RECENT, IdleBlock.ROAMING)
-        val OWNER_INTERRUPTS = setOf(IdleBlock.IN_CALL, IdleBlock.CALL_RECENT, IdleBlock.EMERGENCY_MODE, IdleBlock.EMERGENCY_RECENT, IdleBlock.ROAMING)
+
+        /** "Test now" stops only for a call, emergency callback or SMS mode and roaming; each trial's refusals add the 10 minutes after an emergency call. */
+        val OWNER_INTERRUPTS = IdleMoment.OWNER
 
         /** IMS, data and service of one SIM as a trial compares them. */
         suspend fun observe(phone: OwnerPhone, store: StateStore, sim: OwnerSim): TrialObs {

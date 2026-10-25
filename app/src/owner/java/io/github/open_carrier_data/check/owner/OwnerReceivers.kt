@@ -144,29 +144,21 @@ class NoticeActionReceiver : BroadcastReceiver() {
 class OwnerBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            // A boot, or an update of the app itself (an adb install over the system copy).
-            // A boot, a soft restart (BOOT_COMPLETED comes again; the window counts from the system server's start), or the app's own update.
+            // A boot, a soft restart (BOOT_COMPLETED comes again), or the app's own update (an adb install over the system copy). The
+            // cleanup runs at once and waits for the SIM, CarrierSettings's config and IMS itself (no fixed 10 minutes since 2026-10-25).
             Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
-                OwnerScheduler.cleanup(context, afterBoot = true, serverUpMs = serverUpMs())
+                // The call watch's record: it covers from now on after the app's own update; a boot only reads it (it ran before the unlock).
+                runCatching { if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) CallSightings.restart(context) else CallSightings.read(context) }
+                OwnerScheduler.cleanup(context)
                 OwnerScheduler.ensureQuiet(context, FileStateStore(context).read().scheduleOn)
             }
             CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED -> {
                 val state = FileStateStore(context).read()
                 // KEEP: a pass already queued or running is never cancelled by its own writes.
-                if (state.anyLive) OwnerScheduler.cleanup(context, afterBoot = true, policy = ExistingWorkPolicy.KEEP, serverUpMs = serverUpMs())
+                if (state.anyLive) OwnerScheduler.cleanup(context, policy = ExistingWorkPolicy.KEEP)
                 // Round 30's voice-loss trigger: a few minutes after any carrier config change while an installed dataset serves.
                 if (state.datasetStatus?.available == true && state.trial30 == null) OwnerScheduler.voiceCheck(context)
             }
         }
     }
-
-    /**
-     * How long the system server has run, from its start property when the
-     * app may read it; else 0, as if it had just started (the cleanup then
-     * waits the full 10 minutes).
-     */
-    private fun serverUpMs(): Long = runCatching {
-        val start = (Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "sys.system_server.start_elapsed") as String).toLong()
-        (android.os.SystemClock.elapsedRealtime() - start).coerceAtLeast(0)
-    }.getOrDefault(0L)
 }

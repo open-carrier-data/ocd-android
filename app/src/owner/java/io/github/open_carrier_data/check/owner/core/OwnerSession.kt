@@ -61,6 +61,7 @@ class OwnerSession(
             seen = store.read().emergencySeen,
             emergencyApi = phone.emergencyApi(),
             serverUpMs = serverUp,
+            callsSeen = phone.callsSeen(),
         )
         val verdict = Refusals.check(input)
         if (verdict.seen != store.read().emergencySeen) store.update { it.copy(emergencySeen = verdict.seen) }

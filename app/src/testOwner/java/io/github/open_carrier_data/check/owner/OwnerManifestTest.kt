@@ -71,6 +71,11 @@ class OwnerManifestTest {
         assertEquals("android.permission.READ_PRIVILEGED_PHONE_STATE", exported["io.github.open_carrier_data.check.owner.PhoneStateReceiver"])
         assertEquals("android.permission.BROADCAST_SMS", exported["io.github.open_carrier_data.check.owner.SelfSmsReceiver"])
         assertTrue("io.github.open_carrier_data.check.owner.CallWatchService" !in exported)
+        // 2026-10-25: only the call watch's receiver runs before the first unlock (it notes call times in device-protected storage).
+        val directBoot = listOf("activity", "provider", "receiver", "service").flatMap { elements(it) }
+            .filter { it.getAttributeNS(android, "directBootAware") == "true" }.map { it.getAttributeNS(android, "name") }
+            .filterNot { it.startsWith("androidx.") }
+        assertEquals(listOf("io.github.open_carrier_data.check.owner.PhoneStateReceiver"), directBoot)
         assertEquals(
             setOf(
                 "io.github.open_carrier_data.check.owner.OwnerActivity", "rikka.shizuku.ShizukuProvider",

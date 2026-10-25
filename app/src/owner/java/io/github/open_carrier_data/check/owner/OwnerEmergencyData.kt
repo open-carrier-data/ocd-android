@@ -100,9 +100,11 @@ object OwnerEmergencyData {
             "nr" -> "nr"
             else -> o?.ps?.rat
         }
+        val calls = runCatching { phone.callsSeen() }.getOrNull()
         val inputs = EimsInputs(
             inCall = QuietReader.inCall(context, registry),
-            lastCallSeenAtMs = state.lastCallSeenAtMs,
+            // Any call, the app's own mailbox calls included (round 30 item 5: never within 10 minutes of a call).
+            lastCallSeenAtMs = listOfNotNull(state.lastCallSeenAtMs, io.github.open_carrier_data.check.owner.core.RestartWindow.lastCallAtMs(calls, own = true)).maxOrNull(),
             emergencySeenAtMs = state.emergencySeen?.firstSeenAtMs,
             upMs = minOf(SystemClock.elapsedRealtime(), runCatching { session.serverUpMs() }.getOrNull() ?: Long.MAX_VALUE),
             ecbm = safety?.emergency?.ecbm,
@@ -116,6 +118,7 @@ object OwnerEmergencyData {
             emergencyTransport = EmergencyDump.emergencyTransport(telephony, sim.slot),
             stopped = state.emergencyStop ?: state.stop ?: status.changesHalted.reason?.takeIf { status.changesHalted.on } ?: "safe mode".takeIf { status.safeMode.on },
             nowMs = now,
+            callsSeen = calls,
         )
         val refusal = EmergencyData.refusal(inputs)
         if (refusal != null) {

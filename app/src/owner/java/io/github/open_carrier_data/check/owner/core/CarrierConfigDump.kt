@@ -128,6 +128,25 @@ data class CcDump(
 
         fun parse(text: String): CcDump = parse(text.lineSequence())
 
+        private val SENT = Regex("^mHasSentConfigChange=\\[(.*)]$")
+
+        /** CarrierConfigLoader's `mHasSentConfigChange`: per phone, whether the config for the SIM now in the slot was loaded and announced. */
+        fun configSent(text: String): Map<Int, Boolean> {
+            val line = text.lineSequence().map { it.trim() }.firstNotNullOfOrNull { SENT.matchEntire(it) } ?: return emptyMap()
+            return line.groupValues[1].split(',').map { it.trim() }.withIndex()
+                .mapNotNull { (i, v) -> v.toBooleanStrictOrNull()?.let { i to it } }.toMap()
+        }
+
+        /**
+         * Whether CarrierSettings (the platform's carrier config package) has served its config for the SIM in [phone]:
+         * its layer is there and the loader announced it. Null when the dump is unreadable.
+         */
+        fun served(text: String?, phone: Int): Boolean? {
+            if (text == null || "Phone Id = " !in text) return null
+            val layer = parse(text).phones[phone]?.get(CcLayer.DEFAULT_APP)
+            return layer != null && configSent(text)[phone] == true
+        }
+
         /** Every key that differs between two dumps, per bundle. Values of the five switches are kept; any other value is dropped. */
         fun diff(before: CcDump, after: CcDump): List<CcChange> {
             val changes = mutableListOf<CcChange>()
