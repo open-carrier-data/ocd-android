@@ -241,9 +241,6 @@ class QuietTest {
         assertEquals(0L, ServerClock.upMs(restarted, ServerSighting(ServerClock.key(blind), 8_000_000)).first)
         // A property after a soft restart says so itself.
         assertEquals(120_000L, ServerClock.upMs(exact.copy(startElapsedMs = 8_880_000, startCount = 2, elapsedMs = 9_000_000), null).first)
-        // The cleanup after BOOT_COMPLETED waits for both windows.
-        assertEquals(10 * 60_000L + 30_000 - 120_000, ServerClock.delayAfterWindowMs(9_000_000, 120_000))
-        assertEquals(30_000L, ServerClock.delayAfterWindowMs(9_000_000, 3_600_000))
     }
 
     private val registry = OwnerFixtures.REGISTRY
@@ -253,7 +250,7 @@ class QuietTest {
         SafetyInputs(registry, null, null, slot = 0, homeMccMnc = "26202", nowMs = now, uptimeMs = 5 * hour, seen = seen, emergencyApi = clear, serverUpMs = serverUp)
 
     @Test
-    fun `a soft restart refuses writes for 10 minutes, as a reboot does`() {
+    fun `without the call watch a soft restart refuses writes for 10 minutes, as a reboot does`() {
         assertNull(Refusals.check(input(serverUp = 11 * 60_000)).refusal)
         assertEquals(Refusal.SYSTEM_RESTARTED, Refusals.check(input(serverUp = 9 * 60_000)).refusal)
         assertNull("not known: the boot window alone", Refusals.check(input(serverUp = null)).refusal)

@@ -19,6 +19,9 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkManager
 import io.github.open_carrier_data.check.owner.core.CallLevels
@@ -99,12 +102,6 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             val tag = withContext(Dispatchers.IO) { OwnerData.bundledTag(getApplication()) }
             _ui.value = _ui.value.copy(bundledTag = tag)
         }
-        viewModelScope.launch {
-            while (isActive) {
-                refresh()
-                delay(3_000)
-            }
-        }
     }
 
     suspend fun refresh() {
@@ -116,6 +113,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         val state = store.read()
         val calls = withContext(Dispatchers.IO) { OwnerData.callsTested(context, state) }
         val run = withContext(Dispatchers.IO) { runCatching { wm.getWorkInfosForUniqueWork(OwnerScheduler.RUN).get() }.getOrNull() }.orEmpty()
+        val testNow = withContext(Dispatchers.IO) { OwnerScheduler.testNowSteps(context) }
         val keys = withContext(Dispatchers.IO) { candidates(state, sims) }
         val zone = java.time.ZoneId.systemDefault()
         val now = System.currentTimeMillis()
@@ -138,7 +136,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             selfSmsLine = SelfSms.line(state.selfSms.lastOrNull(), zone),
             apnCandidates = keys.mapValues { it.value.size },
             reportLines = withContext(Dispatchers.IO) { runCatching { reportLines(state, sims, keys) }.getOrDefault(emptyList()) },
-            stepsToGo = OwnerScheduler.pending(run),
+            stepsToGo = OwnerScheduler.pending(run) + testNow,
             tokenSet = withContext(Dispatchers.IO) { OwnerToken.isSet(context) },
         )
     }
@@ -245,7 +243,10 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     /** Starts a test. The headline turns to "Testing" (TalkBack hears it), so only a failure to start is said. */
     fun test(offs: Boolean, voiceCheck: Boolean, apns: Boolean) = viewModelScope.launch {
         val line = runCatching { OwnerScheduler.runTests(getApplication(), offs = offs, voiceCheckMs = if (voiceCheck) 120_000 else 0, apns = apns) }.getOrNull()
-        if (line?.startsWith("queued") != true) say("Couldn't start the test")
+        when {
+            line?.startsWith("queued already") == true -> say("A test is already running")
+            line?.startsWith("queued") != true -> say("Couldn't start the test")
+        }
         refresh()
     }
 
@@ -450,6 +451,17 @@ class OwnerActivity : ComponentActivity() {
         if (savedInstanceState == null) intent?.getStringExtra(EXTRA_EMERGENCY_DATA_FIRST_USE)?.let { viewModel.emergencyFirstUse(it) }
         // `--ez self_sms_now true` is "Send a test SMS now"; once per start, never again when the activity is recreated, as it may cost an SMS.
         if (savedInstanceState == null && intent?.getBooleanExtra(EXTRA_SELF_SMS_NOW, false) == true) viewModel.selfSmsNow()
+        // `--ez test_now true` is "Test now" with the screen's default options (pull, hand over, install and test, now); once per start.
+        if (savedInstanceState == null) testNowExtra(intent)
+        // The screen reads the state while it is shown only; with the screen off or the page closed, nothing polls.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (isActive) {
+                    viewModel.refresh()
+                    delay(3_000)
+                }
+            }
+        }
         setContent {
             OcdCheckTheme {
                 val ui by viewModel.ui.collectAsState()
@@ -458,7 +470,23 @@ class OwnerActivity : ComponentActivity() {
         }
     }
 
+    /** `am start` on a running page brings a new intent here when the task is reused; "Test now" from adb works then too. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        testNowExtra(intent)
+    }
+
+    private fun testNowExtra(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_TEST_NOW, false) != true) return
+        val options = TestOptions()
+        Log.i(TEST_NOW_TAG, "test now requested by intent")
+        viewModel.test(options.offs, options.voice, options.apns)
+    }
+
     companion object {
+        const val EXTRA_TEST_NOW = "test_now"
+        const val TEST_NOW_TAG = "OcdCheckTestNow"
         const val EXTRA_CALLS_OUT_DRY_RUN = "calls_out_dry_run"
         const val EXTRA_EMERGENCY_DATA_TEST = "emergency_data_test"
         const val EXTRA_EMERGENCY_DATA_FIRST_USE = "emergency_data_first_use"

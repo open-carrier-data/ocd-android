@@ -303,6 +303,8 @@ data class InstallView(
     val generatedAt: String = "",
     val changes: List<SubChanges> = emptyList(),
     val failedChecks: List<String> = emptyList(),
+    /** Which CarrierSettings took the hand-over ([DatasetRetry.key]); empty in records before 2026-10-25. */
+    val carrierSettings: String = "",
 ) {
     val final: Boolean get() = state in InstallState.FINAL
 
@@ -324,6 +326,27 @@ data class InstallView(
                 failedChecks = checks,
             )
         }
+    }
+}
+
+/**
+ * When a dataset whose last install ended without serving goes to CarrierSettings again
+ * (2026-10-25: a `storage` refusal of main a4675ce87e02 was a CarrierSettings bug, fixed in the
+ * next ROM, and the app never handed the same commit over again). Again once for each new
+ * CarrierSettings (its build incremental, provider protocol or build pin), and on every "Test now";
+ * never in a loop for one and the same CarrierSettings.
+ */
+object DatasetRetry {
+    /** The CarrierSettings that answered [status]: the build incremental, the provider protocol and the build pin. */
+    fun key(status: DatasetStatus): String =
+        listOf(status.build.incremental, status.protocol.toString(), status.buildPin?.commit.orEmpty(), status.buildPin?.datasetDigest.orEmpty()).joinToString("|")
+
+    /** Why [last] (the same dataset, ended) is handed over again now, or null. */
+    fun again(last: InstallView, status: DatasetStatus, testNow: Boolean): String? = when {
+        !last.final -> null
+        testNow -> "your request"
+        last.carrierSettings != key(status) -> "CarrierSettings changed since its ${last.state.replace('_', ' ')} of ${last.installId}"
+        else -> null
     }
 }
 

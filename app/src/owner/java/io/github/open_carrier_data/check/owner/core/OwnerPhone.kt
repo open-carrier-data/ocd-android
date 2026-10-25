@@ -57,6 +57,9 @@ interface OwnerPhone {
     /** When the running system_server started ([ServerClock]); null when the route cannot tell. */
     suspend fun serverStart(): ServerStart? = null
 
+    /** The call watch's record across restarts ([CallsSeen]); null: none, so a restart's first 10 minutes refuse. */
+    suspend fun callsSeen(): CallsSeen? = null
+
     /**
      * Starts watching the IMS registrations of one subscription (the
      * registration callback): a fresh REGISTER after a change is the stronger

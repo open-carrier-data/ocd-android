@@ -227,6 +227,8 @@ abstract class AppSidePhone(protected val context: Context) : OwnerPhone {
         Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, name) as String
     }.getOrNull()?.takeIf { it.isNotEmpty() }
 
+    override suspend fun callsSeen(): io.github.open_carrier_data.check.owner.core.CallsSeen = withContext(Dispatchers.IO) { CallSightings.read(context) }
+
     override suspend fun watchRegistrations(subId: Int): RegistrationWatch? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) ImsRegistrationWatch.start(context, subId) else null
 }

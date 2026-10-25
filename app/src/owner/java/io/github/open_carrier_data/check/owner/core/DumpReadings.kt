@@ -138,7 +138,7 @@ data class ServerSighting(val key: String, val firstSeenElapsedMs: Long)
 /**
  * The soft-restart gap (2026-10-20): a restart of system_server clears the
  * registry's emergency-call field just as a reboot does, but the elapsed
- * clock runs on, so the 10 minutes after boot do not cover it. The time
+ * clock runs on, so the time since the boot does not show it. The time
  * since the server started comes from its start property (SystemServer sets
  * it at every start) when SELinux lets the app read it; else from the first
  * time the app saw this server (boot ID, zygote's PID, start count), and a
@@ -155,10 +155,6 @@ object ServerClock {
         val byProperty = start.startElapsedMs?.takeIf { it in 0..start.elapsedMs }?.let { start.elapsedMs - it }
         return (byProperty ?: bySighting) to sighting
     }
-
-    /** The delay that puts a job after the window: [Refusals.EMERGENCY_WINDOW_MS] after the boot or the server start, plus a margin. */
-    fun delayAfterWindowMs(elapsedMs: Long, serverUpMs: Long?): Long =
-        (Refusals.EMERGENCY_WINDOW_MS - minOf(elapsedMs, serverUpMs ?: elapsedMs)).coerceAtLeast(0) + 30_000
 }
 
 /** One IMS registration event from the registration callback, after a change: a fresh REGISTER is the stronger result. */

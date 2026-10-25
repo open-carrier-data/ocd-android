@@ -116,6 +116,8 @@ data class EimsInputs(
     /** The app's or CarrierSettings's stop (a stop event of this test included). */
     val stopped: String?,
     val nowMs: Long,
+    /** The call watch's record across restarts ([RestartWindow]); null: none, so the first hour after a restart refuses. */
+    val callsSeen: CallsSeen? = null,
 )
 
 object EmergencyData {
@@ -154,7 +156,9 @@ object EmergencyData {
         i.inCall != false -> "a call is up, ringing, held or being set up, or the call state cannot be read"
         i.lastCallSeenAtMs != null && i.nowMs - i.lastCallSeenAtMs < CALL_QUIET_MS -> "a call ended less than 10 minutes ago"
         i.emergencySeenAtMs != null && i.nowMs - i.emergencySeenAtMs < EMERGENCY_QUIET_MS -> "an emergency call was seen less than 60 minutes ago"
-        i.upMs < EMERGENCY_QUIET_MS -> "the phone or its system started less than 60 minutes ago; an emergency call before cannot be ruled out"
+        RestartWindow.emergencyAtMs(i.callsSeen)?.let { i.nowMs - it < EMERGENCY_QUIET_MS } == true -> "an emergency call was seen less than 60 minutes ago"
+        i.upMs < EMERGENCY_QUIET_MS && !RestartWindow.clear(i.callsSeen, i.nowMs - i.upMs, i.nowMs, EMERGENCY_QUIET_MS) ->
+            "the phone or its system started less than 60 minutes ago and the call watch cannot rule out an emergency call just before"
         i.ecbm != false -> "emergency callback mode, or it cannot be read"
         i.emergencySmsMode != false -> "emergency SMS mode, or it cannot be read"
         i.roaming != false -> "roaming (national roaming included), or it cannot be read"

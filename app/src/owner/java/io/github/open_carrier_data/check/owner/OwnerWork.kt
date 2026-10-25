@@ -2,7 +2,6 @@ package io.github.open_carrier_data.check.owner
 
 import android.content.Context
 import android.os.Build
-import android.os.SystemClock
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -54,7 +53,6 @@ import io.github.open_carrier_data.check.owner.core.RunOptions
 import io.github.open_carrier_data.check.owner.core.RunResult
 import io.github.open_carrier_data.check.owner.core.RunSummary
 import io.github.open_carrier_data.check.owner.core.SafetyException
-import io.github.open_carrier_data.check.owner.core.ServerClock
 import io.github.open_carrier_data.check.owner.core.recorded
 import io.github.open_carrier_data.check.owner.core.update
 import kotlinx.coroutines.CancellationException
@@ -98,10 +96,13 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 }
                 STEP_QUIET -> quiet(store)
                 STEP_CLEANUP -> cleanup(store)
-                // Round 30: stage, activate in the idle moment, test, record; also the voice-loss trigger.
+                // Round 30: stage, activate (in the idle moment, or at once for "Test now"), test, record; also the voice-loss trigger.
                 STEP_DATASET, STEP_VOICE_CHECK -> withPhone(store) { _, sims, phone ->
                     val testNow = inputData.getBoolean(KEY_TEST_NOW, false)
+                    // "Test now" in the device log too, so a script over adb can follow it (no identifier in these lines).
+                    if (testNow) runCatching { android.util.Log.i(OwnerActivity.TEST_NOW_TAG, "dataset step started, ${android.os.SystemClock.elapsedRealtime() / 1000} s after boot") }
                     val line = OwnerDatasetStep.run(applicationContext, store, phone, sims, testNow)
+                    if (testNow) runCatching { android.util.Log.i(OwnerActivity.TEST_NOW_TAG, "dataset step ended: ${line.take(900)}") }
                     if (!line.startsWith("no dataset installer")) store.update { it.logged(System.currentTimeMillis(), "dataset", (if (testNow) "test now: " else "") + line) }
                     OwnerScheduler.autoReport(applicationContext)
                     Result.success()
@@ -204,9 +205,17 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         }
     }
 
-    /** Leftover cleanup and the per-SIM re-apply; retried while a refusal holds (in a call, just booted, Shizuku not up yet). */
+    /** Leftover cleanup and the per-SIM re-apply; retried while a refusal holds (in a call, a call just before a restart, Shizuku not up yet). */
     private suspend fun cleanup(store: FileStateStore): Result {
-        val summary = withPhone(store) { runner, sims, phone ->
+        val summary = withPhone(store) { runner, listed, phone ->
+            // Something to clear needs the slot's config in place first: the bounded readiness wait, as a test does.
+            val sims = if (store.read().let { it.trial30 != null || it.anyLive }) {
+                val (ready, present) = OwnerReady.await(applicationContext, phone, store)
+                if (!ready.ok) return@withPhone "waits: not ready after ${ready.waitedMs / 1000} s (${ready.line})"
+                present.ifEmpty { listed }
+            } else {
+                listed
+            }
             // Round 30: a trial a crash left goes first; then the keeps of earlier builds go once (values come from the dataset now).
             val leftover = OwnerDatasetStep.clearLeftoverTrial(applicationContext, store, phone, sims)
             if (!store.read().keepsDropped && store.read().stop == null) {
@@ -777,6 +786,9 @@ object OwnerScheduler {
     const val VOICE_CHECK = "owner-voice-check"
     const val EMERGENCY_DATA = "owner-emergency-data"
 
+    /** The tag of a "Test now"'s pull and dataset step (round 30). */
+    const val TEST_NOW = "owner-test-now"
+
     /** The quiet job runs while Android counts the phone idle (screen off about half an hour); the job checks the rest itself. */
     private fun quietConstraints(): Constraints = Constraints.Builder().setRequiresDeviceIdle(true).build()
 
@@ -811,16 +823,13 @@ object OwnerScheduler {
         }.build()
 
     /**
-     * Leftover cleanup and per-SIM re-apply; after a boot or the app's own
-     * update it waits out the 10 minutes in which a change is refused anyway,
-     * counted from the boot or from the system server's start, whichever is
-     * later (a soft restart, 2026-10-20).
+     * Leftover cleanup and per-SIM re-apply, at once. After a boot it no longer waits out a fixed 10 minutes
+     * (2026-10-25): the step waits for the SIM, CarrierSettings's config and IMS ([OwnerReady]) when something
+     * is recorded as live, and the refusals decide; a refusal retries it with a 2-minute linear back-off.
      */
-    fun cleanup(context: Context, afterBoot: Boolean = false, policy: ExistingWorkPolicy = ExistingWorkPolicy.REPLACE, serverUpMs: Long? = null) {
-        val delay = if (afterBoot) ServerClock.delayAfterWindowMs(SystemClock.elapsedRealtime(), serverUpMs ?: 0) else 0
+    fun cleanup(context: Context, policy: ExistingWorkPolicy = ExistingWorkPolicy.REPLACE) {
         val request = OneTimeWorkRequestBuilder<OwnerWorker>()
             .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_CLEANUP))
-            .setInitialDelay(delay, TimeUnit.MILLISECONDS)
             .setBackoffCriteria(BackoffPolicy.LINEAR, 2, TimeUnit.MINUTES)
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork(CLEANUP, policy, request)
@@ -834,6 +843,8 @@ object OwnerScheduler {
      */
     fun stopTests(context: Context) {
         WorkManager.getInstance(context).cancelUniqueWork(RUN)
+        // Round 30's "Test now": a cancelled dataset step clears its trial overrides on the way out (TrialRunner.endChain).
+        WorkManager.getInstance(context).cancelAllWorkByTag(TEST_NOW)
         val now = System.currentTimeMillis()
         FileStateStore(context).update { s ->
             s.runs.filter { it.endedMs == null }.fold(s) { acc, run -> acc.withRun(run.copy(endedMs = now, note = "stopped by the owner")) }
@@ -842,24 +853,37 @@ object OwnerScheduler {
         cleanup(context, policy = ExistingWorkPolicy.KEEP)
     }
 
-    /** Round 30: the dataset step soon (stage, activate in the idle moment, test); [testNow] runs at once under the refusals. */
-    fun dataset(context: Context, testNow: Boolean = false, delayMs: Long = 0) {
+    /**
+     * Round 30: the dataset step (stage, activate, test). A background step waits for the idle moment; [testNow] is
+     * "Test now", which pulls, hands over, installs and tests in this moment, under the refusals only. Returns false
+     * when a "Test now" is already under way (it is never cancelled by a second press).
+     */
+    fun dataset(context: Context, testNow: Boolean = false, delayMs: Long = 0): Boolean {
+        val wm = WorkManager.getInstance(context)
         val request = OneTimeWorkRequestBuilder<OwnerWorker>()
             .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_DATASET, OwnerWorker.KEY_TEST_NOW to testNow))
             .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
+            .apply { if (testNow) addTag(TEST_NOW) }
             .build()
-        val wm = WorkManager.getInstance(context)
         if (!testNow) {
             wm.enqueueUniqueWork(DATASET, ExistingWorkPolicy.KEEP, request)
-            return
+            return true
         }
-        // "Test now": the pull first (a failed pull never holds the test up), then the hand-over, the install and the tests.
+        if (testNowActive(context)) return false
+        // "Test now": the pull first, then the hand-over, the install and the tests. No network constraint: a pull that
+        // fails offline never holds the test up, and the test runs on the data the phone has.
         val pull = OneTimeWorkRequestBuilder<OwnerWorker>()
             .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_PULL, OwnerWorker.KEY_IN_RUN to true))
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .addTag(TEST_NOW)
             .build()
         wm.beginUniqueWork(DATASET, ExistingWorkPolicy.REPLACE, pull).then(request).enqueue()
+        return true
     }
+
+    /** The steps of a "Test now" still to run or running. */
+    fun testNowSteps(context: Context): Int = runCatching { pending(WorkManager.getInstance(context).getWorkInfosByTag(TEST_NOW).get()) }.getOrDefault(0)
+
+    fun testNowActive(context: Context): Boolean = testNowSteps(context) > 0
 
     /** The voice-loss trigger a few minutes after a change (an install, a record, a carrier config change). */
     fun voiceCheck(context: Context, delayMs: Long = TimeUnit.MINUTES.toMillis(3)) {
@@ -1006,11 +1030,11 @@ object OwnerScheduler {
 
     /** The owner's "Test now": one step per SIM and feature, then the APN rows, then the end mark. */
     suspend fun runTests(context: Context, offs: Boolean, voiceCheckMs: Long, apns: Boolean): String {
-        // Round 30: "Test now" pulls, hands over and installs at once (still under the refusals), then tests every changed value together.
+        // Round 30: "Test now" pulls, hands over, installs and tests every changed value together, now (only the refusals stop it).
         val status = OwnerDatasetStep.status(context, FileStateStore(context))
         if (status.available) {
-            dataset(context, testNow = true)
-            FileStateStore(context).update { it.copy(undone = emptyList()).logged(System.currentTimeMillis(), "run", "test now: pull, hand over, install in this idle moment, and test together") }
+            if (!dataset(context, testNow = true)) return "queued already: a test is under way"
+            FileStateStore(context).update { it.copy(undone = emptyList()).logged(System.currentTimeMillis(), "run", "test now: pull, hand over, install and test, now") }
             return "queued: pull, install and test"
         }
         val sims = OwnerData.sims(context)

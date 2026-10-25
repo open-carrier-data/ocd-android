@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.SystemClock
+import android.os.UserManager
 import android.provider.CallLog
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
@@ -217,11 +218,24 @@ class PhoneStateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
         val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
+        // The call watch's record across restarts first, also before the first unlock (device-protected storage, times only).
+        runCatching {
+            when (state) {
+                TelephonyManager.EXTRA_STATE_RINGING, TelephonyManager.EXTRA_STATE_OFFHOOK -> CallSightings.started(context)
+                // A second call may still be up on the other SIM.
+                TelephonyManager.EXTRA_STATE_IDLE -> if (!inCall(context)) CallSightings.ended(context)
+            }
+        }
         if (state != TelephonyManager.EXTRA_STATE_RINGING && state != TelephonyManager.EXTRA_STATE_OFFHOOK) return
+        // Before the first unlock only the record above: the watch and the state file need credential storage.
+        if (context.getSystemService(UserManager::class.java)?.isUserUnlocked != true) return
         if (!OwnerAccess.privilegedGranted(context)) return
         runCatching { context.startService(Intent(context, CallWatchService::class.java)) }
             .onFailure { e -> FileStateStore(context).update { it.logged(System.currentTimeMillis(), "call_watch", "the call watch could not start: ${e.javaClass.simpleName}") } }
     }
+
+    @SuppressLint("MissingPermission")
+    private fun inCall(context: Context): Boolean = runCatching { context.getSystemService(TelecomManager::class.java)?.isInCall == true }.getOrDefault(false)
 }
 
 /**
@@ -297,6 +311,8 @@ class CallWatchService : Service() {
         val ended = SystemClock.elapsedRealtime()
         val store = FileStateStore(context)
         if (emergency) {
+            // Kept for the refusals across restarts: when it ended, never the number.
+            runCatching { CallSightings.emergency(context, System.currentTimeMillis() - (ended - started)) }
             store.update { it.logged(System.currentTimeMillis(), "call_watch", "a call was not recorded: an emergency call showed") }
             return
         }

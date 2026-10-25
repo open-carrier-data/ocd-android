@@ -57,12 +57,21 @@ import javax.net.ssl.HttpsURLConnection
 class FileStateStore(context: Context) : StateStore {
     private val file = File(context.filesDir, "owner-state.json")
 
+    /**
+     * The state, decoded once per version of the file: the screen asks every few seconds and the file is
+     * over 100 KB, so it is read again only when its time or size changed (2026-10-25: re-reading it twice
+     * every 3 s with the screen off freed about 10 MB every 30 s). [OwnerState] is immutable, so the copy is shared.
+     */
     override fun read(): OwnerState = synchronized(LOCK) {
         if (!file.isFile) return OwnerState()
-        runCatching { OwnerState.decode(file.readText()) }.getOrElse {
-            // An unreadable state must not look like "nothing live": the stop flag says so.
-            OwnerState(stop = "state_file_unreadable")
-        }
+        val stamp = file.lastModified() to file.length()
+        cached?.takeIf { it.path == file.path && it.stamp == stamp }?.let { return it.state }
+        runCatching { OwnerState.decode(file.readText()) }
+            .onSuccess { cached = Cached(file.path, stamp, it) }
+            .getOrElse {
+                // An unreadable state must not look like "nothing live": the stop flag says so.
+                OwnerState(stop = "state_file_unreadable")
+            }
     }
 
     override fun write(state: OwnerState) = synchronized(LOCK) {
@@ -72,8 +81,11 @@ class FileStateStore(context: Context) : StateStore {
             out.fd.sync()
         }
         if (!tmp.renameTo(file)) throw IOException("state file not replaced")
+        cached = Cached(file.path, file.lastModified() to file.length(), state)
         trace(state)
     }
+
+    private class Cached(val path: String, val stamp: Pair<Long, Long>, val state: OwnerState)
 
     /**
      * One read, change and write under the process's state lock, for updates that may race each
@@ -97,6 +109,10 @@ class FileStateStore(context: Context) : StateStore {
 
     companion object {
         private val LOCK = Any()
+
+        /** The last state read or written, with the file's time and size then. */
+        @Volatile
+        private var cached: Cached? = null
         const val TRACE_TAG = "OcdCheckCalls"
         private val TRACED = setOf("calls_out", "call_watch", "provisional", "self_sms", "mms")
 

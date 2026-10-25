@@ -488,12 +488,14 @@ data class IdleInputs(
     val emergencySmsMode: Boolean?,
     /** The first sighting of an emergency call, wall clock ([EmergencySeen]). */
     val emergencySeenAtMs: Long?,
-    /** How long the phone (or the system server, whichever is shorter) has run: an emergency call before it cannot be ruled out. */
+    /** How long the phone (or the system server, whichever is shorter) has run: the call watch must rule out an emergency call before it. */
     val upMs: Long,
     val batteryPercent: Int?,
     val charging: Boolean?,
     val roaming: Boolean?,
     val nowMs: Long,
+    /** The call watch's record across restarts ([RestartWindow]); null: none, so the first hour after a restart waits. */
+    val callsSeen: CallsSeen? = null,
 )
 
 enum class IdleBlock(val wire: String, val plain: String) {
@@ -508,25 +510,45 @@ enum class IdleBlock(val wire: String, val plain: String) {
     ROAMING("roaming", "the phone is roaming"),
 }
 
-/** The phone counts as not in use only when all of testsDecide's conditions hold. No night and no Wi-Fi requirement otherwise. */
+/**
+ * The phone counts as not in use only when all of testsDecide's conditions hold. No night and no Wi-Fi
+ * requirement otherwise. Background runs wait for it, as they must not disturb the person using the
+ * phone; "Test now" does not ([OWNER]).
+ */
 object IdleMoment {
     val SCREEN_OFF_MS = TimeUnit.MINUTES.toMillis(2)
     val CALL_QUIET_MS = TimeUnit.MINUTES.toMillis(10)
     val EMERGENCY_QUIET_MS = TimeUnit.MINUTES.toMillis(60)
     const val MIN_BATTERY = 20
 
-    fun blocker(i: IdleInputs): IdleBlock? = when {
-        i.interactive != false -> IdleBlock.SCREEN_ON
-        i.screenOffForMs == null || i.screenOffForMs < SCREEN_OFF_MS -> IdleBlock.SCREEN_ON_RECENTLY
-        i.inCall != false -> IdleBlock.IN_CALL
-        i.lastCallSeenAtMs != null && i.nowMs - i.lastCallSeenAtMs < CALL_QUIET_MS -> IdleBlock.CALL_RECENT
-        i.mediaActive != false || i.recording != false -> IdleBlock.MEDIA
-        i.ecbm != false || i.emergencySmsMode != false -> IdleBlock.EMERGENCY_MODE
-        i.emergencySeenAtMs != null && i.nowMs - i.emergencySeenAtMs < EMERGENCY_QUIET_MS -> IdleBlock.EMERGENCY_RECENT
-        i.upMs < EMERGENCY_QUIET_MS -> IdleBlock.EMERGENCY_RECENT
-        (i.batteryPercent == null || i.batteryPercent < MIN_BATTERY) && i.charging != true -> IdleBlock.BATTERY_LOW
-        i.roaming != false -> IdleBlock.ROAMING
-        else -> null
+    /**
+     * What still stops "Test now" and its trials (2026-10-25): a call, emergency callback or SMS mode, roaming.
+     * The 10 minutes after an emergency call are the refusals' ([Refusals]); the screen, media, the battery and
+     * the quiet after an ordinary call are the person's, who pressed the button.
+     */
+    val OWNER = setOf(IdleBlock.IN_CALL, IdleBlock.EMERGENCY_MODE, IdleBlock.ROAMING)
+
+    /** The first condition that does not hold; null in the idle moment. */
+    fun blocker(i: IdleInputs): IdleBlock? = blockers(i).firstOrNull()
+
+    /** Every condition that does not hold, in the order above. */
+    fun blockers(i: IdleInputs): List<IdleBlock> = buildList {
+        if (i.interactive != false) add(IdleBlock.SCREEN_ON)
+        if (i.screenOffForMs == null || i.screenOffForMs < SCREEN_OFF_MS) add(IdleBlock.SCREEN_ON_RECENTLY)
+        if (i.inCall != false) add(IdleBlock.IN_CALL)
+        if (i.lastCallSeenAtMs != null && i.nowMs - i.lastCallSeenAtMs < CALL_QUIET_MS) add(IdleBlock.CALL_RECENT)
+        if (i.mediaActive != false || i.recording != false) add(IdleBlock.MEDIA)
+        if (i.ecbm != false || i.emergencySmsMode != false) add(IdleBlock.EMERGENCY_MODE)
+        val watched = RestartWindow.emergencyAtMs(i.callsSeen)
+        if ((i.emergencySeenAtMs != null && i.nowMs - i.emergencySeenAtMs < EMERGENCY_QUIET_MS) ||
+            (watched != null && i.nowMs - watched < EMERGENCY_QUIET_MS) ||
+            // The first hour after a restart only when the call watch cannot rule out an emergency call just before it.
+            (i.upMs < EMERGENCY_QUIET_MS && !RestartWindow.clear(i.callsSeen, i.nowMs - i.upMs, i.nowMs, EMERGENCY_QUIET_MS))
+        ) {
+            add(IdleBlock.EMERGENCY_RECENT)
+        }
+        if ((i.batteryPercent == null || i.batteryPercent < MIN_BATTERY) && i.charging != true) add(IdleBlock.BATTERY_LOW)
+        if (i.roaming != false) add(IdleBlock.ROAMING)
     }
 }
 
