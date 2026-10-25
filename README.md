@@ -1,8 +1,10 @@
 # OCD Check
 
-OCD Check is an Android app that reads a phone's SIM, network and carrier settings and compares them with [Open Carrier Data](https://github.com/open-carrier-data/open-carrier-data) (OCD). Its debug and release builds are read-only: they change nothing on the phone, and they have no internet permission, so they cannot send anything. A separate `owner` build, only for the owner's own phones, tests, applies and reverts carrier settings; see [The owner build](#the-owner-build).
+> **Early development.** Open Carrier Data is in early development. Data, formats, tools and apps change often, and values can be wrong or missing. Don't rely on it for anything important yet. Feedback and reports are welcome.
+>
+> OCD Check is a work in progress, version 0.4.0. It has no releases, is not on any app store and is not meant for general use yet.
 
-> **Early development.** This app is a work in progress, version 0.3.0. It has no releases, is not on any app store and is not meant for general use yet. Interfaces, data formats and behaviour change without notice.
+OCD Check is an Android app that reads a phone's SIM, network and carrier settings and compares them with [Open Carrier Data](https://github.com/open-carrier-data/open-carrier-data) (OCD). Its debug and release builds are read-only: they change nothing on the phone, and they have no internet permission, so they cannot send anything. A separate `owner` build, only for the owner's own phones, tests, applies and reverts carrier settings; see [The owner build](#the-owner-build).
 
 **Status: early; source public, no releases.**
 - **The read-only builds** (debug and release) are stage 2 of the plan (view only, normal app) plus stage 2b (the optional read-only Shizuku deep check); since OCD's round 17 the device records; since rounds 18, 19 and 22 the IMS reader for Android's own IMS (stage 2c), the guided call test (stage 2d) and the hint for a `supported` summary next to `off` device records; and since round 23 the incoming call of the guided call test with a local T2 status, and the guided switch step (AP3). They first ran on a phone on 2026-10-13 (Galaxy A50, Android 14, LIDL Connect SIM). They stay read-only; a build that writes on anyone else's phone waits for OCD's trigger AV2 and its round.
