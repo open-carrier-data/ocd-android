@@ -102,6 +102,8 @@ class OwnerManifestTest {
         val activity = elements("activity").single { it.getAttributeNS(android, "name") == "io.github.open_carrier_data.check.owner.OwnerActivity" }
         val actions = activity.getElementsByTagName("action").let { n -> (0 until n.length).map { (n.item(it) as Element).getAttributeNS(android, "name") } }
         assertEquals(listOf("com.android.settings.action.IA_SETTINGS"), actions)
+        // The adb extras reach an open page in onNewIntent (2026-10-26: `am start` only brought the task to the front).
+        assertEquals("singleTop", activity.getAttributeNS(android, "launchMode"))
         val meta = activity.getElementsByTagName("meta-data").let { n -> (0 until n.length).map { n.item(it) as Element } }
             .associate { it.getAttributeNS(android, "name") to (it.getAttributeNS(android, "value").ifEmpty { it.getAttributeNS(android, "resource") }) }
         // CategoryKey.CATEGORY_NETWORK in AOSP 16 / LineageOS 23.2 SettingsLib.

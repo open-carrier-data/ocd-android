@@ -118,9 +118,15 @@
             (the system uid), Settings search (SettingsIntelligence holds it) and adb open it;
             a normal app cannot.
         -->
+        <!--
+            singleTop (2026-10-26): an `am start` with an extra (test_now, self_sms_now, ...) reaches
+            the page in onNewIntent when its task is already open; otherwise Android only brings the
+            task to the front and the extra is lost.
+        -->
         <activity
             android:name=".owner.OwnerActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:icon="@drawable/ic_settings_ocd"
             android:label="@string/owner_tools"
             android:permission="android.permission.MODIFY_PHONE_STATE">
