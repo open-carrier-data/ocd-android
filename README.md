@@ -645,6 +645,9 @@ To move to newer libraries, install build-tools 35 or later, raise AGP, and then
 | `app/src/owner/java/.../owner/` | the two routes (`OwnerAccess.kt`), the Shizuku service, the data pull, WorkManager jobs, the boot and revert-all receivers, the notification and the owner screen; round 26's mailbox call and passive call watch (`OwnerCalls.kt`) and the MMS probe and data SMS (`OwnerMessages.kt`) |
 | `app/src/owner/assets/` | the owner build's copy of OCD's public `schemas/observed-summary.schema.json`, and `mms-ended.json` (the networks recorded with MMS ended, round 26) |
 | `app/src/owner/priv-app/` | the privapp-permissions allowlist (with the hidden-API entry) for the privileged route, and the default-permissions file for a ROM build |
+| `app/src/owner/java/.../owner/core/Tester.kt` | round 31: the owner build's and the ROM build's policy (the opt-in, the free flags, the token, the emergency data test's switch) and the calibrated IMS stacks |
+| `app/src/rom/priv-app/` | round 31: the ROM build's privapp-permissions (the restricted network denied until the builder turns the emergency data test on), default-permissions and sysconfig files; the build type `rom` compiles `app/src/owner/` |
+| `app/src/testRom/` | the ROM build's own tests (`testRomUnitTest`) |
 
 ## Licence
 
