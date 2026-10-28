@@ -82,7 +82,7 @@ data class OwnerUi(
     /** The MMS line per SIM ("not checked, the network no longer offers MMS", "access point reachable"). */
     val mmsLines: List<String> = emptyList(),
     val selfSmsLine: String? = null,
-    /** Round 30: CarrierSettings's dataset installer as it last answered (serving, safe mode, changes halted); null before the first look. */
+    /** Round 30: CarrierSettings's dataset installer as it last answered (serving, changes halted); null before the first look. */
     val dataset: io.github.open_carrier_data.check.owner.core.DatasetStatus? = null,
     /** Round 29: the owner entered a token for automatic reports ([OwnerToken]); its value is never in the UI state. */
     val tokenSet: Boolean = false,
@@ -152,17 +152,16 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         return status
     }
 
-    /** Safe mode on or off, through CarrierSettings, which owns it (round 30). */
-    fun setSafeMode(on: Boolean) {
-        OwnerScheduler.safeMode(getApplication(), on)
-        datasetCache = null
-        say(if (on) "Turning on safe mode" else "Turning off safe mode")
-    }
-
     /** The emergency data test by hand (its first use, with adb logcat streamed). */
     fun emergencyData(slot: Int) {
         OwnerScheduler.emergencyData(getApplication(), slot)
         say("Emergency data test queued")
+    }
+
+    /** Round 31: the default emergency APN cycle's first use by hand (adb logcat streamed): install and restore, no EIMS request. */
+    fun emergencyDefaultFirstUse(slot: Int) {
+        OwnerScheduler.emergencyDefaultFirstUse(getApplication(), slot)
+        say("Emergency default APN first use queued")
     }
 
     /** The owner records the emergency data test's first use: passed, or not meaningful on this phone. */
@@ -324,9 +323,33 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    /**
+     * Round 31 (SM9), ROM builds: the person's opt-in for the active tests, off by default. On, the
+     * mailbox calls go live and the test SMS is on (both only where the allowlist marks them free);
+     * off, both go back off and only the passive checks run. The owner build has its own switches.
+     */
+    fun setActiveTests(on: Boolean) = viewModelScope.launch {
+        if (OwnerTester.build == io.github.open_carrier_data.check.owner.core.TesterBuild.OWNER) return@launch
+        val now = System.currentTimeMillis()
+        store.update {
+            it.copy(
+                activeTests = io.github.open_carrier_data.check.owner.core.ActiveTestsOptIn(on, now),
+                callsOutMode = if (on) CallsOutMode.LIVE else CallsOutMode.DRY_RUN,
+                selfSmsOn = on,
+            ).logged(now, "opt_in", if (on) "the person turned the test calls on (mailbox calls, test SMS, setting trials, the emergency data test where the ROM has it on)" else "the person turned the test calls off: only the passive checks run")
+        }
+        // The tester declaration (SM7) follows at once in the dataset step.
+        OwnerScheduler.dataset(getApplication())
+        refresh()
+    }
+
     /** Round 29: stores the owner's fine-grained token for automatic reports, encrypted; never logged or shown. */
     fun saveToken(text: String, done: (Boolean) -> Unit) = viewModelScope.launch {
         val context = getApplication<Application>()
+        if (!OwnerTester.policy(store.read()).sendsWithToken) {
+            done(false)
+            return@launch
+        }
         val problem = withContext(Dispatchers.IO) { OwnerToken.save(context, text) }
         if (problem != null) {
             say(problem)
@@ -438,7 +461,7 @@ class OwnerActivity : ComponentActivity() {
             dryRunCallsOut = viewModel::dryRunCallsOut,
             setSelfSms = { viewModel.setSelfSms(it) },
             selfSmsNow = { viewModel.selfSmsNow() },
-            setSafeMode = { viewModel.setSafeMode(it) },
+            setActiveTests = { viewModel.setActiveTests(it) },
             saveToken = { text, done -> viewModel.saveToken(text, done) },
             removeToken = { viewModel.removeToken() },
         )
@@ -477,6 +500,9 @@ class OwnerActivity : ComponentActivity() {
         // session on the SIM in slot 1 (no call, nothing sent); `--es emergency_data_first_use passed` (or not_meaningful) records
         // the owner's reading of the radio log.
         intent.getIntExtra(EXTRA_EMERGENCY_DATA_TEST, -1).takeIf { it in 0..3 }?.let { viewModel.emergencyData(it) }
+        // Round 31: `--ei emergency_default_first_use 0` runs the default emergency APN cycle's first use on the SIM in slot 1:
+        // the temporary set without its emergency row, the check of Android's default sos profile, the restore; no EIMS request.
+        intent.getIntExtra(EXTRA_EMERGENCY_DEFAULT_FIRST_USE, -1).takeIf { it in 0..3 }?.let { viewModel.emergencyDefaultFirstUse(it) }
         intent.getStringExtra(EXTRA_EMERGENCY_DATA_FIRST_USE)?.let { viewModel.emergencyFirstUse(it) }
         // `--ez self_sms_now true` is "Send a test SMS now"; it may cost an SMS.
         if (intent.getBooleanExtra(EXTRA_SELF_SMS_NOW, false)) viewModel.selfSmsNow()
@@ -494,6 +520,7 @@ class OwnerActivity : ComponentActivity() {
         const val EXTRA_CALLS_OUT_DRY_RUN = "calls_out_dry_run"
         const val EXTRA_EMERGENCY_DATA_TEST = "emergency_data_test"
         const val EXTRA_EMERGENCY_DATA_FIRST_USE = "emergency_data_first_use"
+        const val EXTRA_EMERGENCY_DEFAULT_FIRST_USE = "emergency_default_first_use"
         const val EXTRA_SELF_SMS_NOW = "self_sms_now"
     }
 

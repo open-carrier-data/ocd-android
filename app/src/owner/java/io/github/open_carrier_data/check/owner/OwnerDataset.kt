@@ -26,6 +26,9 @@ import io.github.open_carrier_data.check.owner.core.DatasetClient
 import io.github.open_carrier_data.check.owner.core.DatasetFiles
 import io.github.open_carrier_data.check.owner.core.DatasetPull
 import io.github.open_carrier_data.check.owner.core.DatasetStatus
+import io.github.open_carrier_data.check.owner.core.DeviceKeys
+import io.github.open_carrier_data.check.owner.core.StackCalibration
+import io.github.open_carrier_data.check.owner.core.TesterPolicy
 import io.github.open_carrier_data.check.owner.core.ExplainView
 import io.github.open_carrier_data.check.owner.core.Fetch
 import io.github.open_carrier_data.check.owner.core.Groups
@@ -96,6 +99,7 @@ import kotlinx.serialization.json.longOrNull
 import java.io.File
 import java.time.ZonedDateTime
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /** A Bundle as JSON: what the installer answered, JSON strings opened, nested Bundles as objects. File descriptors are never read. */
 object BundleJson {
@@ -158,6 +162,7 @@ class ProviderDataset(private val context: Context) : DatasetClient {
             val extras = Bundle().apply {
                 putString(OcdDataProtocol.PIN, request.pin)
                 putString(OcdDataProtocol.FILES, JsonArray(request.names.map(::JsonPrimitive)).toString())
+                request.firstUse?.let { putString(OcdDataProtocol.FIRST_USE, it) }
                 for (name in request.names) {
                     val fd = ParcelFileDescriptor.open(File(request.paths.getValue(name)), ParcelFileDescriptor.MODE_READ_ONLY)
                     opened += fd
@@ -190,29 +195,47 @@ class ProviderDataset(private val context: Context) : DatasetClient {
     override fun listRecords(subId: Int?) = call(OcdDataProtocol.LIST_RECORDS, extras = Bundle().apply { subId?.let { putInt(OcdDataProtocol.SUB_ID, it) } })
     override fun applyApnRecords() = call(OcdDataProtocol.APPLY_APN_RECORDS)
 
-    override fun setSafeMode(on: Boolean, by: String, reason: String) = call(
-        OcdDataProtocol.SET_SAFE_MODE, if (on) "on" else "off",
-        Bundle().apply {
-            putString(OcdDataProtocol.BY, by)
-            putString(OcdDataProtocol.REASON, reason.take(240))
-        },
-    )
-
     override fun stop(reason: String) = call(OcdDataProtocol.STOP, extras = Bundle().apply { putString(OcdDataProtocol.REASON, reason.take(240)) })
     override fun resume() = call(OcdDataProtocol.RESUME)
     override fun check() = call(OcdDataProtocol.CHECK)
 
+    override fun setTester(on: Boolean, reason: String) =
+        call(OcdDataProtocol.SET_TESTER, if (on) "on" else "off", Bundle().apply { putString(OcdDataProtocol.REASON, reason.take(240)) })
+
+    override fun voiceLossHold(reason: String): DataAnswer {
+        val a = call(OcdDataProtocol.VOICE_LOSS_HOLD, extras = Bundle().apply { putString(OcdDataProtocol.REASON, reason.take(240)) })
+        if (a.error != OcdDataProtocol.UNKNOWN_METHOD) return a
+        // A round 30 ROM (protocol 2) has no hold. Its own way to serve the build's dataset, both parts, is its round 30 ROM
+        // switch, which this app no longer shows anywhere; asked for here only so that calls stay up until that ROM is replaced.
+        val legacy = call(ROUND30_ROM_HOLD, "on", Bundle().apply { putString("by", "voice_loss"); putString(OcdDataProtocol.REASON, reason.take(240)) })
+        return if (legacy.ok) DataAnswer(JsonObject(legacy.o + mapOf("voice_loss" to JsonPrimitive("hold"), "round30_rom" to JsonPrimitive(true)))) else legacy
+    }
+
+    override fun voiceLossRelease(outcome: String, reason: String) = call(
+        OcdDataProtocol.VOICE_LOSS_RELEASE,
+        extras = Bundle().apply {
+            putString(OcdDataProtocol.OUTCOME, outcome)
+            putString(OcdDataProtocol.REASON, reason.take(240))
+        },
+    )
+
+    override fun emergencyDefaultSet(subId: Int) = call(OcdDataProtocol.EMERGENCY_DEFAULT_SET, extras = Bundle().apply { putInt(OcdDataProtocol.SUB_ID, subId) })
+    override fun emergencyDefaultRestore(keep: Boolean) = call(OcdDataProtocol.EMERGENCY_DEFAULT_RESTORE, extras = Bundle().apply { putBoolean(OcdDataProtocol.KEEP, keep) })
+
     companion object {
         const val TAG = "OcdCheckDataset"
+
+        /** The round 30 ROM's (protocol 2) only way to serve the build's dataset; used by [voiceLossHold] on that old ROM only. */
+        private const val ROUND30_ROM_HOLD = "set_safe_mode" // round 30 ROM only: removed in round 31
     }
 }
 
 /**
- * Round 30's work in the owner build: the whole-dataset pull at the main pin, the hand-off to
+ * Rounds 30 and 31 in the tester builds: the whole-dataset pull at the main pin, the hand-off to
  * CarrierSettings (stage, then activate in the next idle moment), the tests of every changed value
  * together with splitting and candidates, X5's tests of held offs, measured records, the voice-loss
- * trigger, safe mode, and the stop events with `stop` and `resume`. Never throws but for a cancelled
- * worker; each step returns a line for the log.
+ * trigger with round 31's hold and split, the tester declaration (SM7), and the stop events with
+ * `stop` and `resume`. Never throws but for a cancelled worker; each step returns a line for the log.
  */
 object OwnerDatasetStep {
     private val json = Json { ignoreUnknownKeys = true }
@@ -275,17 +298,18 @@ object OwnerDatasetStep {
     }
 
     /**
-     * One round 30 pass. First the readiness after a boot, a SIM change or a restart ([OwnerReady]: the SIM loaded,
-     * CarrierSettings's config served, IMS settled; a bounded wait on those events). Then voice loss (always on, also
-     * roaming), then what the stop, safe mode and roaming allow: stage a newer dataset, activate it, and test.
-     * [testNow]: the owner's "Test now" (or its adb trigger), which does all of it in this moment (2026-10-25, "what can
-     * be done now should be done now"): no screen-off, charging or idle wait, only the refusals that name a harm
-     * (a call, emergency callback or SMS mode, 10 minutes after an emergency call, roaming) and safe mode or a halt.
-     * A background pass waits for the idle moment, as it must not disturb the person using the phone.
+     * One pass (rounds 30 and 31). First the readiness after a boot, a SIM change or a restart ([OwnerReady]: the SIM
+     * loaded, CarrierSettings's config served, IMS settled; a bounded wait on those events). Then the tester declaration
+     * (round 31, SM7), voice loss (always on, also roaming), then what a stop event, the voice-loss hold and roaming
+     * allow: the hold's split, or stage a newer dataset, activate it, and test. [testNow]: the owner's "Test now" (or its
+     * adb trigger), which does all of it in this moment (2026-10-25, "what can be done now should be done now"): no
+     * screen-off, charging or idle wait, only the refusals that name a harm (a call, emergency callback or SMS mode,
+     * 10 minutes after an emergency call, roaming) and a halt. A background pass waits for the idle moment, as it must
+     * not disturb the person using the phone.
      */
     suspend fun run(context: Context, store: StateStore, phone: OwnerPhone, sims: List<OwnerSim>, testNow: Boolean = false): String {
         val client = client(context)
-        val status = status(context, store)
+        var status = status(context, store)
         if (!status.available) return "no dataset installer (${status.why})"
         val notes = mutableListOf<String>()
         val (ready, readySims) = if (sims.isEmpty() && !testNow) Pair(null, sims) else OwnerReady.await(context, phone, store)
@@ -294,23 +318,66 @@ object OwnerDatasetStep {
         val present = readySims.ifEmpty { sims }
         val deadline = System.currentTimeMillis() + TRIALS_START_WITHIN_MS
         clearLeftoverTrial(context, store, phone, present)?.let { notes += it }
-        // The voice-loss trigger, always on (but not while a stop event halts tests and changes: then safe mode is the owner's).
+        declareTester(context, store, client, status)?.let { notes += it; status = status(context, store) }
+        // A second loss under the same values (round 31): CarrierSettings serves the build's dataset and refuses changes until Resume.
+        voiceLossStop(context, store, status)?.let { return (notes + it).joinToString("; ") }
+        // The voice-loss trigger, always on (but not while a stop event halts tests and changes).
         if (store.read().stop == null) for (sim in present) voiceLoss(context, store, phone, client, status, sim)?.let { return (notes + it).joinToString("; ") }
         val state = store.read()
-        if (status.safeMode.on) return (notes + "safe mode is on (${status.safeMode.by ?: "?"}): the build's dataset serves and tests are stopped").joinToString("; ")
         val halt = state.stop ?: status.changesHalted.reason?.takeIf { status.changesHalted.on } ?: "changes halted".takeIf { status.changesHalted.on }
         if (halt != null) return (notes + "changes halted until you tap Resume: $halt").joinToString("; ")
         if (status.pullAgain) OwnerScheduler.pull(context, force = true)
-        stage(context, store, client, status, testNow)?.let { notes += it }
+        // While the voice-loss hold serves the build's dataset, nothing is activated: the idle moment at home is the split's.
+        if (!status.voiceLoss.hold) stage(context, store, client, status, testNow)?.let { notes += it }
         if (testNow) {
             ownerBlock(store, phone, present)?.let { return (notes + "not now: $it").joinToString("; ") }
         } else {
             idleBlock(context, store, phone, present)?.let { return (notes + "waits for the idle moment: ${it.plain}").joinToString("; ") }
         }
+        if (status.voiceLoss.hold) {
+            notes += holdSplit(context, store, phone, client, status, present, testNow, deadline)
+            publish(context, store)
+            return notes.joinToString("; ")
+        }
         activate(context, store, phone, client, present)?.let { notes += it }
         notes += campaigns(context, store, phone, client, present, testNow, deadline)
         publish(context, store)
         return notes.joinToString("; ").ifEmpty { "nothing to do" }
+    }
+
+    /**
+     * Round 31 (R31.5): tells CarrierSettings whether dialled tests run on this phone: the owner build, or a ROM build
+     * whose person turned them on, on an IMS stack the tests are calibrated on (SM8). Without a tester CarrierSettings
+     * applies SM7. Only when the declaration differs; a protocol 2 ROM has none.
+     */
+    private fun declareTester(context: Context, store: StateStore, client: DatasetClient, status: DatasetStatus): String? {
+        if (!status.round31) return null
+        val calibrated = StackCalibration.counted(status.build.imsStackId)
+        val want = OwnerTester.policy(store.read()).activeTests && calibrated
+        // CarrierSettings already counts this phone as it should; and the same declaration goes at most once a day.
+        if (status.tester.active == want) return null
+        val last = store.read().testerDeclared
+        if (last?.on == want && System.currentTimeMillis() - last.atMs in 0 until TimeUnit.DAYS.toMillis(1)) return null
+        val reason = when {
+            want -> if (OwnerTester.build == io.github.open_carrier_data.check.owner.core.TesterBuild.OWNER) "the owner build tests on the owner's phone" else "the person turned the test calls on"
+            !calibrated -> "the tests are not calibrated on the IMS stack ${status.build.imsStackId.ifEmpty { "this phone runs" }}"
+            else -> "the person has not turned the test calls on"
+        }
+        val a = client.setTester(want, reason)
+        val line = "tester declared ${if (want) "on" else "off"} ($reason): ${if (a.ok) "SM7 ${if (a.bool("sm7") == true) "applies" else "does not apply"}" else a.line}"
+        store.update { it.copy(testerDeclared = io.github.open_carrier_data.check.owner.core.TesterDeclaration(want, System.currentTimeMillis())).logged(System.currentTimeMillis(), "tester", line) }
+        return line
+    }
+
+    /** Round 31 (R31.8): a voice-loss stop in CarrierSettings becomes the app's stop event, so the screen offers Resume. */
+    private fun voiceLossStop(context: Context, store: StateStore, status: DatasetStatus): String? {
+        if (!status.voiceLoss.stop) return null
+        if (store.read().stop == null) {
+            val reason = "calls stopped again under the same values: the ROM's own data stays until you tap Resume or a newer ROM build"
+            store.update { it.copy(stop = "voice_loss_stop").logged(System.currentTimeMillis(), "stop", "${status.voiceLoss.stopReason ?: "voice-loss stop"}; $reason") }
+            OwnerNotifications.notice(context, Notice("Calls stopped again", "Calls stopped working again with the same new values, so the ROM's own data stays. Tap Resume when you want Open Carrier Data to try again, or wait for a newer ROM build.", failed = true))
+        }
+        return "voice-loss stop: the build's dataset serves until Resume or a newer build"
     }
 
     /** What stops "Test now" before it installs: the refusals of every SIM (a call, an emergency state, roaming); null when none holds. */
@@ -364,20 +431,23 @@ object OwnerDatasetStep {
         val pulled = state.pulled ?: return null
         val dir = dir(context, pulled) ?: return null
         if (status.installed?.datasetDigest == pulled.datasetDigest) return null
+        // Round 31 (R31.8): a dataset a second voice loss blocked is never handed over again; a newer one is.
+        if (pulled.datasetDigest in status.voiceLoss.blocked) return "main ${pulled.commit.take(7)} is blocked after a second voice loss; a newer dataset goes in"
         val last = state.install
         var again: String? = null
         if (last != null && last.datasetDigest == pulled.datasetDigest && last.state != InstallState.CANCELLED && last.state != InstallState.SUPERSEDED) {
-            // Staged already: verified waits for its moment; an ended install goes again only for a new CarrierSettings or "Test now".
+            // Staged already: verified waits for its moment; an ended install goes again only for a new CarrierSettings or "Test now",
+            // or when CarrierSettings no longer has it installed (round 31: the app was disabled and enabled again, R31.4).
             if (last.state == InstallState.VERIFIED) return null
             if (!last.final) return poll(store, client, last.installId)
-            again = DatasetRetry.again(last, status, testNow) ?: return null
+            again = DatasetRetry.again(last, status, testNow) ?: DatasetRetry.dropped(last, status) ?: return null
         }
-        val request = StageRequest(File(dir, DatasetFiles.PIN).readText(), pulled.names, pulled.names.associateWith { File(dir, it).path })
+        val request = StageRequest(File(dir, DatasetFiles.PIN).readText(), pulled.names, pulled.names.associateWith { File(dir, it).path }, firstUse(state, status))
         val a = client.stage(request)
         val now = System.currentTimeMillis()
         if (!a.ok) {
             store.update { it.copy(datasetLine = "Not handed over: ${a.line}").logged(now, "dataset", "stage of ${pulled.label} ${a.line}") }
-            if (a.error in setOf("safe_mode_on", "changes_halted", "busy")) return "stage waits: ${a.error}"
+            if (a.error in setOf("changes_halted", "busy") || a.error in InstallRefusal.VOICE_LOSS) return "stage waits: ${a.error}"
             return "stage refused: ${a.error}"
         }
         val id = a.str(OcdDataProtocol.INSTALL_ID) ?: return "stage gave no install ID"
@@ -385,6 +455,25 @@ object OwnerDatasetStep {
         store.update { it.copy(install = first).logged(now, "dataset", "staged ${pulled.label} as $id: ${first.state}" + (again?.let { " (handed over again: $it)" } ?: "")) }
         if (first.state == InstallState.ALREADY_INSTALLED) return "already installed"
         return poll(store, client, id)
+    }
+
+    /**
+     * Round 31 (R31.6): the owner's first-use record of the emergency data test, re-sent with every hand-off, for this
+     * phone's device and IMS stack. It cannot narrow a gate the build does not declare. Null when none is recorded.
+     */
+    fun firstUse(state: io.github.open_carrier_data.check.owner.core.OwnerState, status: DatasetStatus): String? {
+        val f = state.emergencyFirstUse ?: return null
+        if (!status.build.complete) return null
+        val record = JsonObject(
+            linkedMapOf(
+                "schema" to JsonPrimitive("ocd-emergency-first-use/1"),
+                "device" to JsonObject(linkedMapOf("codename" to JsonPrimitive(status.build.device), "model" to JsonPrimitive(status.build.model))),
+                "ims_stack" to JsonObject(linkedMapOf("id" to JsonPrimitive(status.build.imsStackId), "fork" to (status.build.imsStackFork?.let(::JsonPrimitive) ?: JsonNull))),
+                "result" to JsonPrimitive(f.result),
+                "date" to JsonPrimitive(MeasuredRecord.day(f.atMs)),
+            ),
+        )
+        return MeasuredRecord.text(record)
     }
 
     /** install_status every 2 s for up to 3 minutes until verified or final. */
@@ -436,8 +525,10 @@ object OwnerDatasetStep {
         for (sim in sims) {
             val ch = install.changes.firstOrNull { it.subId == sim.subId } ?: view.changes.firstOrNull { it.subId == sim.subId } ?: continue
             if (!ch.touchesSim && ch.x5Held.isEmpty()) continue
-            val changes = ch.keys.map { Changed(it.key, it.old, it.new, it.source) }
-            val c = CampaignPlanner.start(UUID.randomUUID().toString().take(8), sim, view.commit, view.datasetDigest, changes, datasetA, now).copy(baseline = baselines[sim.subId])
+            // Round 31: the keys the ROM's device override sets are the device's; they are never tested or recorded.
+            val device = DeviceKeys.of(ExplainView.parse(sim.subId, client.explain(sim.subId)), status)
+            val changes = ch.keys.filterNot { DeviceKeys.owned(it.source) }.map { Changed(it.key, it.old, it.new, it.source) }
+            val c = CampaignPlanner.start(UUID.randomUUID().toString().take(8), sim, view.commit, view.datasetDigest, changes, datasetA, now, device = device).copy(baseline = baselines[sim.subId])
             store.update { s -> s.copy(campaigns = s.campaigns.filterNot { it.subId == sim.subId } + c) }
             opened += "slot ${sim.slot + 1}: ${changes.size} changed value(s)${if (ch.profileBefore != ch.profileAfter) ", profile ${ch.profileBefore} -> ${ch.profileAfter}" else ""}${if (ch.x5Held.isNotEmpty()) ", ${ch.x5Held.size} off(s) held until tested" else ""}"
             if (ch.couplingAfter == "mismatch" && ch.couplingBefore != "mismatch") {
@@ -470,17 +561,30 @@ object OwnerDatasetStep {
         return notes
     }
 
-    /** Puts the records of a settlement into CarrierSettings and queues them for main. */
-    fun putRecord(store: StateStore, client: DatasetClient, record: JsonObject, candidates: List<JsonElement>, type: String?, datasetA: Set<String>): String {
+    /**
+     * Puts the records of a settlement into CarrierSettings, which serves them on this phone in their
+     * exact cell, and (owner build only, SM11) queues them for main with the owner's token. Never a
+     * record for a key the ROM's device override sets ([device], round 31), and none on an IMS stack
+     * the tests are not calibrated on (SM8).
+     */
+    fun putRecord(store: StateStore, client: DatasetClient, record: JsonObject, candidates: List<JsonElement>, type: String?, datasetA: Set<String>, device: Set<String> = emptySet()): String {
         val now = System.currentTimeMillis()
-        RecordCheck.problem(record, candidates, type, datasetA, now)?.let { why ->
+        val state = store.read()
+        val problem = StackCalibration.notCounted(state.datasetStatus?.build?.imsStackId)
+            ?: RecordCheck.problem(record, candidates, type, datasetA, now, device)
+        problem?.let { why ->
             store.update { it.logged(now, "record", "not written (${MeasuredRecord.targetKey(record) ?: "record"}): $why") }
             return "record not written: $why"
         }
-        val text = MeasuredRecord.text(record)
+        // A ROM build's record stays on this phone (SM11); it names no owner as its tester.
+        val local = if (OwnerTester.policy(state).sendsWithToken) record else JsonObject(record + ("tester" to JsonPrimitive("local")))
+        val text = MeasuredRecord.text(local)
         val a = client.putRecord(text)
         val line = if (a.ok) {
-            store.update { s -> s.copy(pendingRecords = (s.pendingRecords.filterNot { MeasuredRecord.recordKey(json.parseToJsonElement(it) as JsonObject) == MeasuredRecord.recordKey(record) } + text).takeLast(100)) }
+            // Only the owner's token writes measured records to main (SM11); a ROM build's records stay on this phone.
+            if (OwnerTester.policy(state).sendsWithToken) {
+                store.update { s -> s.copy(pendingRecords = (s.pendingRecords.filterNot { MeasuredRecord.recordKey(json.parseToJsonElement(it) as JsonObject) == MeasuredRecord.recordKey(record) } + text).takeLast(100)) }
+            }
             "record ${MeasuredRecord.recordKey(record)} ${MeasuredRecord.result(record)} for ${MeasuredRecord.targetKey(record) ?: "emergency data"}: ${a.str("effect") ?: "stored"}"
         } else {
             "record ${MeasuredRecord.recordKey(record)} refused by CarrierSettings: ${a.line}"
@@ -489,9 +593,10 @@ object OwnerDatasetStep {
         return line
     }
 
-    /** Sends pending records and source reviews with the owner's token, as its own work with a network. */
+    /** Sends pending records and source reviews with the owner's token, as its own work with a network; never in a ROM build (SM11). */
     fun publish(context: Context, store: StateStore) {
         val s = store.read()
+        if (!OwnerTester.policy(s).sendsWithToken) return
         if (s.pendingRecords.isNotEmpty() || s.pendingReviews.isNotEmpty()) OwnerScheduler.autoReport(context)
     }
 
@@ -518,10 +623,12 @@ object OwnerDatasetStep {
     }
 
     /**
-     * The voice-loss trigger (testsDecide (b)): voice lost on two reads 30 s apart while an
-     * installed dataset serves. The next candidates of the voice-class changes at once, then the
-     * build's bundle; safe mode only when that is what restores voice; otherwise the newest dataset
-     * stays and it is a stop event. Works while roaming; never during a call or an emergency state.
+     * The voice-loss trigger (testsDecide (b), round 31's hold): voice lost on two reads 30 s apart while an installed
+     * dataset serves. The next candidates of the voice-class changes at once (with the active tests on, on a calibrated
+     * stack), then the build's bundle as the final candidate. When only that restores voice, CarrierSettings holds the
+     * build's dataset (`voice_loss_hold`) until the split at the next idle moment at home; a second loss under the same
+     * values is CarrierSettings's stop. When nothing restores voice, the newest dataset stays (the cause is the network)
+     * and it is a stop event. Works while roaming; never during a call or an emergency state.
      */
     private suspend fun voiceLoss(context: Context, store: StateStore, phone: OwnerPhone, client: DatasetClient, status: DatasetStatus, sim: OwnerSim): String? {
         val session = OwnerSession(phone, store, sim)
@@ -537,50 +644,141 @@ object OwnerDatasetStep {
         store.update { it.logged(now, "voice_loss", "slot ${sim.slot + 1}: voice lost (no IMS voice, no circuit-switched service) while main ${status.installed?.commit?.take(7)} serves") }
         val ctx = DatasetContext.load(context, store.read().pulled)
         val served = ExplainView.parse(sim.subId, client.explain(sim.subId)) ?: return "voice lost; explain not readable"
+        val device = DeviceKeys.of(served, status)
         val changes = store.read().campaigns.lastOrNull { it.subId == sim.subId }?.changes.orEmpty()
         val runner = TrialRunner(context, store, phone, client, sim, ctx, status, emptySet(), Long.MAX_VALUE)
         val budget = TestCaps.trialsLeft(store.read().caps, sim.key, now)
         var tried = 0
-        for (ch in VoiceLoss.suspects(changes)) {
+        // Candidates change carrier settings: only with the active tests on (SM9) and on a calibrated stack (SM8).
+        val candidates = OwnerTester.policy(store.read()).activeTests && StackCalibration.counted(status.build.imsStackId)
+        if (candidates) for (ch in VoiceLoss.suspects(changes, device)) {
             for (cand in ctx?.candidates(ch, served).orEmpty()) {
                 if (tried >= budget - 1) break
                 tried++
                 if (runner.voiceBackWith(mapOf(ch.key to cand), "voice loss: ${ch.key} = ${cand.plain}")) {
                     val record = runner.winnerRecord(ch, cand, TrialVerdict(TrialOutcome.PASS, reason = "IMS voice registration came back", level = "no_regression"), served, tried)
-                    val line = record?.let { putRecord(store, client, it.first, it.second, ctx?.type(ch.key), ctx?.datasetA.orEmpty()) } ?: "no record"
+                    val line = record?.let { putRecord(store, client, it.first, it.second, ctx?.type(ch.key), ctx?.datasetA.orEmpty(), device) } ?: "no record"
                     runner.endChain()
                     OwnerNotifications.notice(context, Notice("Calls are back", "Open Carrier Data changed ${ch.key} after calls stopped working; $line", failed = true))
                     return "voice loss on slot ${sim.slot + 1}: ${ch.key} = ${cand.plain} restored voice; $line"
                 }
             }
         }
-        // The final candidate: the build's dataset as an override; safe mode only if that restores voice.
+        // The final candidate: the build's dataset as an override; the hold only if that restores voice.
         val build = ExplainView.parse(sim.subId, client.explain(sim.subId, "build"))
-        val overrides = build?.let { VoiceLoss.buildOverrides(served.keys, it.keys, ctx?.datasetA.orEmpty()) }.orEmpty()
+        val overrides = build?.let { VoiceLoss.buildOverrides(served.keys, it.keys, ctx?.datasetA.orEmpty(), device) }.orEmpty()
         val restored = overrides.isNotEmpty() && runner.voiceBackWith(overrides, "voice loss: the build's dataset as the final candidate")
-        runner.endChain()
-        return if (restored) {
-            val a = client.setSafeMode(true, OcdDataProtocol.BY_VOICE_LOSS, "the build's dataset restored voice on slot ${sim.slot + 1}; no candidate did")
-            store.update { it.logged(System.currentTimeMillis(), "voice_loss", "the build's dataset restored voice; safe mode ${if (a.ok) "turned on" else "could not be turned on: ${a.line}"}") }
-            OwnerNotifications.notice(context, Notice("Safe mode is on", "Calls stopped working with Open Carrier Data's newest data and came back only with the ROM's own data, so safe mode is on. Turn it off in Settings when you want the newest data again.", failed = true))
-            status(context, store)
-            "voice loss on slot ${sim.slot + 1}: the build's dataset restored voice; safe mode ${if (a.ok) "on" else "refused"}"
-        } else {
+        if (!restored) {
+            runner.endChain()
             val reason = "voice lost on slot ${sim.slot + 1} and no candidate, not even the build's dataset, restored it; the newest dataset stays (the cause is the network)"
             client.stop(reason)
             store.update { it.copy(stop = "voice_loss_not_restored").logged(System.currentTimeMillis(), "stop", reason) }
             OwnerNotifications.notice(context, Notice("Tests paused: no calls", "$reason. Tap Resume when calls work again.", failed = true))
-            "STOP: $reason"
+            return "STOP: $reason"
+        }
+        // Only the build's dataset restored voice: CarrierSettings holds it (both parts) before the overrides go, so voice stays.
+        val a = client.voiceLossHold("the build's dataset restored voice on slot ${sim.slot + 1}; no candidate did")
+        // CarrierSettings installs the build's dataset itself; the overrides go only once it serves (at most 2 minutes).
+        if (a.ok) waitServing(client, maxMs = 120_000)
+        runner.endChain()
+        val held = a.str("voice_loss")
+        val line = when {
+            a.ok && held == "stop" -> {
+                store.update { it.copy(stop = "voice_loss_stop").logged(System.currentTimeMillis(), "stop", "slot ${sim.slot + 1}: voice lost again under the same values; CarrierSettings keeps the build's dataset until Resume or a newer build") }
+                OwnerNotifications.notice(context, Notice("Calls stopped again", "Calls stopped working again with the same new values, so the ROM's own data stays. Tap Resume when you want Open Carrier Data to try again, or wait for a newer ROM build.", failed = true))
+                "voice loss on slot ${sim.slot + 1}: the second loss under the same values; the build's dataset stays (stop event)"
+            }
+            a.ok -> {
+                val legacy = a.bool("round30_rom") == true
+                store.update { it.logged(System.currentTimeMillis(), "voice_loss", "the build's dataset restored voice; CarrierSettings holds it" + if (legacy) " (a round 30 ROM: until a newer ROM build)" else "; the split runs at the next idle moment at home") }
+                OwnerNotifications.notice(context, Notice("Calls are back with the ROM's own data", "Calls stopped working with Open Carrier Data's newest data and came back with the ROM's own data, which now serves. When the phone is next idle at home, Open Carrier Data finds the values at fault and then serves the newest data with working values in their place.", failed = true))
+                "voice loss on slot ${sim.slot + 1}: the build's dataset restored voice; held${a.str("values_digest")?.let { " (values ${it.take(19)})" } ?: ""}"
+            }
+            else -> {
+                val reason = "voice came back only with the build's dataset on slot ${sim.slot + 1}, and CarrierSettings did not hold it (${a.line})"
+                client.stop(reason)
+                store.update { it.copy(stop = "voice_loss_hold_refused").logged(System.currentTimeMillis(), "stop", reason) }
+                OwnerNotifications.notice(context, Notice("Tests paused: no calls", "$reason. Disable Open Carrier Data in Android's Settings to go back to the ROM's own data.", failed = true))
+                "STOP: $reason"
+            }
+        }
+        status(context, store)
+        return line
+    }
+
+    /** Polls `status` until the build's dataset serves (the voice-loss hold or stop), or [maxMs] passes. */
+    private suspend fun waitServing(client: DatasetClient, maxMs: Long) {
+        var waited = 0L
+        while (waited < maxMs) {
+            val s = DatasetStatus.parse(client.status(), System.currentTimeMillis())
+            if (!s.available || s.serving == "build") return
+            kotlinx.coroutines.delay(2_000)
+            waited += 2_000
         }
     }
 
-    /** The owner's safe-mode switch, through CarrierSettings (spec 8.2). */
-    fun setSafeMode(context: Context, store: StateStore, on: Boolean): String {
-        val a = client(context).setSafeMode(on, OcdDataProtocol.BY_OWNER, if (on) "turned on in the OCD app" else "turned off in the OCD app")
-        val line = "safe mode ${if (on) "on" else "off"}: ${if (a.ok) "done (serving ${a.str("serving") ?: "?"})" else a.line}"
-        store.update { it.logged(System.currentTimeMillis(), "safe_mode", line) }
+    /**
+     * Round 31's split (R31.8, safeMode (c)): while the build's dataset is held, at the idle moment at home, test the
+     * newest dataset's differences from the build's as overrides over it, halving to the values at fault, and try their
+     * candidates. Winners become records (stored while held, served after the release); then `voice_loss_release`
+     * with `winners`, or `no_failing_value` when every newest value passed together. A failing value with no working
+     * alternative keeps the build's dataset held and is a stop event. Only with the active tests on and on a calibrated
+     * stack (SM8, SM9): otherwise the build's dataset stays held until a newer ROM build.
+     */
+    private suspend fun holdSplit(context: Context, store: StateStore, phone: OwnerPhone, client: DatasetClient, status: DatasetStatus, sims: List<OwnerSim>, testNow: Boolean, deadline: Long): List<String> {
+        val notes = mutableListOf<String>()
+        if (!status.round31) return listOf("the build's dataset is held by this round 30 ROM until a newer ROM build")
+        val passive = StackCalibration.notCounted(status.build.imsStackId) ?: if (!OwnerTester.policy(store.read()).activeTests) "the test calls are off on this phone" else null
+        if (passive != null) return listOf("the build's dataset stays held: no split ($passive)")
+        val ctx = DatasetContext.load(context, store.read().pulled)
+        val install = store.read().install?.takeIf { it.datasetDigest == status.installed?.datasetDigest }
+        val basis = OwnerBasis.current(context, store.read()).let { "${it.rom}|${status.build.imsStackId}|${status.build.imsStackVersion ?: ""}" }
+        val ends = mutableListOf<VoiceLoss.SplitEnd>()
+        for (sim in sims) {
+            var c = store.read().campaigns.firstOrNull { it.subId == sim.subId && it.held && it.datasetDigest == status.installed?.datasetDigest.orEmpty() }
+            if (c == null) {
+                val build = ExplainView.parse(sim.subId, client.explain(sim.subId, "build")) ?: ExplainView.parse(sim.subId, client.explain(sim.subId))
+                val newest = install?.let { ExplainView.parse(sim.subId, client.explain(sim.subId, it.installId)) } ?: ExplainView.parse(sim.subId, client.explain(sim.subId, "installed"))
+                val device = DeviceKeys.of(build, status) + DeviceKeys.of(newest, status)
+                // The differences from both bundles; else the install's own changes, which CarrierSettings computed against what served before it.
+                val diffs = when {
+                    build != null && newest != null -> VoiceLoss.differences(newest.keys, build.keys, ctx?.datasetA.orEmpty(), device)
+                    install != null -> install.changes.firstOrNull { it.subId == sim.subId }?.keys.orEmpty().filterNot { DeviceKeys.owned(it.source) || it.key in device }.map { Changed(it.key, it.old, it.new, it.source) }
+                    else -> null
+                }
+                if (diffs == null) {
+                    notes += "slot ${sim.slot + 1}: the newest dataset's values are not readable while held; the split waits"
+                    continue
+                }
+                if (newest == null) store.update { it.logged(System.currentTimeMillis(), "voice_loss", "slot ${sim.slot + 1}: the held dataset's bundle is not readable; the split uses the install's ${diffs.size} changes") }
+                c = CampaignPlanner.start(UUID.randomUUID().toString().take(8), sim, status.installed?.commit.orEmpty(), status.installed?.datasetDigest.orEmpty(), diffs, ctx?.datasetA.orEmpty(), System.currentTimeMillis(), CampaignPlanner.VOICE_LOSS_SPLIT)
+                    .copy(held = true)
+                store.update { s -> s.copy(campaigns = s.campaigns.filterNot { it.subId == sim.subId } + c) }
+                store.update { it.logged(System.currentTimeMillis(), "voice_loss", "slot ${sim.slot + 1}: the split starts over ${diffs.size} value(s) that differ from the build's") }
+            }
+            val runner = TrialRunner(context, store, phone, client, sim, ctx, status, if (testNow) TrialRunner.OWNER_INTERRUPTS else TrialRunner.INTERRUPTS, deadline)
+            notes += runner.run(c, basis)
+            val end = runner.last?.let(VoiceLoss::splitEnd) ?: return notes + "slot ${sim.slot + 1}: the split goes on at the next idle moment"
+            ends += end
+        }
+        if (ends.size < sims.size) return notes
+        val noWinner = ends.filterIsInstance<VoiceLoss.SplitEnd.NoWinner>()
+        val winners = ends.filterIsInstance<VoiceLoss.SplitEnd.Winners>().flatMap { it.keys }
+        if (noWinner.isNotEmpty()) {
+            val keys = noWinner.flatMap { it.keys }
+            val reason = if (keys.isEmpty()) "the split could not decide which newest value removed calls" else "no other value works in place of ${keys.joinToString()}"
+            client.stop("voice-loss split: $reason; the build's dataset stays held")
+            store.update { it.copy(stop = "voice_loss_split_no_winner").logged(System.currentTimeMillis(), "stop", "voice-loss split: $reason; the build's dataset stays held until Resume") }
+            OwnerNotifications.notice(context, Notice("The ROM's own data stays", "Calls stopped working with Open Carrier Data's newest data, and $reason. The ROM's own data keeps serving. Tap Resume to try again.", failed = true))
+            return notes + "split: $reason; held, stop event"
+        }
+        val outcome = if (winners.isEmpty()) OcdDataProtocol.OUTCOME_NO_FAILING_VALUE else OcdDataProtocol.OUTCOME_WINNERS
+        val a = client.voiceLossRelease(outcome, if (winners.isEmpty()) "every newest value passed together" else "winners in place of ${winners.joinToString()}")
+        val line = "voice-loss split: ${outcome.replace('_', ' ')}${if (winners.isEmpty()) "" else " (${winners.joinToString()})"}; release ${if (a.ok) "done: the newest dataset serves again" else a.line}"
+        store.update { it.logged(System.currentTimeMillis(), "voice_loss", line) }
+        if (a.ok) OwnerScheduler.voiceCheck(context)
         status(context, store)
-        return line
+        return notes + line
     }
 
     /** Resume after a stop event: the app's own flag and CarrierSettings's "changes halted". */
@@ -626,8 +824,22 @@ class DatasetContext private constructor(
     fun google(key: String, explain: ExplainView): JsonElement? =
         explain.fillEntry?.let { googleValues(it)?.get(key) } ?: googleValues("default")?.get(key)
 
-    fun candidates(ch: Changed, explain: ExplainView): List<Candidate> =
-        Candidates.of(ch.key, ch.new ?: explain.keys[ch.key]?.value, type(ch.key), stack(explain), google(ch.key, explain), AndroidDefaults.value(ch.key))
+    /** device-records.json's records, read once. */
+    private val records: JsonArray? by lazy {
+        runCatching {
+            File(dir, "device-records.json").bufferedReader().use { io.github.open_carrier_data.check.owner.core.StrictJson.scan(it, capture = listOf("records")).captured as? JsonArray }
+        }.getOrNull()
+    }
+
+    /**
+     * The candidates for a failing key ([Candidates]); round 31: a value a measured record of a neighbouring cell holds
+     * (this device and carrier, another ROM or stack) goes first, when it is one of them.
+     */
+    fun candidates(ch: Changed, explain: ExplainView, cell: RecordCell? = null, carrier: RecordCarrier? = null): List<Candidate> {
+        val list = Candidates.of(ch.key, ch.new ?: explain.keys[ch.key]?.value, type(ch.key), stack(explain), google(ch.key, explain), AndroidDefaults.value(ch.key))
+        if (cell == null || carrier == null) return list
+        return io.github.open_carrier_data.check.owner.core.NeighbourRecords.first(list, io.github.open_carrier_data.check.owner.core.NeighbourRecords.values(records, cell, carrier, ch.key, System.currentTimeMillis()))
+    }
 
     /** The values a record for [key] may hold (spec 6.4), for the app's own check before put_record. */
     fun recordCandidates(key: String, explain: ExplainView): List<JsonElement> {
@@ -756,17 +968,36 @@ class TrialRunner(
 ) {
     private val session = OwnerSession(phone, store, sim)
 
-    /** The dataset served while measuring: the installed one, or the build's when that serves (spec 2.10 `data`). */
-    private val served: io.github.open_carrier_data.check.owner.core.DatasetRef? get() = if (status.servingInstalled) status.installed else status.buildPin
+    /**
+     * The dataset a record is measured on: the installed one, or the build's when that serves (spec 2.10 `data`).
+     * During round 31's voice-loss hold the split measures the installed (newest) dataset's values over the held build's.
+     */
+    private val served: io.github.open_carrier_data.check.owner.core.DatasetRef? get() = if (status.servingInstalled || status.voiceLoss.hold) status.installed ?: status.buildPin else status.buildPin
+
+    /** The campaign as [run] left it (done, or where it stopped for this idle moment). */
+    var last: Campaign? = null
+        private set
     private var current: Set<String> = emptySet()
     private var servedKeys: Map<String, io.github.open_carrier_data.check.owner.core.ExplainKey> = emptyMap()
+
+    /** Round 31: the keys the ROM's device override sets on this phone ([DeviceKeys]): never overridden, tested or recorded. */
+    private var device: Set<String> = emptySet()
+
+    /**
+     * Round 31 (SM8, SM9): why only the passive check runs (no override, call, SMS, candidate or X5 trial), or null:
+     * an IMS stack the tests are not calibrated on, or a ROM build whose person did not turn the active tests on.
+     */
+    private val passiveOnly: String? get() = StackCalibration.notCounted(status.build.imsStackId)
+        ?: if (!OwnerTester.policy(store.read()).activeTests) "the active tests are off on this phone; only the passive checks run" else null
 
     private fun log(kind: String, text: String) = store.update { it.logged(System.currentTimeMillis(), kind, text) }
 
     suspend fun run(start: Campaign, basis: String): String {
-        var c = start
         val explain = ExplainView.parse(sim.subId, client.explain(sim.subId)) ?: return "slot ${sim.slot + 1}: explain not readable; tests wait"
         servedKeys = explain.keys
+        device = DeviceKeys.of(explain, status)
+        var c = CampaignPlanner.withoutDevice(start, device)
+        val passive = passiveOnly
         val notes = mutableListOf<String>()
         try {
             // An install's trials compare with IMS before the install; a re-test compares with now.
@@ -786,8 +1017,15 @@ class TrialRunner(
                     notes += "slot ${sim.slot + 1}: ${block.plain}; the tests go on next time"
                     break
                 }
-                val verdict = trial(plan, before, explain)
-                val (next, settled) = CampaignPlanner.advance(c, verdict, { ch -> ctx?.candidates(ch, explain).orEmpty() }, System.currentTimeMillis())
+                if (passive != null && (plan.overrides.isNotEmpty() || c.held)) {
+                    c = c.copy(phase = io.github.open_carrier_data.check.owner.core.CampaignPhase.DONE, endedAtMs = System.currentTimeMillis(), note = passive)
+                    store.update { s -> s.copy(campaigns = s.campaigns.filterNot { it.id == c.id } + c) }
+                    break
+                }
+                val effective = if (c.held) CampaignPlanner.onHeld(c, plan) else plan
+                val verdict = trial(if (passive != null) effective.copy(classes = effective.classes - setOf(TestClass.VOICE, TestClass.WIFI_CALLING, TestClass.SMS)) else effective, before, explain)
+                val (next, settled) = if (passive != null) CampaignPlanner.passive(c, verdict, passive, System.currentTimeMillis()) to emptyList()
+                else CampaignPlanner.advance(c, verdict, { ch -> if (ch.key in device) emptyList() else ctx?.candidates(ch, explain, cell(), carrier(explain)).orEmpty() }, System.currentTimeMillis())
                 c = next
                 store.update { s -> s.copy(campaigns = s.campaigns.filterNot { it.id == c.id } + c) }
                 log("tests", "slot ${sim.slot + 1}: ${plan.label}: ${verdict.outcome.name.lowercase()} (${verdict.reason})")
@@ -797,8 +1035,8 @@ class TrialRunner(
                     break
                 }
             }
-            // X5: the held offs of this SIM, each tested as an override when the caps allow.
-            if (c.done) notes += x5(explain)
+            // X5: the held offs of this SIM, each tested as an override when the caps allow (never on the passive check alone or in the split).
+            if (c.done && passive == null && !c.held) notes += x5(explain)
         } catch (e: CancellationException) {
             throw e
         } catch (e: SafetyException) {
@@ -806,6 +1044,7 @@ class TrialRunner(
         } finally {
             withContext(NonCancellable) { endChain() }
         }
+        last = c
         if (c.done) {
             val end = CampaignEnd(sim.subId, sim.identity.mccmnc, System.currentTimeMillis(), basis, c.commit, c.note, c.winners.size, c.noValue.size)
             store.update { s -> s.copy(campaigns = s.campaigns.filterNot { it.id == c.id }, campaignEnds = (s.campaignEnds + end).takeLast(CampaignEnd.MAX)) }
@@ -818,7 +1057,7 @@ class TrialRunner(
 
     /** Sets [overrides] (on top of the served bundle), keeping the keys of the trial before at their served values. */
     private suspend fun set(overrides: Map<String, Candidate>, label: String): Boolean {
-        TrialGuard.check(overrides.keys, ctx?.datasetA.orEmpty())
+        TrialGuard.check(overrides.keys, ctx?.datasetA.orEmpty(), device)
         val restore = (current - overrides.keys).associateWith { k -> TypedOverride(ctx?.type(k), servedKeys[k]?.value) }
         val values = overrides.mapValues { (k, c) -> TypedOverride(ctx?.type(k), c.value) } + restore
         if (values.isEmpty()) return true
@@ -886,7 +1125,7 @@ class TrialRunner(
         val state = store.read()
         val build = OwnerBasis.current(context, state).rom
         if (TestCaps.callsLeft(state.calls, sim.key, System.currentTimeMillis()) > 0) {
-            val caller = MailboxCaller(phone, store, AndroidCallDevice(context), build, CallBuild.short(context), CallBuild.stack(context), OwnerWorker.device(context).model, CallBuild.cellOf(context))
+            val caller = MailboxCaller(phone, store, AndroidCallDevice(context), build, CallBuild.short(context), CallBuild.stack(context), OwnerWorker.device(context).model, CallBuild.cellOf(context), policy = OwnerTester.policy(state))
             runCatching { caller.run(sim, CallsOutDue(sim.slot, sim.key, feature, bearer, "round30_trial"), CallBuild.targets(context), state.callsOutMode, night = true, nightKey = QuietWindow.nightOf(ZonedDateTime.now())) }
         }
         val s = Settled.voice(store.read().calls, sim.key, feature, build, sinceMs, System.currentTimeMillis()) ?: return emptyList()
@@ -896,6 +1135,7 @@ class TrialRunner(
     /** SMS both ways over IMS, only when the owner turned the test SMS on (it may cost an SMS); null when not run or not settled. */
     private suspend fun sms(sinceMs: Long): Boolean? {
         if (!store.read().selfSmsOn) return null
+        if (OwnerTester.policy(store.read()).smsRefusal(CallBuild.entry(context, sim)) != null) return null
         val check = runCatching { OwnerSelfSms.send(context, phone, sim, on = true) }.getOrNull() ?: return null
         var waited = 0L
         while (waited < 60_000) {
@@ -908,7 +1148,7 @@ class TrialRunner(
 
     /** Applies [overrides] and waits up to 60 s for IMS voice; true when voice came back. */
     suspend fun voiceBackWith(overrides: Map<String, Candidate>, label: String): Boolean {
-        if (servedKeys.isEmpty()) servedKeys = ExplainView.parse(sim.subId, client.explain(sim.subId))?.keys.orEmpty()
+        if (servedKeys.isEmpty()) ExplainView.parse(sim.subId, client.explain(sim.subId))?.let { servedKeys = it.keys; device = DeviceKeys.of(it, status) }
         if (!set(overrides, label)) return false
         var waited = 0L
         while (waited < 60_000) {
@@ -950,7 +1190,7 @@ class TrialRunner(
             is Settlement.Winner -> {
                 val ch = c.changes.first { it.key == s.key }
                 val (record, cands) = winnerRecord(ch, s.candidate, s.verdict, explain, s.trials) ?: return "no record"
-                val line = OwnerDatasetStep.putRecord(store, client, record, cands, ctx?.type(s.key), ctx?.datasetA.orEmpty())
+                val line = OwnerDatasetStep.putRecord(store, client, record, cands, ctx?.type(s.key), ctx?.datasetA.orEmpty(), device)
                 OwnerNotifications.notice(context, Notice(io.github.open_carrier_data.check.owner.core.Notices.CHANGED_TITLE, "${s.key}: ${s.candidate.plain} works on this phone where Open Carrier Data's value failed", failed = false))
                 line
             }
@@ -964,9 +1204,10 @@ class TrialRunner(
                 )
                 val review = SourceReview.noValuePassed(explain.serving, s.key, s.failing, s.tried, commit, s.verdict.reason, now)
                 store.update { st -> if (st.reviewsSent.contains(review.key)) st else st.copy(pendingReviews = (st.pendingReviews + review).takeLast(SourceReview.MAX)) }
-                OwnerDatasetStep.putRecord(store, client, record, emptyList(), ctx?.type(s.key), ctx?.datasetA.orEmpty())
+                OwnerDatasetStep.putRecord(store, client, record, emptyList(), ctx?.type(s.key), ctx?.datasetA.orEmpty(), device)
             }
-            is Settlement.Passed -> passRecords(s.verdict, explain, cell, carrier, commit, digest, c.startedAtMs)
+            // The split's pass is over the held build's bundle, not what serves: no pass record from it.
+            is Settlement.Passed -> if (c.held) "passed over the held build's dataset (${s.verdict.reason})" else passRecords(s.verdict, explain, cell, carrier, commit, digest, c.startedAtMs)
 
         }
     }
@@ -977,6 +1218,7 @@ class TrialRunner(
         val build = OwnerBasis.current(context, store.read()).rom
         val now = System.currentTimeMillis()
         for (feature in listOf(OwnerFeature.VOLTE, OwnerFeature.VOWIFI)) {
+            if (feature.key in device) continue
             val servedValue = explain.keys[feature.key]?.value ?: continue
             if (TypedValues.bool(servedValue) != true) continue
             // Only calls measured in this campaign, on the data it serves now.
@@ -988,9 +1230,9 @@ class TrialRunner(
                     "${if (s.level == Settled.L3) "calls both ways" else "calls out"} over ${s.bearer} measured on this phone (audio from packet counts)", commit, digest,
                 ),
             )
-            notes += OwnerDatasetStep.putRecord(store, client, record, ctx?.recordCandidates(feature.key, explain).orEmpty(), "bool", ctx?.datasetA.orEmpty())
+            notes += OwnerDatasetStep.putRecord(store, client, record, ctx?.recordCandidates(feature.key, explain).orEmpty(), "bool", ctx?.datasetA.orEmpty(), device)
         }
-        val smsServed = explain.keys[OwnerFeature.SMS_OVER_IMS.key]?.value
+        val smsServed = explain.keys[OwnerFeature.SMS_OVER_IMS.key]?.value?.takeIf { OwnerFeature.SMS_OVER_IMS.key !in device }
         val sms = Settled.sms(store.read().selfSms, sim.key, build, now)
         if (TypedValues.bool(smsServed) == true && sms != null && !sms.failed) {
             val record = MeasuredRecord.build(
@@ -999,7 +1241,7 @@ class TrialRunner(
                     "a data SMS to the phone's own number went out and came back over IMS by Telephony's own word on each leg", commit, digest,
                 ),
             )
-            notes += OwnerDatasetStep.putRecord(store, client, record, ctx?.recordCandidates(OwnerFeature.SMS_OVER_IMS.key, explain).orEmpty(), "bool", ctx?.datasetA.orEmpty())
+            notes += OwnerDatasetStep.putRecord(store, client, record, ctx?.recordCandidates(OwnerFeature.SMS_OVER_IMS.key, explain).orEmpty(), "bool", ctx?.datasetA.orEmpty(), device)
         }
         return if (notes.isEmpty()) "passed (${v.reason})" else notes.joinToString("; ")
     }
@@ -1008,6 +1250,7 @@ class TrialRunner(
     private suspend fun x5(explain: ExplainView): List<String> {
         val notes = mutableListOf<String>()
         for (hold in explain.x5Held) {
+            if (hold.key in device) continue
             val off = Groups.X5_OFF[hold.key] ?: continue
             if (TestCaps.trialsLeft(store.read().caps, sim.key, System.currentTimeMillis()) <= 0) break
             val start = System.currentTimeMillis()
@@ -1036,7 +1279,7 @@ class TrialRunner(
                     served?.commit.orEmpty(), served?.dataDigest.orEmpty(),
                 ),
             )
-            notes += OwnerDatasetStep.putRecord(store, client, record, listOf(JsonPrimitive(off)) + ctx?.recordCandidates(hold.key, explain).orEmpty(), "bool", ctx?.datasetA.orEmpty())
+            notes += OwnerDatasetStep.putRecord(store, client, record, listOf(JsonPrimitive(off)) + ctx?.recordCandidates(hold.key, explain).orEmpty(), "bool", ctx?.datasetA.orEmpty(), device)
         }
         return notes
     }

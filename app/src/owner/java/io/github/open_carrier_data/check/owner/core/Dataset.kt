@@ -57,10 +57,15 @@ object DatasetFiles {
         "device_records" to ("device-records.json" to "generated/devices/device-records.json"),
         "apn_xml" to ("apns-conf.xml" to "generated/android/apns-conf.xml"),
         "apn_index" to ("apn-index.json" to "generated/ocd-dataset/apn-index.json"),
+        // Round 31 (spec R31.7): the group A reads, optional; CarrierSettings serves a non-Google group A value only with one.
+        "group_a_reads" to ("group-a-reads.json" to "generated/ocd-dataset/group-a-reads.json"),
     )
 
     /** The roles every dataset lists; google_lane only while the manifest says "included". */
     val REQUIRED_ROLES = setOf("profiles", "device_records", "apn_xml", "apn_index")
+
+    /** Roles a dataset may list (round 31: the group A reads). */
+    val OPTIONAL_ROLES = setOf("group_a_reads")
 
     private const val KIB = 1024L
     private const val MIB = 1024L * 1024
@@ -73,6 +78,7 @@ object DatasetFiles {
         "device-records.json" to 4 * MIB,
         "apns-conf.xml" to 16 * MIB,
         "apn-index.json" to 16 * MIB,
+        "group-a-reads.json" to 4 * MIB,
         PIN to 64 * KIB,
     )
 
@@ -80,7 +86,7 @@ object DatasetFiles {
     const val TOTAL_CAP = 64 * MIB
 
     /** The JSON files whose schema_version and based_on_data_digest the app reads (every JSON file but the manifest). */
-    val JSON_FILES = listOf("profiles.json", "google-lane.json", "device-records.json", "apn-index.json")
+    val JSON_FILES = listOf("profiles.json", "google-lane.json", "device-records.json", "apn-index.json", "group-a-reads.json")
 
     fun pathOf(name: String): String? = if (name == MANIFEST) MANIFEST_PATH else ROLES.values.firstOrNull { it.first == name }?.second
 }
@@ -391,7 +397,7 @@ data class DatasetManifest(
             val roles = files.map { it.role }
             if (roles.size != roles.toSet().size) throw DataException("manifest.json lists a role twice")
             val expected = DatasetFiles.REQUIRED_ROLES + if (lane == "included") setOf("google_lane") else emptySet()
-            if (roles.toSet() != expected) throw DataException("manifest.json lists ${roles.sorted()}, expected ${expected.sorted()} (google_lane $lane)")
+            if ((roles.toSet() - DatasetFiles.OPTIONAL_ROLES) != expected) throw DataException("manifest.json lists ${roles.sorted()}, expected ${expected.sorted()} (google_lane $lane)")
             val datasetDigest = str(o, "dataset_digest")?.takeIf(DIGEST::matches) ?: throw DataException("manifest.json has no dataset digest")
             val counts = (o["counts"] as? JsonObject ?: throw DataException("manifest.json counts is not an object")).also {
                 if (it.keys != COUNT_MEMBERS) throw SchemaRefused("manifest.json counts has the members ${it.keys.sorted()}")

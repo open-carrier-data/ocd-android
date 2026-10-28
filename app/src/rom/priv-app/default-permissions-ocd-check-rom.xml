@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    For a ROM build of OCD Check (OCD round 31): the runtime permissions the background work needs,
+    granted by DefaultPermissionGrantPolicy on the first boot of a system app. Goes to
+    <partition>/etc/default-permissions/. The person can revoke them (fixed="false").
+
+    Granting a permission starts no test. Dialled test calls, test SMS, setting trials and the
+    emergency data test run only after the person turns "Test calls on this phone" on in the app
+    (SM9, off by default), and calls and SMS go only where OCD's allowlist marks them free.
+
+    READ_PHONE_STATE: the active SIMs, and the PHONE_STATE broadcast that starts the passive call watch.
+    POST_NOTIFICATIONS: the notice when a value changed or a test failed.
+    CALL_PHONE, READ_CALL_LOG, WRITE_CALL_LOG: the muted call to the SIM's own allowlisted mailbox, and
+          the removal of exactly that call's call log entry; only after the opt-in.
+    SEND_SMS, RECEIVE_SMS: the data SMS to the phone's own number on the app's port; only after the opt-in.
+-->
+<exceptions>
+    <exception package="io.github.open_carrier_data.check">
+        <permission name="android.permission.READ_PHONE_STATE" fixed="false" />
+        <permission name="android.permission.POST_NOTIFICATIONS" fixed="false" />
+        <permission name="android.permission.CALL_PHONE" fixed="false" />
+        <permission name="android.permission.READ_CALL_LOG" fixed="false" />
+        <permission name="android.permission.WRITE_CALL_LOG" fixed="false" />
+        <permission name="android.permission.SEND_SMS" fixed="false" />
+        <permission name="android.permission.RECEIVE_SMS" fixed="false" />
+    </exception>
+</exceptions>

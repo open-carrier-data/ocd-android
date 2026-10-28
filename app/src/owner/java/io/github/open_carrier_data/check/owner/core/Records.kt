@@ -136,12 +136,6 @@ sealed interface RecordCarrier {
     val text: String
     fun json(): JsonObject
 
-    /** Valid for every carrier: the configured device records of the data side (this app never writes one). */
-    data object All : RecordCarrier {
-        override val text get() = "all"
-        override fun json() = JsonObject(mapOf("scope" to JsonPrimitive("all")))
-    }
-
     data class Profile(val profileId: String) : RecordCarrier {
         override val text get() = "profile:$profileId"
         override fun json() = JsonObject(linkedMapOf("scope" to JsonPrimitive("profile"), "profile_id" to JsonPrimitive(profileId)))
@@ -305,6 +299,44 @@ object MeasuredRecord {
     fun result(record: JsonObject): String = (record["result"] as? JsonPrimitive)?.contentOrNull.orEmpty()
 }
 
+/**
+ * Round 31 ("keys", serving and tests): a measured record of a neighbouring cell (the same device and
+ * carrier, another ROM family or line, IMS stack or fork) is never served here, but where a tester
+ * runs its value is tried as the first candidate.
+ */
+object NeighbourRecords {
+    private fun s(o: JsonObject?, k: String): String? = (o?.get(k) as? JsonPrimitive)?.takeIf { it !is JsonNull }?.contentOrNull
+
+    /** The values of [records] (device-records.json `records`) for [key] in a cell next to [cell], for [carrier]; newest first. */
+    fun values(records: JsonArray?, cell: RecordCell, carrier: RecordCarrier, key: String, todayMs: Long): List<JsonElement> {
+        val today = LocalDate.parse(MeasuredRecord.day(todayMs))
+        val carrierText = carrier.text
+        return records.orEmpty().mapNotNull { it as? JsonObject }.filter { r ->
+            val device = r["device"] as? JsonObject
+            val rom = r["rom"] as? JsonObject
+            val stack = r["ims_stack"] as? JsonObject
+            val target = r["target"] as? JsonObject
+            val c = r["carrier"] as? JsonObject
+            val text = when (s(c, "scope")) {
+                "profile" -> "profile:${s(c, "profile_id")}"
+                "sim_key" -> s(c, "gid1")?.let { "sim:${s(c, "mcc")}-${s(c, "mnc")}:gid1=${it.uppercase(Locale.ROOT)}" } ?: "sim:${s(c, "mcc")}-${s(c, "mnc")}:spn=${s(c, "spn")}"
+                else -> null
+            }
+            val sameCell = s(rom, "family") == cell.romFamily && s(rom, "line") == cell.romLine && s(stack, "id") == cell.imsStack && s(stack, "fork") == cell.fork
+            s(r, "kind") == "measured" && s(target, "type") == "config" && s(target, "key") == key && s(r, "value_kind") == "value" &&
+                s(device, "codename") == cell.codename && s(device, "model")?.uppercase(Locale.ROOT) == cell.model.uppercase(Locale.ROOT) &&
+                text == carrierText && !sameCell &&
+                s(r, "valid_until")?.let { runCatching { !LocalDate.parse(it).isBefore(today) }.getOrNull() } == true
+        }.sortedByDescending { s(it, "last_measured").orEmpty() }.mapNotNull { it["value"]?.takeIf { v -> v !is JsonNull } }
+    }
+
+    /** [candidates] with those equal to a neighbouring cell's value first, in the neighbours' order; nothing added, nothing dropped. */
+    fun first(candidates: List<Candidate>, neighbours: List<JsonElement>): List<Candidate> {
+        val front = neighbours.mapNotNull { v -> candidates.firstOrNull { c -> c.value != null && TypedValues.same(c.value, v) } }.distinct()
+        return front + (candidates - front.toSet())
+    }
+}
+
 /** What may become a record, checked here before CarrierSettings checks it again (spec 6.4). */
 object RecordCheck {
     /** The fixed-shape hex fields of a record, which skip the privacy scan's phone heuristics. */
@@ -316,7 +348,7 @@ object RecordCheck {
      * value, a bool's other value); `android_default` and `none` need none. [datasetA]: the
      * dataset's own group A marking.
      */
-    fun problem(record: JsonObject, candidates: List<JsonElement>, type: String?, datasetA: Set<String>, todayMs: Long): String? {
+    fun problem(record: JsonObject, candidates: List<JsonElement>, type: String?, datasetA: Set<String>, todayMs: Long, device: Set<String> = emptySet()): String? {
         if (record.keys.toList() != MeasuredRecord.MEMBERS) return "the record's members are not the spec's"
         if ((record["kind"] as? JsonPrimitive)?.contentOrNull != "measured") return "only measured records are written"
         if (!MeasuredRecord.KEY.matches(MeasuredRecord.recordKey(record))) return "record_key shape"
@@ -326,6 +358,7 @@ object RecordCheck {
             "config" -> {
                 val key = MeasuredRecord.targetKey(record) ?: return "no key"
                 Groups.untestable(key, datasetA)?.let { return it }
+                if (key in device) return DeviceKeys.WHY
                 when (valueKind) {
                     "value" -> {
                         val v = record["value"]

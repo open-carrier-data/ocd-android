@@ -150,6 +150,38 @@ object EmergencyData {
     /** What decides "a build changes Telephony, ImsStack or the modem firmware": the ROM build key, the IMS stack and its version, the baseband. */
     fun basis(romBuild: String, imsStack: String, imsVersion: Long?, baseband: String?): String = listOf(romBuild, imsStack, imsVersion?.toString().orEmpty(), baseband.orEmpty()).joinToString("|")
 
+    /**
+     * Round 31's first use of the default emergency APN cycle (defaultEmergencyApnTest): the install of the
+     * temporary set and its restore, with no EIMS request. Only the refusals that guard an APN install and the
+     * phone's state; the EIMS request's own conditions (EMC support, the retry timer, the transport) do not apply.
+     */
+    fun firstUseRefusal(i: EimsInputs): String? = when {
+        i.stopped != null -> "stopped: ${i.stopped}"
+        i.inCall != false -> "a call is up, ringing, held or being set up, or the call state cannot be read"
+        i.lastCallSeenAtMs != null && i.nowMs - i.lastCallSeenAtMs < CALL_QUIET_MS -> "a call ended less than 10 minutes ago"
+        i.emergencySeenAtMs != null && i.nowMs - i.emergencySeenAtMs < EMERGENCY_QUIET_MS -> "an emergency call was seen less than 60 minutes ago"
+        RestartWindow.emergencyAtMs(i.callsSeen)?.let { i.nowMs - it < EMERGENCY_QUIET_MS } == true -> "an emergency call was seen less than 60 minutes ago"
+        i.upMs < EMERGENCY_QUIET_MS && !RestartWindow.clear(i.callsSeen, i.nowMs - i.upMs, i.nowMs, EMERGENCY_QUIET_MS) ->
+            "the phone or its system started less than 60 minutes ago and the call watch cannot rule out an emergency call just before"
+        i.ecbm != false -> "emergency callback mode, or it cannot be read"
+        i.emergencySmsMode != false -> "emergency SMS mode, or it cannot be read"
+        i.roaming != false -> "roaming (national roaming included), or it cannot be read"
+        i.eimsExists != false -> "an emergency data network exists already, or it cannot be read"
+        i.dataWorks != true -> "ordinary mobile data does not work"
+        else -> null
+    }
+
+    /** Round 31 (R31.9): what a refusal of `emergency_default_set` means for the session's result. */
+    fun setRefusal(error: String?): String = when (error) {
+        "user_edited_row" -> "not run: user-edited row"
+        "no_emergency_row" -> "not run: the SIM selects no emergency row"
+        "refused_now" -> "not run now: a call, an emergency state or another APN install"
+        "voice_loss_hold", "voice_loss_stop" -> "not run: the voice-loss hold or stop"
+        "changes_halted" -> "not run: changes are halted"
+        OcdDataProtocol.UNKNOWN_METHOD -> "not run: this ROM build has no temporary emergency set (round 30)"
+        else -> "not run: ${error ?: "no answer"}"
+    }
+
     /** Why it never runs now, or null (the ruling's "It never runs" and "It needs all of these first"). */
     fun refusal(i: EimsInputs): String? = when {
         i.stopped != null -> "stopped: ${i.stopped}"
@@ -240,6 +272,7 @@ object EmergencyData {
      * list and a source review opens), or both failed (nothing changes). Null: nothing counted.
      */
     fun result(row: Verdict, default: Verdict?): RecordResult? = when {
+        // Android's default, tested only after a counted failure of the row (round 31: through the temporary set).
         row == Verdict.PASS -> RecordResult.EMERGENCY_DATA_ACCEPTED
         row == Verdict.COUNTED_FAIL && default == Verdict.PASS -> RecordResult.EMERGENCY_DEFAULT_WON
         row == Verdict.COUNTED_FAIL && default == Verdict.COUNTED_FAIL -> RecordResult.EMERGENCY_DATA_REFUSED
@@ -284,6 +317,21 @@ object EmergencyDump {
         val s = section(text, "DataRetryManager", phoneId) ?: return null
         val block = s.substringAfter("Throttling entries:", missingDelimiterValue = "").substringBefore("Local logs:")
         return block.lines().any { "DataThrottlingEntry" in it && it.contains("emergency", ignoreCase = true) }
+    }
+
+    private val APN_SETTING = Regex("\\[ApnSetting]\\s*([^,]*),\\s*(-?\\d+),\\s*(\\d*),\\s*([^,]*),")
+
+    /**
+     * Round 31 (R31.9, step 3): whether DataProfileManager shows Android's default emergency profile (APN `sos`,
+     * type emergency) for [phoneId], read from its section of the phone service's dump. Null when the section cannot be
+     * read. Android adds that profile when the SIM's APN list has no emergency row, which the temporary set makes so.
+     */
+    fun defaultSosProfile(text: String?, phoneId: Int): Boolean? {
+        val s = section(text, "DataProfileManager", phoneId) ?: return null
+        return s.lines().any { line ->
+            val m = APN_SETTING.find(line) ?: return@any false
+            m.groupValues[4].trim().equals("sos", ignoreCase = true) && line.contains("emergency", ignoreCase = true)
+        }
     }
 
     /** EMC bearer support from the registry's slot block: LTE 2 = supported; NR any value but 0. Null: not reported. */

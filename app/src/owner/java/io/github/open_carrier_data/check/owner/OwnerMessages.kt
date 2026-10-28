@@ -151,7 +151,9 @@ object OwnerSelfSms {
         val ims = runCatching { OwnerSession(phone, store, sim).observe() }.getOrNull()
         val smsOverIms = ims?.let { it.ims.registered == true && ImsService.SMSIP in it.ims.services }
         val own = ownNumber(context, sim.subId)
-        val refusal = SelfSms.refusal(on, own, smsOverIms, QuietReader.roaming(context))
+        // Round 31 (SM9): in a ROM build only with the person's opt-in, and only where the allowlist marks the SMS free.
+        val refusal = OwnerTester.policy(store.read()).smsRefusal(CallBuild.entry(context, sim))
+            ?: SelfSms.refusal(on, own, smsOverIms, QuietReader.roaming(context))
             ?: if (context.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) "send_sms_not_granted" else null
         if (refusal != null || own == null) {
             return SelfSmsCheck(sim.key, now, nonce, "refused_${refusal ?: "own_number_unknown"}", imsAtSend = smsOverIms).also { record(store, it) }

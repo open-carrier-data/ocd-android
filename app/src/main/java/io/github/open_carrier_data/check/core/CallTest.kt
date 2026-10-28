@@ -34,15 +34,30 @@ data class SpnTarget(
     val brand: String,
     val mailbox: String,
     val verification: String,
+    val free: FreeFlags? = null,
 )
 
 @Serializable
-data class NetworkTarget(val brand: String, val mailbox: String, val verification: String)
+data class NetworkTarget(val brand: String, val mailbox: String, val verification: String, val free: FreeFlags? = null)
+
+/**
+ * OCD round 31 (SM9): whether the allowlist marks the mailbox call and an SMS to the SIM's own
+ * number free for that carrier. Builds that other ROMs ship call and send only where it does; an
+ * entry without the flag is not free.
+ */
+@Serializable
+data class FreeFlags(val calls: Boolean = false, val sms: Boolean = false)
 
 /** The mailbox the app may show for one SIM. */
-data class Mailbox(val brand: String, val number: String, val verification: String) {
+data class Mailbox(val brand: String, val number: String, val verification: String, val free: FreeFlags? = null) {
     /** The table marks a code that rests on one secondary source as unverified. */
     val unverified: Boolean get() = verification.startsWith("unverified")
+
+    /** The allowlist marks the mailbox call free for this carrier (SM9). */
+    val freeCalls: Boolean get() = free?.calls == true
+
+    /** The allowlist marks an SMS to the SIM's own number free for this carrier (SM9). */
+    val freeSms: Boolean get() = free?.sms == true
 }
 
 /**
@@ -97,8 +112,8 @@ object CallTargets {
         val code = homeMccMnc ?: return null
         val folded = spn?.casefold()?.trim().orEmpty()
         val bySpn = file.bySpn.firstOrNull { it.spn.casefold().trim() == folded && code in it.mccmnc }
-        val entry = bySpn?.let { Mailbox(it.brand, it.mailbox, it.verification) }
-            ?: file.byMccMnc[code]?.let { Mailbox(it.brand, it.mailbox, it.verification) }
+        val entry = bySpn?.let { Mailbox(it.brand, it.mailbox, it.verification, it.free) }
+            ?: file.byMccMnc[code]?.let { Mailbox(it.brand, it.mailbox, it.verification, it.free) }
             ?: return null
         val emergency = { number: String -> runCatching { isEmergency(number) }.getOrDefault(true) }
         return entry.takeIf { safe(it.number, emergency) }

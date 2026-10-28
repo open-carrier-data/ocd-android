@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    OCD Check's ROM build on the power-save allowlist (as the owner build): its background checks
+    and the revert alarm armed before each change run in doze. Install to <partition>/etc/sysconfig/.
+-->
+<config>
+    <allow-in-power-save package="io.github.open_carrier_data.check" />
+</config>

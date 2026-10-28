@@ -3,7 +3,7 @@ package io.github.open_carrier_data.check
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeFalse
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
 
@@ -11,19 +11,25 @@ import java.io.File
  * Round 25 and the owner direction of 2026-10-19: the default (debug) and
  * release builds stay read-only and unchanged. The owner build's code lives
  * in src/owner, which neither compiles; they get the no-op hook from
- * src/readonly. Run with testDebugUnitTest and testReleaseUnitTest.
+ * src/readonly. Run with testDebugUnitTest and testReleaseUnitTest. Round 31
+ * adds the `rom` build type (the build other ROMs ship), which compiles
+ * src/owner as the owner build does, under its own policy (BuildConfig.TESTER).
  */
 class ReadOnlyBuildTest {
     @Test
     fun `the hook matches the build type`() {
-        assertEquals(BuildConfig.OWNER, OwnerHook.PRESENT)
+        assertEquals(BuildConfig.TESTER.isNotEmpty(), OwnerHook.PRESENT)
         assertEquals(BuildConfig.OWNER, BuildConfig.BUILD_TYPE == "owner")
         assertEquals(BuildConfig.OWNER, BuildConfig.APPLICATION_ID.endsWith(".owner"))
+        assertEquals(BuildConfig.OWNER, BuildConfig.TESTER == "owner")
+        assertEquals(BuildConfig.BUILD_TYPE == "rom", BuildConfig.TESTER == "rom")
+        // The ROM build takes the read-only app's package (spec R31.11, OCD_WRITER_PACKAGE); only the owner build has its own.
+        if (BuildConfig.TESTER != "owner") assertEquals("io.github.open_carrier_data.check", BuildConfig.APPLICATION_ID)
     }
 
     @Test
     fun `debug and release contain none of the owner build's classes`() {
-        assumeFalse(BuildConfig.OWNER)
+        assumeTrue(BuildConfig.TESTER.isEmpty())
         for (name in listOf(
             "io.github.open_carrier_data.check.owner.OwnerActivity",
             "io.github.open_carrier_data.check.owner.OwnerShellService",

@@ -20,7 +20,6 @@ import io.github.open_carrier_data.check.owner.core.IdleInputs
 import io.github.open_carrier_data.check.owner.core.IdleMoment
 import io.github.open_carrier_data.check.owner.core.KeyClasses
 import io.github.open_carrier_data.check.owner.core.OwnerSim
-import io.github.open_carrier_data.check.owner.core.SafeMode
 import io.github.open_carrier_data.check.owner.core.SafetyException
 import io.github.open_carrier_data.check.owner.core.Settlement
 import io.github.open_carrier_data.check.owner.core.SimKey
@@ -250,7 +249,6 @@ class TestsDecideTest {
         assertFalse(VoiceLoss.applies(false, serving))
         assertFalse(VoiceLoss.applies(null, serving))
         assertFalse(VoiceLoss.applies(true, serving.copy(serving = "build")))
-        assertFalse(VoiceLoss.applies(true, serving.copy(safeMode = SafeMode(true))))
         assertFalse(VoiceLoss.applies(true, DatasetStatus.absent("x")))
         val served = mapOf(
             "carrier_volte_available_bool" to ExplainKey(JsonPrimitive(false), "ocd:p"),

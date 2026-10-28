@@ -163,7 +163,7 @@
             android:exported="true"
             tools:ignore="ExportedContentProvider" />
 
-        <!-- The notification's "Stop test" and "Safe mode" (round 30 removed Undo). -->
+        <!-- The notification's "Stop test" (round 30 removed Undo, round 31 safe mode). -->
         <receiver
             android:name=".owner.NoticeActionReceiver"
             android:exported="false" />

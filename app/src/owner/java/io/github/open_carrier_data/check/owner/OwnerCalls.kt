@@ -79,6 +79,24 @@ object CallBuild {
     fun targets(context: Context): CallTargetsFile? = runCatching {
         context.assets.open(CallTargets.ASSET_NAME).use { CallTargets.parse(it.readBytes().decodeToString()) }
     }.getOrNull()
+
+    /** The SIM's own allowlist entry (its mailbox and the free flags), or null. */
+    fun entry(context: Context, sim: io.github.open_carrier_data.check.owner.core.OwnerSim): io.github.open_carrier_data.check.core.Mailbox? =
+        targets(context)?.let { CallTargets.mailboxFor(it, sim.identity.mccmnc, sim.identity.spn) { false } }
+}
+
+/**
+ * Round 31: which build this is (the owner's, or the one another ROM ships) and what its tests may
+ * do for this person ([TesterPolicy]): BuildConfig.TESTER, and the opt-in kept in the state.
+ */
+object OwnerTester {
+    val build: io.github.open_carrier_data.check.owner.core.TesterBuild
+        get() = io.github.open_carrier_data.check.owner.core.TesterBuild.of(io.github.open_carrier_data.check.BuildConfig.TESTER)
+
+    fun policy(state: io.github.open_carrier_data.check.owner.core.OwnerState) =
+        io.github.open_carrier_data.check.owner.core.TesterPolicy(build, state.activeTests.on)
+
+    fun policy(context: Context) = policy(FileStateStore(context).read())
 }
 
 /**

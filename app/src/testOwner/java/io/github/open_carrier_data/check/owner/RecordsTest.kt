@@ -47,17 +47,25 @@ class RecordsTest {
         target: RecordTarget = RecordTarget.Config(key),
     ) = MeasuredRecord.build(RecordInput(cell, carrier, target, value, result, "L2", "override_trial", "lte", 3, at, at, basis, commit, digest))
 
+    /** The spec's nine lines, hashed by hand (spec 2.10), to check the app's formula. */
+    private fun nineLines(vararg lines: String): String =
+        "r:" + java.security.MessageDigest.getInstance("SHA-256").digest(lines.joinToString("\n").toByteArray()).joinToString("") { "%02x".format(it) }.take(16)
+
     @Test
-    fun `record_key - the spec's five S20 records`() {
-        val c = RecordCell("x1s", "SM-G981B", "lineageos", "24.0", "aosp_imsstack", null, null)
-        val all = RecordCarrier.All
-        assertEquals("r:40ee9931e862c76c", MeasuredRecord.key("configured_device", c, all, RecordTarget.Config("imsvoice.voice_on_default_bearer_supported_bool")))
-        assertEquals("r:63d82c4e3fa3a0ae", MeasuredRecord.key("configured_device", c.copy(fork = "ocd"), all, RecordTarget.Config("imsvoice.voice_on_default_bearer_in_roaming_without_qos_bool")))
-        assertEquals("r:5e72fea0c8d2f885", MeasuredRecord.key("configured_device", c, all, RecordTarget.Config("imsvoice.audio_evs_support_bool")))
-        assertEquals("r:e41c807e9f154e6a", MeasuredRecord.key("configured_device", c, all, RecordTarget.Config("gps.longterm_psds_server_1")))
-        assertEquals("r:937a114148bf73b8", MeasuredRecord.key("configured_device", c, all, RecordTarget.Config("imsemergency.skip_audio_dedicated_bearer_wait_timer_for_emergency_bool")))
-        // The model is upper-cased for the key; the stack version is recorded, not matched.
-        assertEquals(MeasuredRecord.key("measured", c, all, RecordTarget.Config("k")), MeasuredRecord.key("measured", c.copy(model = "sm-g981b", stackVersion = 99), all, RecordTarget.Config("k")))
+    fun `record_key - the spec's formula, which keys the five S20 records too`() {
+        // The five S20 records on main until round 31's step 8 ("all" carriers, configured_device): the formula gives their keys.
+        assertEquals("r:40ee9931e862c76c", nineLines("configured_device", "x1s", "SM-G981B", "lineageos", "24.0", "aosp_imsstack", "", "all", "config:imsvoice.voice_on_default_bearer_supported_bool"))
+        assertEquals("r:63d82c4e3fa3a0ae", nineLines("configured_device", "x1s", "SM-G981B", "lineageos", "24.0", "aosp_imsstack", "ocd", "all", "config:imsvoice.voice_on_default_bearer_in_roaming_without_qos_bool"))
+        // Round 31: the app writes measured records only, always with a carrier key, and its key follows the same formula.
+        val c = RecordCell("x1s", "SM-G981B", "lineageos", "24.0", "aosp_imsstack", "ocd", null)
+        val profile = RecordCarrier.Profile("open.26207.c07dcc040b58")
+        assertEquals(
+            nineLines("measured", "x1s", "SM-G981B", "lineageos", "24.0", "aosp_imsstack", "ocd", "profile:open.26207.c07dcc040b58", "config:carrier_volte_available_bool"),
+            MeasuredRecord.key("measured", c, profile, RecordTarget.Config("carrier_volte_available_bool")),
+        )
+        // The model is upper-cased for the key; the stack version is recorded, not matched; the fork is part of the cell (R31.10).
+        assertEquals(MeasuredRecord.key("measured", c, profile, RecordTarget.Config("k")), MeasuredRecord.key("measured", c.copy(model = "sm-g981b", stackVersion = 99), profile, RecordTarget.Config("k")))
+        assertTrue(MeasuredRecord.key("measured", c, profile, RecordTarget.Config("k")) != MeasuredRecord.key("measured", c.copy(fork = null), profile, RecordTarget.Config("k")))
     }
 
     @Test

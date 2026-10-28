@@ -90,11 +90,16 @@ object OwnerAccess {
         "android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS",
     )
 
+    /** Only the emergency data test needs it; a ROM build denies it unless its builder turned the test on (round 31, SM10). */
+    const val RESTRICTED_NETWORKS = "android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS"
+
     fun privilegedGranted(context: Context): Boolean {
         val info = context.applicationInfo
         val system = info.flags and ApplicationInfo.FLAG_SYSTEM != 0
-        return system && PRIVILEGED_PERMISSIONS.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+        return system && PRIVILEGED_PERMISSIONS.filterNot { it == RESTRICTED_NETWORKS }.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
     }
+
+    fun restrictedNetworksGranted(context: Context): Boolean = context.checkSelfPermission(RESTRICTED_NETWORKS) == PackageManager.PERMISSION_GRANTED
 
     /**
      * The privileged route's one write API, looked up without calling it: a
@@ -120,14 +125,17 @@ object OwnerAccess {
      * (`cmd phone cc` refuses on user builds and for any uid but root).
      */
     fun gate(context: Context): OwnerGate {
-        val ownerPhone = Build.DEVICE.equals(OWNER_DEVICE, ignoreCase = true) && Build.MODEL.equals(OWNER_MODEL, ignoreCase = true)
-        val lineage = context.packageManager.hasSystemFeature("org.lineageos.android")
+        // Round 31: the ROM build runs on any phone whose ROM builder ships it, as a privileged system app beside
+        // OcdCarrierSettings; the owner build stays on the owner's S20 with LineageOS.
+        val rom = OwnerTester.build == io.github.open_carrier_data.check.owner.core.TesterBuild.ROM
+        val ownerPhone = rom || Build.DEVICE.equals(OWNER_DEVICE, ignoreCase = true) && Build.MODEL.equals(OWNER_MODEL, ignoreCase = true)
+        val lineage = rom || context.packageManager.hasSystemFeature("org.lineageos.android")
         val privileged = privilegedGranted(context)
         val overrideApi = if (privileged) overrideApiReachable() else null
-        val (running, root, permitted) = shizukuState()
+        val (running, root, permitted) = if (rom) Triple(false, false, false) else shizukuState()
         val route = when {
             privileged && overrideApi == true -> Route.PRIVILEGED
-            running && root && permitted && Build.TYPE != "user" -> Route.SHIZUKU_ROOT
+            !rom && running && root && permitted && Build.TYPE != "user" -> Route.SHIZUKU_ROOT
             else -> null
         }
         val reason = when {

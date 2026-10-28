@@ -265,7 +265,8 @@ class OwnerData(private val context: Context, private val store: StateStore) {
             connection.instanceFollowRedirects = false
             connection.connectTimeout = 20_000
             connection.readTimeout = 60_000
-            connection.setRequestProperty("User-Agent", "ocd-check-owner")
+            // Round 31 (SM11): the pull carries no identifier; a ROM build does not even name itself as the owner's.
+            connection.setRequestProperty("User-Agent", if (OwnerTester.build == io.github.open_carrier_data.check.owner.core.TesterBuild.OWNER) "ocd-check-owner" else "ocd-check")
             if (target.host == "api.github.com") {
                 connection.setRequestProperty("Accept", "application/vnd.github+json")
                 connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
