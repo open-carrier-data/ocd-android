@@ -13,8 +13,9 @@ import java.time.temporal.ChronoUnit
  * in the state, the report and the log, and nothing here changes the phone.
  *
  * Vocabulary: "check" is read-only, "test" changes a setting for a while,
- * "changes" are what Open Carrier Data keeps, and the way back is always
- * "safe mode" (round 30; Undo is gone). Mobile data uses Android's own "access point names".
+ * "changes" are what Open Carrier Data keeps, and the way back is disabling
+ * the app in Android's Settings (round 31; Undo and safe mode are gone). Mobile
+ * data uses Android's own "access point names".
  */
 
 /** One active SIM as the screen names it: the name Settings shows, and what ties it to the state's records. */
@@ -325,7 +326,7 @@ object CheckedLine {
                 else -> "Tap Test now to start"
             }
             status.kind == StatusKind.FAILED -> if (scheduleOn) "Nothing to do. It tries again tonight" else "Nothing to do"
-            status.kind == StatusKind.KEPT_BROKEN -> "Turn on safe mode to go back to the ROM's own data"
+            status.kind == StatusKind.KEPT_BROKEN -> "Disable this app in Android's Settings to go back to the ROM's own data"
             status.kind == StatusKind.OWN_NOT_SIGNED_IN && canTest && checked != null -> "$checked. Tap Test now to look for a fix"
             checked == null -> null
             sims.orEmpty().size > 1 -> "$checked on ${joinAnd(sims.orEmpty().map { it.name }.distinct())}"

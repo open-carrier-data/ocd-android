@@ -45,10 +45,10 @@ jobs:
       - name: Unit tests, lint and the debug APK
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
 
-      # The release build's read-only proof (ReadOnlyBuildTest) and the owner build's
-      # JVM tests. The owner APK itself is never built or uploaded here (round 25 OB1).
-      - name: Release and owner unit tests
-        run: ./gradlew --no-daemon testReleaseUnitTest testOwnerUnitTest
+      # The release build's read-only proof (ReadOnlyBuildTest), the owner build's JVM tests and
+      # the ROM build's (round 31). The owner APK itself is never built or uploaded here (round 25 OB1).
+      - name: Release, owner and ROM unit tests
+        run: ./gradlew --no-daemon testReleaseUnitTest testOwnerUnitTest testRomUnitTest
 
       - name: Bundle script tests
         run: python3 -m unittest discover -s tools -p 'test_*.py'

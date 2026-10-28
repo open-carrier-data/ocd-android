@@ -148,6 +148,8 @@ class MailboxCaller(
     /** [PointerLedger.cell] of a SIM. */
     private val cellOf: (SimKey) -> String,
     private val timing: Timing = Timing(),
+    /** Round 31 (SM9): in a ROM build, calls only with the person's opt-in and only where the allowlist marks them free. */
+    private val policy: TesterPolicy = TesterPolicy(TesterBuild.OWNER),
 ) {
     data class Timing(
         val waitActiveMs: Long = 30_000,
@@ -177,6 +179,7 @@ class MailboxCaller(
         val blocks = mutableListOf<String>()
         val (mailbox, why) = MailboxGuard.target(targets, sim, device)
         if (mailbox == null) blocks += why ?: "no_mailbox"
+        if (mailbox != null) policy.callRefusal(mailbox)?.let { blocks += it }
         try {
             session.guard(callWaitMs = 0)
         } catch (e: SafetyException) {

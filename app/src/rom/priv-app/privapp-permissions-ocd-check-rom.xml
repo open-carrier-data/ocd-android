@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    OCD Check, the build another ROM ships (OCD round 31, SM1 to SM12), as a privileged system app.
+    Install to /system_ext/etc/permissions/ next to the APK in
+    /system_ext/priv-app/OcdCheck/OcdCheck.apk (or the /product pair). The ROM builder signs the
+    APK with his own key and sets OcdCarrierSettings's writer certificate to it (SM5).
+
+    The ROM enforces this list (ro.control_privapp_permissions=enforce): a privileged permission
+    the APK asks for and this file neither grants nor denies stops system_server at boot.
+    RomBuildTest keeps the two in step.
+
+    The same privileged permissions as the owner build, for the same reasons (see
+    src/owner/priv-app/privapp-permissions-ocd-check-owner.xml), with one difference:
+    CONNECTIVITY_USE_RESTRICTED_NETWORKS is denied here. The emergency data test needs it, and
+    SM10 grants it only in a build whose builder ran the first use of the emergency data test on
+    that device family and IMS stack (logcat streamed, round 30's five first-run checks) and then
+    turned the test on in the build. Only in such a build, replace the deny-permission line with
+    <permission name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />.
+-->
+<permissions>
+    <privapp-permissions package="io.github.open_carrier_data.check">
+        <permission name="android.permission.MODIFY_PHONE_STATE" />
+        <permission name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
+        <permission name="android.permission.READ_PRECISE_PHONE_STATE" />
+        <permission name="android.permission.WRITE_APN_SETTINGS" />
+        <permission name="android.permission.DUMP" />
+        <permission name="android.permission.PACKAGE_USAGE_STATS" />
+        <deny-permission name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />
+    </privapp-permissions>
+
+    <!-- overrideConfig(int, PersistableBundle) is a @SystemApi, reached by reflection, as in the owner build. -->
+    <hidden-api-whitelisted-app package="io.github.open_carrier_data.check" />
+</permissions>

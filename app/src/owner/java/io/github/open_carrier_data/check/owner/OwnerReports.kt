@@ -177,6 +177,8 @@ object OwnerAutoReports {
 
     /** Sends what is due; returns one line for the log, or null when nothing was due. */
     fun run(context: Context, store: FileStateStore): String? {
+        // Round 31 (SM11): only the owner build sends, with the owner's token; a ROM build sends nothing by itself.
+        if (!OwnerTester.policy(store.read()).sendsWithToken) return null
         if (!OwnerToken.isSet(context)) return null
         val state = store.read()
         if (state.autoRefusedAtMs != null) return null

@@ -304,6 +304,10 @@ data class OwnerState(
     val lastCallSeenAtMs: Long? = null,
     /** Round 30 keeps no override: the keeps of earlier builds were dropped once. */
     val keepsDropped: Boolean = false,
+    /** Round 31 (SM9): the person's opt-in for the active tests in a ROM build; off by default, unused in the owner build. */
+    val activeTests: ActiveTestsOptIn = ActiveTestsOptIn(),
+    /** Round 31 (R31.5): the last tester declaration sent to CarrierSettings, so the same one goes at most once a day. */
+    val testerDeclared: TesterDeclaration? = null,
 ) {
     val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
 

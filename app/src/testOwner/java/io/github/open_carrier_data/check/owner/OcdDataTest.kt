@@ -46,11 +46,11 @@ class OcdDataTest {
         "build_pin" to """{"commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","data_digest":"sha256:x","dataset_digest":"sha256:b","generated_at":"2026-10-24T10:00:00Z"}""",
         "installed" to """{"commit":"5cb3c43fc536be51b9ee663ad04d05f07d546006","data_digest":"sha256:x","dataset_digest":"sha256:i","generated_at":"2026-10-25T09:57:41Z","installed_at":"2026-10-26T03:00:00Z","google_lane_source":"baked"}""",
         "serving" to "installed", "serving_reason" to "installed",
-        "safe_mode" to """{"on":false}""", "changes_halted" to """{"on":false}""", "pull_again" to false, "emergency_gate" to "full",
+        "changes_halted" to """{"on":false}""", "pull_again" to false, "emergency_gate" to "full",
     )
 
     @Test
-    fun `status - protocol 2, the cell, both datasets, serving, safe mode and the pause`() {
+    fun `status - protocol 2, the cell, both datasets, serving and the pause`() {
         val s = DatasetStatus.parse(status, 1)
         assertTrue(s.available)
         assertEquals("x1s", s.build.device)
@@ -58,12 +58,12 @@ class OcdDataTest {
         assertEquals(34L, s.build.imsStackVersion)
         assertEquals("5cb3c43fc536be51b9ee663ad04d05f07d546006", s.installed!!.commit)
         assertTrue(s.servingInstalled)
-        assertFalse(s.safeMode.on)
-        // A nested object and a JSON string read the same; safe mode as CarrierSettings reports it.
-        val on = DatasetStatus.parse(answer("""{"ok":true,"protocol":2,"serving":"build","serving_reason":"safe_mode","safe_mode":{"on":true,"since":"2026-10-26T03:00:00Z","by":"voice_loss","reason":"x"}}"""), 1)
-        assertTrue(on.safeMode.on)
-        assertEquals("voice_loss", on.safeMode.by)
-        assertFalse(on.servingInstalled)
+        // Round 31: no safe mode. A round 30 ROM that still reports one is read as the build's data serving, nothing more.
+        val old = DatasetStatus.parse(answer("""{"ok":true,"protocol":2,"serving":"build","serving_reason":"safe_mode","safe_mode":{"on":true,"since":"2026-10-26T03:00:00Z","by":"voice_loss","reason":"x"}}"""), 1)
+        assertFalse(old.servingInstalled)
+        assertEquals("safe_mode", old.servingReason)
+        val descriptor = DatasetStatus.serializer().descriptor
+        assertFalse((0 until descriptor.elementsCount).any { "safe" in descriptor.getElementName(it).lowercase() })
     }
 
     @Test
@@ -73,7 +73,7 @@ class OcdDataTest {
         assertFalse(DatasetStatus.parse(answer("""{"ok":false,"error":"forbidden_for_caller","reason":"x"}"""), 1).available)
         // Every call of the absent client answers absent, so nothing is staged, activated or recorded.
         val absent = DatasetClient.Absent
-        for (a in listOf(absent.stage(StageRequest("{}", emptyList(), emptyMap())), absent.activate("i"), absent.putRecord("{}"), absent.setSafeMode(true, OcdDataProtocol.BY_OWNER, "x"), absent.applyApnRecords())) {
+        for (a in listOf(absent.stage(StageRequest("{}", emptyList(), emptyMap())), absent.activate("i"), absent.putRecord("{}"), absent.applyApnRecords())) {
             assertFalse(a.ok)
             assertEquals(DataAnswer.ABSENT, a.error)
         }
@@ -137,14 +137,15 @@ class OcdDataTest {
     }
 
     @Test
-    fun `the screen's words - what serves, safe mode and a pause, plainly`() {
+    fun `the screen's words - what serves, a pause and the way back, plainly`() {
         val s = DatasetStatus.parse(status, 1)
         assertEquals("The newest data serves: main 5cb3c43, from 2026-10-25", DatasetWords.of(s, OwnerState()).lines.first())
-        val safe = s.copy(safeMode = s.safeMode.copy(on = true, by = OcdDataProtocol.BY_VOICE_LOSS), serving = "build", servingReason = "safe_mode")
-        val words = DatasetWords.of(safe, OwnerState())
-        assertTrue(words.safeModeOn)
-        assertEquals("The ROM's own data serves: safe mode is on (calls came back only with the ROM's data)", words.lines.first())
-        assertTrue("Tests are stopped while safe mode is on" in words.lines)
+        // Round 31: no safe mode in the words; the way back is disabling the app in Android's Settings.
+        for (words in listOf(DatasetWords.of(s, OwnerState()), DatasetWords.of(s.copy(serving = "build", servingReason = "safe_mode"), OwnerState()))) {
+            assertTrue(words.lines.none { "safe mode" in it.lowercase() })
+        }
+        assertTrue("disable Open Carrier Data in Android's Settings" in DatasetWords.WAY_BACK)
+        assertTrue("safe" !in DatasetWords.WAY_BACK.lowercase())
         assertEquals("voice_loss_not_restored", DatasetWords.of(s, OwnerState(stop = "voice_loss_not_restored")).halted)
         assertEquals("a call is up", InstallRefusal.waiting("call"))
         assertEquals("an APN test row is in place", InstallRefusal.waiting("apn_trial_in_place"))

@@ -16,9 +16,10 @@ import kotlinx.serialization.json.longOrNull
  * 6): `content://com.android.carriersettings.ocddata`, method calls only, with round 29's pinned
  * writer unchanged (knownSigner with the owner certificate, a UID check on every call; adb may read
  * and clear, never write). CarrierSettings is the only installer: it checks the files again,
- * installs the APN part through UPDATE_APN_DB, switches the CarrierConfig part to the same commit,
- * and owns safe mode. This app pulls, stages, picks the idle moment to activate, tests, and writes
- * measured records.
+ * installs the APN part through UPDATE_APN_DB, and switches the CarrierConfig part to the same
+ * commit. This app pulls, stages, picks the idle moment to activate, tests, and writes measured
+ * records. Round 31 removed safe mode: the way back is disabling this app in Android's Settings,
+ * after which CarrierSettings serves the build's dataset, both parts, without the app.
  *
  * Every answer is a Bundle with `ok`; complex values travel as JSON strings. The Android side turns
  * the Bundle into a JSON object ([DataAnswer]) so that everything here is plain and testable; a
@@ -27,13 +28,21 @@ import kotlinx.serialization.json.longOrNull
  * On a ROM without the provider (the round 29 layer, or the switch off) every call answers absent
  * ([DatasetClient.Absent]): nothing is staged, no test of round 30 runs, and the app keeps to its
  * read-only checks and reports.
+ *
+ * Round 31 (the spec's "Round 31 changes", protocol 3): no safe mode; the voice-loss hold and its
+ * release; the default emergency APN test's temporary set and its restore; the tester declaration
+ * for SM7; the device override's keys; the first-use record with every hand-off. A protocol 2 ROM
+ * (the round 30 build still on the phone until the next one) is served as before, without them:
+ * every round 31 call there answers `unknown_method`, and the app goes on without that step.
  */
 
 object OcdDataProtocol {
     const val AUTHORITY = "com.android.carriersettings.ocddata"
     const val URI = "content://$AUTHORITY"
     const val PERMISSION = "com.android.carriersettings.permission.WRITE_OCD_DATASET"
-    const val PROTOCOL = 2
+    /** The protocol this app speaks; [PROTOCOLS] are the ones it reads (2: the round 30 build). */
+    const val PROTOCOL = 3
+    val PROTOCOLS = setOf(2, 3)
 
     const val STATUS = "status"
     const val STAGE = "stage_dataset"
@@ -45,10 +54,16 @@ object OcdDataProtocol {
     const val REMOVE_RECORD = "remove_record"
     const val LIST_RECORDS = "list_records"
     const val APPLY_APN_RECORDS = "apply_apn_records"
-    const val SET_SAFE_MODE = "set_safe_mode"
     const val STOP = "stop"
     const val RESUME = "resume"
     const val CHECK = "check"
+
+    /** Round 31 (protocol 3): the tester declaration (R31.5), the voice-loss hold (R31.8), the default emergency APN test (R31.9). */
+    const val SET_TESTER = "set_tester"
+    const val VOICE_LOSS_HOLD = "voice_loss_hold"
+    const val VOICE_LOSS_RELEASE = "voice_loss_release"
+    const val EMERGENCY_DEFAULT_SET = "emergency_default_set"
+    const val EMERGENCY_DEFAULT_RESTORE = "emergency_default_restore"
 
     const val OK = "ok"
     const val ERROR = "error"
@@ -64,11 +79,17 @@ object OcdDataProtocol {
     const val DATASET = "dataset"
     const val RECORD = "record"
     const val RECORD_KEY = "record_key"
-    const val BY = "by"
+    const val FIRST_USE = "first_use"
+    const val OUTCOME = "outcome"
+    const val KEEP = "keep"
+    const val JOB_ID = "job_id"
 
-    /** set_safe_mode's `by` (spec 6.3). */
-    const val BY_OWNER = "owner_tap"
-    const val BY_VOICE_LOSS = "voice_loss"
+    /** The answer of a provider that does not know a method (a protocol 2 ROM for every round 31 method). */
+    const val UNKNOWN_METHOD = "unknown_method"
+
+    /** `voice_loss_release`'s outcomes (R31.8). */
+    const val OUTCOME_WINNERS = "winners"
+    const val OUTCOME_NO_FAILING_VALUE = "no_failing_value"
 }
 
 /** The install job states (spec 6.6). */
@@ -85,6 +106,15 @@ object InstallState {
     const val RELOAD_NOT_PROVEN = "reload_not_proven"
     val ACTIVATION = setOf(ACTIVATING, "apn_installing", "apn_confirming", "switching", "proving")
     val FINAL = setOf(REFUSED, INSTALLED, ALREADY_INSTALLED, SUPERSEDED, CANCELLED, APN_NOT_CONFIRMED, RELOAD_NOT_PROVEN, "apn_rollback_failed")
+
+    /** Round 31 (R31.9): the temporary emergency-less set's job states, and its restore's. */
+    const val IN_PLACE = "in_place"
+    const val RESTORED = "restored"
+    const val KEPT = "kept"
+    const val RESTORE_FAILED = "restore_failed"
+    const val WAITING = "waiting"
+    val SET_FINAL = setOf(IN_PLACE, REFUSED, APN_NOT_CONFIRMED)
+    val RESTORE_FINAL = setOf(RESTORED, KEPT, RESTORE_FAILED, REFUSED)
 }
 
 /** A provider answer as JSON: the Bundle's keys with their values, JSON strings opened. [ok] false with [error] and [reason] on a refusal. */
@@ -120,13 +150,34 @@ data class DataAnswer(val o: JsonObject) {
     }
 }
 
-/** Safe mode as CarrierSettings reports it (spec 8.2); CarrierSettings owns it, this app only shows and switches it. */
-@Serializable
-data class SafeMode(val on: Boolean, val since: String? = null, val by: String? = null, val reason: String? = null)
-
 /** "Changes halted": the round 29 stop flag, redefined (spec 8.4). It refuses installs and records, not serving. */
 @Serializable
 data class ChangesHalted(val on: Boolean, val since: String? = null, val reason: String? = null)
+
+/**
+ * Round 31's voice-loss hold as CarrierSettings reports it (R31.8): the build's dataset serves
+ * until the app's split releases it; a second loss under the same differing values is a stop, and
+ * that dataset is blocked.
+ */
+@Serializable
+data class VoiceLossState(
+    val hold: Boolean = false,
+    val holdSince: String? = null,
+    val holdReason: String? = null,
+    val holdDatasetDigest: String? = null,
+    val valuesDigest: String? = null,
+    val stop: Boolean = false,
+    val stopReason: String? = null,
+    val blocked: List<String> = emptyList(),
+)
+
+/** Round 31 (R31.3): what the ROM's device override and LineageOS's fixed key set on this phone. */
+@Serializable
+data class DeviceOverride(val keys: Set<String> = emptySet(), val readable: Boolean? = null)
+
+/** Round 31 (R31.5): the tester declaration as CarrierSettings keeps it, and whether SM7 applies now. */
+@Serializable
+data class TesterState(val active: Boolean? = null, val declared: Boolean? = null, val since: String? = null, val reason: String? = null)
 
 /** A dataset as `status` names it: the build's pin or the installed one. */
 @Serializable
@@ -159,7 +210,6 @@ data class DatasetStatus(
     /** "installed" or "build". */
     val serving: String = "",
     val servingReason: String = "",
-    val safeMode: SafeMode = SafeMode(false),
     val changesHalted: ChangesHalted = ChangesHalted(false),
     val pullAgain: Boolean = false,
     val stagedId: String? = null,
@@ -168,8 +218,25 @@ data class DatasetStatus(
     val waitingFor: String? = null,
     val emergencyGate: String = "full",
     val readAtMs: Long = 0,
+    /** Round 31 (R31.6): `build` when the build declares the device family's first use passed (the ROM builder's SM10 switch), else `none`. */
+    val emergencyGateSource: String? = null,
+    /** Round 31 (R31.4): the OCD app's state as CarrierSettings sees it: enabled, disabled, absent or unknown. */
+    val appState: String? = null,
+    val deviceOverride: DeviceOverride = DeviceOverride(),
+    val tester: TesterState = TesterState(),
+    /** SM7 applies now (no tester on this phone): X3 to X5 values only where they equal the Google lane. */
+    val sm7: Boolean? = null,
+    val voiceLoss: VoiceLossState = VoiceLossState(),
+    /** Round 31 (R31.9): the temporary emergency-less APN set is in place ("emergency default test set"). */
+    val apnTestSet: Boolean = false,
 ) {
     val servingInstalled: Boolean get() = serving == "installed"
+
+    /** The provider speaks round 31 (protocol 3): the hold, the default emergency APN test and the tester declaration exist. */
+    val round31: Boolean get() = available && protocol >= 3
+
+    /** SM10: the ROM builder declared the device family's first use of the emergency data test passed. */
+    val emergencyTestOn: Boolean get() = emergencyGateSource == "build" && emergencyGate == "narrow"
 
     companion object {
         fun absent(why: String, nowMs: Long = 0) = DatasetStatus(available = false, why = why, readAtMs = nowMs)
@@ -177,9 +244,14 @@ data class DatasetStatus(
         fun parse(a: DataAnswer, nowMs: Long): DatasetStatus {
             if (!a.ok) return absent(if (a.error == DataAnswer.ABSENT) a.reason ?: "not on this ROM build" else a.line, nowMs)
             val protocol = a.long("protocol")?.toInt() ?: 0
-            if (protocol != OcdDataProtocol.PROTOCOL) return absent("protocol $protocol; this app speaks ${OcdDataProtocol.PROTOCOL}", nowMs)
+            if (protocol !in OcdDataProtocol.PROTOCOLS) return absent("protocol $protocol; this app speaks ${OcdDataProtocol.PROTOCOLS.sorted().joinToString(" and ")}", nowMs)
             val b = a.obj("build")
             val staged = a.obj("staged")
+            val voice = a.obj("voice_loss")
+            val hold = voice?.get("hold") as? JsonObject
+            val stop = voice?.get("stop") as? JsonObject
+            val device = a.obj("device_override")
+            val tester = a.obj("tester")
             return DatasetStatus(
                 available = true,
                 protocol = protocol,
@@ -197,7 +269,6 @@ data class DatasetStatus(
                 installed = ref(a.obj("installed")),
                 serving = (a.obj("serving")?.let { s(it, "serving") } ?: a.str("serving")).orEmpty(),
                 servingReason = (a.str("serving_reason") ?: a.obj("serving")?.let { s(it, "serving_reason") ?: s(it, "reason") }).orEmpty(),
-                safeMode = a.obj("safe_mode")?.let { SafeMode(bool(it, "on") == true, s(it, "since"), s(it, "by"), s(it, "reason")) } ?: SafeMode(a.bool("safe_mode") == true),
                 changesHalted = a.obj("changes_halted")?.let { ChangesHalted(bool(it, "on") == true, s(it, "since"), s(it, "reason")) } ?: ChangesHalted(a.bool("changes_halted") == true),
                 pullAgain = a.bool("pull_again") == true,
                 stagedId = staged?.let { s(it, "install_id") },
@@ -206,6 +277,31 @@ data class DatasetStatus(
                 waitingFor = a.str("waiting_for") ?: a.arr("waiting_for")?.joinToString { (it as? JsonPrimitive)?.contentOrNull.orEmpty() },
                 emergencyGate = a.str("emergency_gate") ?: "full",
                 readAtMs = nowMs,
+                emergencyGateSource = a.str("emergency_gate_source"),
+                appState = a.obj("app")?.let { s(it, "state") },
+                deviceOverride = DeviceOverride(
+                    keys = (device?.get("keys") as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.toSet() +
+                        (device?.get("values") as? JsonObject)?.keys.orEmpty(),
+                    readable = device?.let { bool(it, "readable") },
+                ),
+                tester = tester?.let { TesterState(bool(it, "active"), bool(it, "declared"), s(it, "since"), s(it, "reason")) } ?: TesterState(),
+                sm7 = a.bool("sm7"),
+                voiceLoss = VoiceLossState(
+                    hold = hold != null,
+                    holdSince = s(hold, "since"),
+                    holdReason = s(hold, "reason"),
+                    holdDatasetDigest = s(hold, "dataset_digest"),
+                    valuesDigest = s(hold, "values_digest"),
+                    stop = stop != null,
+                    stopReason = s(stop, "reason"),
+                    blocked = (voice?.get("blocked") as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+                ),
+                apnTestSet = when (val t = a.element("apn_test_set")) {
+                    null, JsonNull -> false
+                    is JsonPrimitive -> t.booleanOrNull ?: t.contentOrNull?.let { it.isNotEmpty() && it != "false" } ?: false
+                    is JsonObject -> bool(t, "in_place") ?: true
+                    else -> true
+                },
             )
         }
 
@@ -341,6 +437,19 @@ object DatasetRetry {
     fun key(status: DatasetStatus): String =
         listOf(status.build.incremental, status.protocol.toString(), status.buildPin?.commit.orEmpty(), status.buildPin?.datasetDigest.orEmpty()).joinToString("|")
 
+    /**
+     * Round 31 (R31.4): why [last], installed by this app, goes to CarrierSettings again although it ended: CarrierSettings
+     * no longer has it installed (the person disabled the app and enabled it again, or the data was cleared), so the
+     * build serves. Never for the crash guard's dataset or a voice-loss stop, which CarrierSettings refuses on its own.
+     */
+    fun dropped(last: InstallView, status: DatasetStatus): String? = when {
+        last.state != InstallState.INSTALLED && last.state != InstallState.ALREADY_INSTALLED -> null
+        status.installed?.datasetDigest == last.datasetDigest -> null
+        status.servingReason in setOf("crash_guard", "voice_loss_stop", "voice_loss_hold") -> null
+        last.datasetDigest in status.voiceLoss.blocked -> null
+        else -> "CarrierSettings no longer has it installed (${status.servingReason.ifEmpty { "build serves" }.replace('_', ' ')}); every value that differs from the build's is tested"
+    }
+
     /** Why [last] (the same dataset, ended) is handed over again now, or null. */
     fun again(last: InstallView, status: DatasetStatus, testNow: Boolean): String? = when {
         !last.final -> null
@@ -375,6 +484,10 @@ data class ExplainView(
     val apnProfile: String? = null,
     val coupling: String? = null,
     val rows: List<ExplainRow> = emptyList(),
+    /** Round 31 (R31.5): SM7 applies to this SIM's bundle now. */
+    val sm7: Boolean? = null,
+    /** Round 31 (R31.9): the temporary emergency-less APN set is in place. */
+    val apnTestSet: Boolean = false,
 ) {
     /** The serving profile is the reserved `default` or a fill-only profile: a record for it is keyed by the SIM (sim_key). */
     val servedBySimKey: Boolean get() = serving == "default" || serving.startsWith("fill.")
@@ -411,6 +524,8 @@ data class ExplainView(
                 recordsApplied = (e["records_applied"] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
                 apnProfile = apn?.let { DatasetStatus.s(it, "apn_profile") },
                 coupling = apn?.let { DatasetStatus.s(it, "coupling") },
+                sm7 = DatasetStatus.bool(e, "sm7"),
+                apnTestSet = e["apn_test_set"]?.let { it !is JsonNull && (it as? JsonPrimitive)?.booleanOrNull != false } == true,
                 rows = (apn?.get("rows") as? JsonArray).orEmpty().mapNotNull { r ->
                     val o = r as? JsonObject ?: return@mapNotNull null
                     val types = when (val t = o["types"]) {
@@ -435,8 +550,11 @@ data class ListedRecord(val record: JsonObject, val origin: String, val state: S
     val recordKey: String get() = DatasetStatus.s(record, "record_key").orEmpty()
 }
 
-/** The files of one stage call: local name to the file's path; the Android side opens each read-only. */
-data class StageRequest(val pin: String, val names: List<String>, val paths: Map<String, String>)
+/**
+ * The files of one stage call: local name to the file's path; the Android side opens each read-only.
+ * [firstUse]: round 31's first-use record of the emergency data test (R31.6), re-sent with every hand-off.
+ */
+data class StageRequest(val pin: String, val names: List<String>, val paths: Map<String, String>, val firstUse: String? = null)
 
 /**
  * How the app reaches the installer. [Absent] on a ROM without it. Every method returns the raw
@@ -453,10 +571,20 @@ interface DatasetClient {
     fun removeRecord(key: String): DataAnswer
     fun listRecords(subId: Int? = null): DataAnswer
     fun applyApnRecords(): DataAnswer
-    fun setSafeMode(on: Boolean, by: String, reason: String): DataAnswer
     fun stop(reason: String): DataAnswer
     fun resume(): DataAnswer
     fun check(): DataAnswer
+
+    /** Round 31 (R31.5): whether dialled tests run on this phone (the opt-in, the stack calibrated). */
+    fun setTester(on: Boolean, reason: String): DataAnswer
+
+    /** Round 31 (R31.8): only the build's dataset restored voice; CarrierSettings holds it until [voiceLossRelease]. Answers `voice_loss` hold or stop. */
+    fun voiceLossHold(reason: String): DataAnswer
+    fun voiceLossRelease(outcome: String, reason: String): DataAnswer
+
+    /** Round 31 (R31.9): the temporary set without this SIM's emergency rows, and its restore; both answer a `job_id` polled with [installStatus]. */
+    fun emergencyDefaultSet(subId: Int): DataAnswer
+    fun emergencyDefaultRestore(keep: Boolean): DataAnswer
 
     object Absent : DatasetClient {
         private val no = DataAnswer.absent("Open Carrier Data's dataset installer is not on this ROM build")
@@ -470,17 +598,23 @@ interface DatasetClient {
         override fun removeRecord(key: String) = no
         override fun listRecords(subId: Int?) = no
         override fun applyApnRecords() = no
-        override fun setSafeMode(on: Boolean, by: String, reason: String) = no
         override fun stop(reason: String) = no
         override fun resume() = no
         override fun check() = no
+        override fun setTester(on: Boolean, reason: String) = no
+        override fun voiceLossHold(reason: String) = no
+        override fun voiceLossRelease(outcome: String, reason: String) = no
+        override fun emergencyDefaultSet(subId: Int) = no
+        override fun emergencyDefaultRestore(keep: Boolean) = no
     }
 }
 
 /** A refusal of `activate` that only means "not now" (spec 6.5 `refused_now`, `busy`): the app tries again in a later idle moment. */
 object InstallRefusal {
     val NOT_NOW = setOf("refused_now", "busy")
-    val OWNER = setOf("safe_mode_on", "changes_halted")
+
+    /** Round 31 (R31.2): the voice-loss hold or stop refuses installs and records until the release, Resume or a newer build. */
+    val VOICE_LOSS = setOf("voice_loss_hold", "voice_loss_stop")
 
     /** What the screen and the log say for a `waiting_for` value. */
     fun waiting(what: String?): String = when (what) {
@@ -491,46 +625,61 @@ object InstallRefusal {
         "state_unreadable" -> "the call or emergency state cannot be read"
         "roaming" -> "the phone is roaming"
         "apn_trial_in_place" -> "an APN test row is in place"
+        "apn_test_set_in_place" -> "the emergency default test set is in place"
+        "emergency_call_60min" -> "an emergency call ended less than 60 minutes ago"
         null, "" -> "not now"
         else -> what.replace('_', ' ')
     }
 }
 
-/** The "Carrier data" section of the owner screen, in plain words (round 30): what serves, safe mode, a pause, the tests. */
-data class DatasetLines(val title: String, val lines: List<String>, val safeModeOn: Boolean, val halted: String?, val available: Boolean)
+/** The "Carrier data" section of the owner screen, in plain words (rounds 30 and 31): what serves, a pause, the tests, and the way back. */
+data class DatasetLines(val title: String, val lines: List<String>, val halted: String?, val available: Boolean)
 
 object DatasetWords {
+    /**
+     * Round 31's way back, in plain words: there is no safe mode; disabling the app in Android's
+     * Settings makes CarrierSettings serve the ROM's own data, both parts, without the app.
+     */
+    const val WAY_BACK =
+        "To go back to the ROM's own carrier data and access point names, disable Open Carrier Data in Android's Settings: " +
+            "Apps, Open Carrier Data, Disable. This works even when this app is broken, while roaming and without a computer. " +
+            "When you enable it again, the newest data comes back the next time the phone is idle, or at once with Test now, and is tested then"
+
     fun of(status: DatasetStatus?, state: OwnerState): DatasetLines {
-        if (status == null) return DatasetLines("Carrier data", listOf("Not looked at yet"), safeModeOn = false, halted = null, available = false)
+        if (status == null) return DatasetLines("Carrier data", listOf("Not looked at yet"), halted = null, available = false)
         if (!status.available) {
             return DatasetLines(
                 "Carrier data",
                 listOf("This ROM has no installer for Open Carrier Data's dataset, so the ROM's own carrier data serves. Open Carrier Data checks and reports, and changes nothing"),
-                safeModeOn = false, halted = null, available = false,
+                halted = null, available = false,
             )
         }
         val lines = mutableListOf<String>()
         val installed = status.installed
         lines += when {
-            status.safeMode.on -> "The ROM's own data serves: safe mode is on" + (status.safeMode.by?.let { by -> " (${if (by == OcdDataProtocol.BY_VOICE_LOSS) "calls came back only with the ROM's data" else "turned on by you"})" } ?: "")
             status.servingInstalled && installed != null -> "The newest data serves: main ${installed.commit.take(7)}" + (installed.generatedAt.takeIf { it.isNotEmpty() }?.let { ", from ${it.take(10)}" } ?: "")
             else -> "The ROM's own data serves" + when (status.servingReason) {
-                "no_dataset", "" -> ""
+                // Round 31: a cleared store is no reason of its own; it reads as no dataset installed.
+                "no_dataset", "cleared", "" -> ""
                 "corrupt" -> ": the installed data could not be read"
                 "build_pin_newer" -> ": the ROM's data is newer"
                 "crash_guard" -> ": the newest data did not load twice"
-                "cleared" -> ": the installed data was cleared"
+                "app_disabled" -> ": Open Carrier Data was disabled"
+                "voice_loss_hold" -> ": calls came back only with it, and the values at fault are found when the phone is next idle at home"
+                "voice_loss_stop" -> ": calls stopped twice with the same new values; tap Resume to try again, or wait for a newer ROM build"
+                // A round 30 ROM still names its own switch; its build's data serves either way.
+                "safe_mode" -> " (switched in this older ROM's own Settings entry)" // a round 30 ROM only
                 else -> " (${status.servingReason.replace('_', ' ')})"
             }
         }
+        if (status.apnTestSet) lines += "For a moment, the access point names leave out this SIM's emergency entry to test Android's own; they come back at once"
         state.datasetLine?.let { lines += it }
         state.pulled?.takeIf { it.datasetDigest != installed?.datasetDigest }?.let { lines += "Downloaded, waiting for the phone to be idle: main ${it.commit.take(7)}" }
         state.campaigns.firstOrNull { !it.done }?.let { lines += "Testing the changed values (${it.trials} test${if (it.trials == 1) "" else "s"} so far); it goes on when the phone is idle" }
         state.campaignEnds.lastOrNull()?.let { lines += "Last tests: ${it.note.take(140)}" }
-        if (status.safeMode.on) lines += "Tests are stopped while safe mode is on"
         val halted = state.stop ?: status.changesHalted.reason?.takeIf { status.changesHalted.on } ?: "paused".takeIf { status.changesHalted.on }
         state.emergencyFirstUse?.let { lines += "Emergency data test: first use ${if (it.passed) "passed" else "not meaningful on this phone"}" }
         state.emergencyStop?.let { lines += "Emergency data test stopped until a judged round: $it" }
-        return DatasetLines("Carrier data", lines, status.safeMode.on, halted, available = true)
+        return DatasetLines("Carrier data", lines, halted, available = true)
     }
 }

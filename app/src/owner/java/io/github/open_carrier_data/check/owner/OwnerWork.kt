@@ -114,8 +114,11 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                     store.update { it.logged(System.currentTimeMillis(), "emergency_data", line ?: "nothing to do") }
                     Result.success()
                 }
-                STEP_SAFE_MODE -> {
-                    OwnerDatasetStep.setSafeMode(applicationContext, store, inputData.getBoolean(KEY_ON, true))
+                // Round 31: the default emergency APN cycle's first use by hand (adb logcat streamed): install and restore, no EIMS request.
+                STEP_EMERGENCY_DEFAULT_FIRST_USE -> withPhone(store) { _, sims, phone ->
+                    val sim = sims.firstOrNull { it.slot == inputData.getInt(KEY_SLOT, 0) } ?: throw SafetyException("no_sim", "no SIM in that slot")
+                    val line = OwnerEmergencyData.defaultFirstUse(applicationContext, store, phone, OwnerDatasetStep.client(applicationContext), sim)
+                    store.update { it.logged(System.currentTimeMillis(), "emergency_data", line) }
                     Result.success()
                 }
                 STEP_PULL -> (if (inputData.getBoolean(KEY_IN_RUN, false)) {
@@ -430,7 +433,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 quietLog(store, "mms", "slot ${sim.slot + 1}: ${MmsProbe.line(check, MmsProbe.ended(OwnerMms.ended(context), sim.identity.mccmnc), java.time.ZoneId.systemDefault())}")
             }
             val state = store.read()
-            if (state.selfSmsOn && night && QuietWindow.trialBlocker(look, nightOnly = true, traffic = false) == null && SelfSms.due(state.selfSms, sim.key, now)) {
+            if (state.selfSmsOn && OwnerTester.policy(state).smsRefusal(CallBuild.entry(context, sim)) == null && night && QuietWindow.trialBlocker(look, nightOnly = true, traffic = false) == null && SelfSms.due(state.selfSms, sim.key, now)) {
                 // The check is in the ledger before the SMS goes out (OwnerSelfSms.send); only the log line here.
                 val sent = runCatching { OwnerSelfSms.send(context, phone, sim, on = true) }.getOrNull() ?: continue
                 store.update { it.logged(now, "self_sms", "slot ${sim.slot + 1}: ${sent.result}") }
@@ -490,7 +493,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             val night = QuietWindow.night(minute)
             val caller = MailboxCaller(
                 phone, store, AndroidCallDevice(context), OwnerBasis.current(context, state).rom, CallBuild.short(context),
-                CallBuild.stack(context), device(context).model, CallBuild.cellOf(context),
+                CallBuild.stack(context), device(context).model, CallBuild.cellOf(context), policy = OwnerTester.policy(state),
             )
             val targets = CallBuild.targets(context)
             for (d in due.take(MAX_CALLS_PER_STEP)) {
@@ -746,9 +749,8 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val STEP_DATASET = "dataset"
         const val STEP_VOICE_CHECK = "voice_check"
         const val STEP_EMERGENCY_DATA = "emergency_data"
-        const val STEP_SAFE_MODE = "safe_mode"
+        const val STEP_EMERGENCY_DEFAULT_FIRST_USE = "emergency_default_first_use"
         const val KEY_TEST_NOW = "test_now"
-        const val KEY_ON = "on"
 
         /** At most this many mailbox calls in one step: one per bearer. */
         const val MAX_CALLS_PER_STEP = 2
@@ -902,11 +904,11 @@ object OwnerScheduler {
         )
     }
 
-    /** The owner's safe-mode switch: CarrierSettings serves the build's dataset while it is on. */
-    fun safeMode(context: Context, on: Boolean) {
+    /** Round 31: the default emergency APN cycle's first use on the SIM in [slot]: the temporary set and its restore, no EIMS request. */
+    fun emergencyDefaultFirstUse(context: Context, slot: Int) {
         WorkManager.getInstance(context).enqueueUniqueWork(
-            "owner-safe-mode", ExistingWorkPolicy.APPEND_OR_REPLACE,
-            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_SAFE_MODE, OwnerWorker.KEY_ON to on), null, expedite = true),
+            EMERGENCY_DATA, ExistingWorkPolicy.KEEP,
+            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_EMERGENCY_DEFAULT_FIRST_USE, OwnerWorker.KEY_SLOT to slot), null, expedite = true),
         )
     }
 
@@ -920,6 +922,7 @@ object OwnerScheduler {
 
     /** Round 29: sends the settled results as report issues with the owner's token; nothing without one. */
     fun autoReport(context: Context) {
+        if (OwnerTester.build != io.github.open_carrier_data.check.owner.core.TesterBuild.OWNER) return
         if (!OwnerToken.isSet(context)) return
         val request = OneTimeWorkRequestBuilder<OwnerWorker>()
             .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_AUTO_REPORT))

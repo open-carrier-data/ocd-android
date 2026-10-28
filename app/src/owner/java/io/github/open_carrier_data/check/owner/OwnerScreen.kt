@@ -139,8 +139,8 @@ class OwnerActions(
     val setSelfSms: (Boolean) -> Unit,
     /** One test SMS to the phone's own number now. */
     val selfSmsNow: () -> Unit = {},
-    /** Round 30: safe mode on or off, through CarrierSettings (which owns it). */
-    val setSafeMode: (Boolean) -> Unit = {},
+    /** Round 31 (SM9), ROM builds only: the person's opt-in for the active tests. */
+    val setActiveTests: (Boolean) -> Unit = {},
     /** Round 29: stores the owner's token for automatic reports; the callback says whether it was stored. */
     val saveToken: (String, (Boolean) -> Unit) -> Unit = { _, _ -> },
     val removeToken: () -> Unit = {},
@@ -416,14 +416,13 @@ private fun StatusHeader(ui: OwnerUi, sims: List<SimView>?, status: Status, opti
 
 /** A section's title above its card, in Settings' style and inset. */
 /**
- * Round 30: the carrier data on the phone, as CarrierSettings reports it: whether the newest data
- * or the ROM's own serves, safe mode (CarrierSettings's own switch, which also works without this
- * app and while roaming), a pause after a stop event, and the tests. Undo is gone (round 30).
+ * Rounds 30 and 31: the carrier data on the phone, as CarrierSettings reports it: whether the newest
+ * data or the ROM's own serves, a pause after a stop event, and the tests. Round 31 removed safe
+ * mode: the way back is disabling this app in Android's Settings, which the section says in plain words.
  */
 @Composable
 private fun CarrierData(ui: OwnerUi, actions: OwnerActions) {
     val words = io.github.open_carrier_data.check.owner.core.DatasetWords.of(ui.dataset, ui.state)
-    var confirm by remember { mutableStateOf(false) }
     SectionTitle(words.title)
     Group {
         for ((i, line) in words.lines.withIndex()) {
@@ -437,7 +436,9 @@ private fun CarrierData(ui: OwnerUi, actions: OwnerActions) {
         }
         if (words.available) {
             item {
-                ToolRow(if (words.safeModeOn) "Turn off safe mode" else "Turn on safe mode") { confirm = true }
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Summary(io.github.open_carrier_data.check.owner.core.DatasetWords.WAY_BACK)
+                }
             }
         }
     }
@@ -447,20 +448,6 @@ private fun CarrierData(ui: OwnerUi, actions: OwnerActions) {
             style = MaterialTheme.typography.bodyMedium,
             color = StatusColors.text(Tone.PROBLEM),
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
-        )
-    }
-    if (confirm) {
-        AlertDialog(
-            onDismissRequest = { confirm = false },
-            title = { Text(if (words.safeModeOn) "Turn off safe mode?" else "Turn on safe mode?") },
-            text = {
-                Text(
-                    if (words.safeModeOn) "The newest Open Carrier Data serves again, and tests start again when the phone is idle"
-                    else "The ROM's own carrier data and access point names serve, and tests stop until you turn safe mode off. It also works in Settings without this app",
-                )
-            },
-            confirmButton = { TextButton(onClick = { confirm = false; actions.setSafeMode(!words.safeModeOn) }) { Text(if (words.safeModeOn) "Turn off" else "Turn on") } },
-            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } },
         )
     }
 }
@@ -680,10 +667,14 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         item { SwitchRow("Test missing access point names", null, options.apns) { setOptions(options.copy(apns = it)) } }
     }
 
+    val owner = OwnerTester.build == io.github.open_carrier_data.check.owner.core.TesterBuild.OWNER
+    // Round 31 (SM9): in a ROM build, the person's one opt-in for the active tests, off by default.
+    if (!owner) ActiveTestsOptIn(ui, actions)
+
     // Round 26: calls are measured by the phone; nobody dials or listens.
     SectionTitle("Calls")
     Group {
-        item {
+        if (owner) item {
             SwitchRow(
                 "Test calls out automatically",
                 if (state.callsOutMode == CallsOutMode.LIVE) "At night, muted, to your own mailbox, when your own calls didn't show it" else "Off: only notes what it would dial",
@@ -717,7 +708,7 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
                 }
             }
         }
-        item {
+        if (owner) item {
             SwitchRow(
                 "Check incoming SMS over IMS",
                 "A hidden SMS to your own number about once a week. It may cost an SMS on your tariff. ${ui.selfSmsLine.orEmpty()}".trim(),
@@ -725,7 +716,9 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
                 actions.setSelfSms,
             )
         }
-        item { ToolRow("Send a test SMS now", "One hidden SMS to your own number; it may cost an SMS", onClick = actions.selfSmsNow) }
+        if (owner || state.activeTests.on) item {
+            ToolRow("Send a test SMS now", if (owner) "One hidden SMS to your own number; it may cost an SMS" else "One hidden SMS to your own number, only where it is free for your carrier", onClick = actions.selfSmsNow)
+        }
     }
 
     SectionTitle("Tools")
@@ -739,8 +732,16 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
     }
 
     // Round 29: settled results sent as report issues with the owner's own fine-grained token; without one, nothing is sent.
+    // Round 31 (SM11): a ROM build sends nothing by itself and has no token; a report is one the person opens and submits.
     SectionTitle("Reports")
-    Group { item { TokenRow(ui, actions) } }
+    Group {
+        item {
+            if (owner) TokenRow(ui, actions) else Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Title("Nothing is sent by itself")
+                Summary("Results stay on this phone. To share one, tap Open report on GitHub, read it and submit it yourself")
+            }
+        }
+    }
 
     Spacer(Modifier.padding(top = 24.dp))
     Group {
@@ -817,7 +818,7 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
             Summary(
                 "Never touches emergency calling. Nothing changes during a call, while roaming, or within 10 minutes of an emergency call. " +
                     "The only number it ever calls is your own mailbox, muted, at night. " +
-                    "Safe mode always brings back the ROM's own carrier data, also without this app",
+                    io.github.open_carrier_data.check.owner.core.DatasetWords.WAY_BACK,
                 Modifier.padding(16.dp),
             )
         }
@@ -825,6 +826,34 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
 
     SectionTitle("Log")
     Group { item { Log(state) } }
+}
+
+/**
+ * Round 31 (SM9), ROM builds only: the person's opt-in for the active tests (dialled test calls,
+ * test SMS, setting trials, and the emergency data test where the ROM builder turned it on). Off by
+ * default; the words say what the app then does before the switch goes on.
+ */
+@Composable
+private fun ActiveTestsOptIn(ui: OwnerUi, actions: OwnerActions) {
+    val on = ui.state.activeTests.on
+    var confirm by remember { mutableStateOf(false) }
+    SectionTitle("Tests")
+    Group {
+        item {
+            SwitchRow(io.github.open_carrier_data.check.owner.core.OptInWords.TITLE, if (on) io.github.open_carrier_data.check.owner.core.OptInWords.ON else io.github.open_carrier_data.check.owner.core.OptInWords.OFF, on) { want ->
+                if (want) confirm = true else actions.setActiveTests(false)
+            }
+        }
+    }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text("Turn on test calls?") },
+            text = { Text(io.github.open_carrier_data.check.owner.core.OptInWords.explain(ui.dataset?.emergencyTestOn == true)) },
+            confirmButton = { TextButton(onClick = { confirm = false; actions.setActiveTests(true) }) { Text("Turn on") } },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } },
+        )
+    }
 }
 
 /**

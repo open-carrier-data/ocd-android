@@ -25,10 +25,10 @@ import io.github.open_carrier_data.check.owner.core.StatusSentence
  * The owner hears little (2026-10-20, "so the user does not notice it that
  * much"). While a test runs, a quiet notification (the lowest importance: no
  * sound, no status-bar icon, folded at the bottom of the shade) says so with
- * "Stop test" and "Safe mode". Round 30 removed Undo: the way back is safe
- * mode, which CarrierSettings provides and which works without this app.
- * Routine work posts nothing. A normal notification comes only when a value
- * changed or something failed ([Notices]); a failure carries "Safe mode" too.
+ * "Stop test". Round 30 removed Undo and round 31 removed safe mode: the way
+ * back is disabling this app in Android's Settings, after which CarrierSettings
+ * serves the ROM's own data without it. Routine work posts nothing. A normal
+ * notification comes only when a value changed or something failed ([Notices]).
  */
 object OwnerNotifications {
     private const val LIVE_CHANNEL = "owner_live_quiet"
@@ -85,7 +85,6 @@ object OwnerNotifications {
             .setContentIntent(open(context))
             .apply {
                 if (testing) addAction(0, "Stop test", action(context, NoticeActionReceiver.ACTION_STOP, 2))
-                if (state.datasetStatus?.available == true && state.datasetStatus.safeMode.on != true) addAction(0, "Safe mode", action(context, NoticeActionReceiver.ACTION_SAFE_MODE, 3))
             }
             .build()
         runCatching { manager.notify(LIVE_ID, notification) }
@@ -103,10 +102,6 @@ object OwnerNotifications {
             .setStyle(NotificationCompat.BigTextStyle().bigText(notice.text.take(600)))
             .setAutoCancel(true)
             .setContentIntent(open(context))
-            .apply {
-                val status = FileStateStore(context).read().datasetStatus
-                if (notice.failed && status?.available == true && !status.safeMode.on) addAction(0, "Safe mode", action(context, NoticeActionReceiver.ACTION_SAFE_MODE, 4))
-            }
             .build()
         runCatching { NotificationManagerCompat.from(context).notify(EVENT_ID, notification) }
     }
@@ -116,19 +111,16 @@ object OwnerNotifications {
     )
 }
 
-/** The notification's "Stop test" and "Safe mode": each queues its work, nothing else. Not exported. */
+/** The notification's "Stop test": it queues its work, nothing else. Not exported. */
 class NoticeActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             ACTION_STOP -> OwnerScheduler.stopTests(context)
-            // Safe mode on, through CarrierSettings (round 30): the build's dataset serves and tests stop until the owner turns it off.
-            ACTION_SAFE_MODE -> OwnerScheduler.safeMode(context, on = true)
         }
     }
 
     companion object {
         const val ACTION_STOP = "io.github.open_carrier_data.check.owner.STOP_TEST"
-        const val ACTION_SAFE_MODE = "io.github.open_carrier_data.check.owner.SAFE_MODE_ON"
     }
 }
 

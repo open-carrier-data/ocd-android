@@ -22,8 +22,14 @@ import java.util.concurrent.TimeUnit
  *     an outage, the newest value stays, the record reads "no value passed" and a source review
  *     opens. The previous dataset's value is never a candidate as such, and nothing is invented;
  * (c) voice loss: when IMS voice is lost after a change and no candidate restores it, the build's
- *     dataset is the last candidate, and safe mode turns on only when that is what restores calls;
- *     otherwise the newest dataset stays (the cause is the network) and it is a stop event.
+ *     dataset is the last candidate. When only that restores calls, CarrierSettings holds the
+ *     build's dataset (round 31's voice-loss hold), the next idle moment at home splits the newest
+ *     dataset's differences from the build's to find the failing values, and the newest dataset
+ *     serves again with the winners in their place; a second loss under the same differing values
+ *     is a stop event. When not even the build's dataset restores calls, the newest dataset stays
+ *     (the cause is the network) and it is a stop event.
+ * Round 31 ("keys"): a key that the ROM's device override (or LineageOS's fixed key) sets on this
+ * phone is the device's, not OCD's: no candidate is tried for it and no record written ([DeviceKeys]).
  * Groups A and B are never tested, overridden or recorded. X5's offs are tested as overrides and
  * released only by a record of a call that went ACTIVE (or an SMS delivered) with the off in
  * effect. Caps: 10 dialled test calls a day per SIM, 6 IMS re-registrations caused by OCD an hour
@@ -87,6 +93,8 @@ data class Candidate(val value: JsonElement?, val origin: String) {
         const val ANDROID_DEFAULT = "android_default"
         const val BUILD = "build_dataset"
         const val X5_OFF = "x5_off"
+        /** Round 31's voice-loss split: the newest dataset's value, set over the held build's dataset. */
+        const val HELD_NEWEST = "held: the newest dataset's value"
     }
 }
 
@@ -127,20 +135,44 @@ object Candidates {
 }
 
 /**
- * The guard for round 30's override trials: never a group A or B key or the version string, and
- * keys only by name shape. It adds to [KeyGuard] (the five switches of the legacy trials), which
- * stays as it is.
+ * Round 31 ("keys"): the values the ROM sets last on this phone, its device override (on LineageOS
+ * the `carrier_config_override.xml` overlay) and LineageOS's fixed key, are facts about the device,
+ * not about a carrier. A test of such a key would measure the override's value, and its record would
+ * claim that a value passed which never ran. So the app tries no candidate for them and writes no
+ * record. CarrierSettings names them in `status.device_override` and as the source of those keys in
+ * `explain` (R31.3). A round 30 build serves the same device values as per-device records
+ * (`device_record:`), which the same rule covers until that build is gone.
+ */
+object DeviceKeys {
+    /** explain's source codes of a value the ROM sets for the device (R31.3). */
+    val SOURCES = setOf("device_override", "lineageos_fixed")
+    const val ROUND30_RECORD = "device_record:"
+
+    fun owned(source: String): Boolean = source in SOURCES || SOURCES.any { source.startsWith("$it:") } || source.startsWith(ROUND30_RECORD)
+
+    /** The keys [explain] serves from the device (by their source), and the keys [status] names as the override's. */
+    fun of(explain: ExplainView?, status: DatasetStatus? = null): Set<String> =
+        explain?.keys?.filterValues { owned(it.source) }?.keys.orEmpty() + status?.deviceOverride?.keys.orEmpty()
+
+    const val WHY = "set by the ROM's device override on this phone: the device's value, not Open Carrier Data's"
+}
+
+/**
+ * The guard for round 30's override trials: never a group A or B key or the version string, never
+ * a key the ROM's device override sets ([DeviceKeys], round 31), and keys only by name shape. It
+ * adds to [KeyGuard] (the five switches of the legacy trials), which stays as it is.
  */
 object TrialGuard {
     private val NAME = Regex("[A-Za-z0-9_.]{1,128}")
 
-    fun problem(key: String, datasetA: Set<String> = emptySet()): String? = when {
+    fun problem(key: String, datasetA: Set<String> = emptySet(), device: Set<String> = emptySet()): String? = when {
         !NAME.matches(key) -> "not a carrier config key"
+        key in device -> DeviceKeys.WHY
         else -> Groups.untestable(key, datasetA)
     }
 
-    fun check(keys: Collection<String>, datasetA: Set<String> = emptySet()) {
-        for (k in keys) problem(k, datasetA)?.let { throw SafetyException("trial_key_refused", "$k: $it") }
+    fun check(keys: Collection<String>, datasetA: Set<String> = emptySet(), device: Set<String> = emptySet()) {
+        for (k in keys) problem(k, datasetA, device)?.let { throw SafetyException("trial_key_refused", "$k: $it") }
     }
 }
 
@@ -286,6 +318,12 @@ data class Campaign(
     val lastVerdict: TrialVerdict? = null,
     /** IMS and data before the install (read right before `activate`): what every trial of an install is compared with. */
     val baseline: TrialObs? = null,
+    /**
+     * Round 31's voice-loss split: the build's dataset is held, so [changes] (old: the build's value,
+     * new: the newest dataset's) are not served; each trial sets the newest values as overrides
+     * ([CampaignPlanner.onHeld]).
+     */
+    val held: Boolean = false,
 ) {
     val done: Boolean get() = phase == CampaignPhase.DONE
 }
@@ -304,8 +342,48 @@ object CampaignPlanner {
     /** Trials one campaign may take in all before it ends as not decided (it starts again at the next trigger). */
     const val MAX_TRIALS = 24
 
-    fun start(id: String, sim: OwnerSim, commit: String, datasetDigest: String, changes: List<Changed>, datasetA: Set<String>, nowMs: Long, why: String = "install"): Campaign =
-        Campaign(id, sim.subId, sim.slot, sim.identity.mccmnc, commit, datasetDigest, nowMs, changes.filter { TrialGuard.problem(it.key, datasetA) == null }, why)
+    fun start(id: String, sim: OwnerSim, commit: String, datasetDigest: String, changes: List<Changed>, datasetA: Set<String>, nowMs: Long, why: String = "install", device: Set<String> = emptySet()): Campaign =
+        Campaign(id, sim.subId, sim.slot, sim.identity.mccmnc, commit, datasetDigest, nowMs, changes.filter { TrialGuard.problem(it.key, datasetA, device) == null }, why)
+
+    /** Why a campaign runs when it is round 31's voice-loss split. */
+    const val VOICE_LOSS_SPLIT = "voice_loss_split"
+
+    /**
+     * Round 31's voice-loss split over the held build's dataset: [plan] says which values differ from
+     * what is served; with the build's dataset served, every change the plan does not set otherwise
+     * goes on at its newest value, and the split's "old value" is the build's, served already. No
+     * dialled call or SMS: a trial is judged by IMS voice registration and data, which is what the
+     * loss showed.
+     */
+    fun onHeld(c: Campaign, plan: TrialPlan): TrialPlan {
+        val out = LinkedHashMap<String, Candidate>()
+        for (ch in c.changes) {
+            val cand = plan.overrides[ch.key] ?: Candidate(ch.new, Candidate.HELD_NEWEST)
+            if (cand.origin == Candidate.SPLIT_OLD) continue
+            out[ch.key] = cand
+        }
+        for ((k, v) in plan.overrides) if (c.changes.none { it.key == k }) out[k] = v
+        return plan.copy(overrides = out, classes = plan.classes - setOf(TestClass.VOICE, TestClass.WIFI_CALLING, TestClass.SMS))
+    }
+
+    /** [c] without the changes the ROM's device override sets ([DeviceKeys]): for a campaign opened before they were known. */
+    fun withoutDevice(c: Campaign, device: Set<String>): Campaign =
+        if (c.changes.none { it.key in device } || c.phase != CampaignPhase.BATCH) c else c.copy(changes = c.changes.filterNot { it.key in device })
+
+    /**
+     * Round 31 (SM8, SM9): the passive check only. On an IMS stack the tests are not calibrated on,
+     * or in a ROM build whose person did not turn the active tests on, a campaign runs its batch trial
+     * without overrides, calls or SMS (IMS registration, data validation, the no-regression check)
+     * and ends after one counted trial: it splits nothing, tries no candidate and settles nothing.
+     */
+    fun passive(c: Campaign, verdict: TrialVerdict, why: String, nowMs: Long): Campaign {
+        val counted = c.copy(trials = c.trials + 1, lastVerdict = verdict, note = verdict.reason)
+        return when (verdict.outcome) {
+            TrialOutcome.NOT_COUNTED -> if (counted.trials >= MAX_TRIALS) counted.copy(phase = CampaignPhase.DONE, endedAtMs = nowMs, note = "not decided after ${counted.trials} trials: ${verdict.reason}") else counted
+            TrialOutcome.PASS -> counted.copy(phase = CampaignPhase.DONE, endedAtMs = nowMs, note = "passive check passed (${verdict.reason}); $why")
+            TrialOutcome.MEASURED_FAIL -> counted.copy(phase = CampaignPhase.DONE, endedAtMs = nowMs, note = "passive check failed (${verdict.reason}); no candidate is tried: $why")
+        }
+    }
 
     private fun classes(c: Campaign, keys: Collection<String>): Set<TestClass> =
         (c.changes.filter { it.key in keys }.map { it.cls } + TestClass.OTHER + c.failedClasses).toSet()
@@ -419,21 +497,58 @@ object VoiceLoss {
      * rather than the build's. With the build's dataset in service no candidate of ours can help.
      */
     fun applies(voiceLost: Boolean?, status: DatasetStatus, inService: Boolean? = true): Boolean =
-        voiceLost == true && inService == true && status.available && status.servingInstalled && !status.safeMode.on
+        voiceLost == true && inService == true && status.available && status.servingInstalled
 
-    /** The voice-class changes to try first, newest install first; group A never. */
-    fun suspects(changes: List<Changed>): List<Changed> =
-        changes.filter { it.cls == TestClass.VOICE || it.cls == TestClass.WIFI_CALLING } + changes.filter { it.cls == TestClass.OTHER }
+    /** The voice-class changes to try first, newest install first; group A never, and never a key the device override sets. */
+    fun suspects(changes: List<Changed>, device: Set<String> = emptySet()): List<Changed> =
+        (changes.filter { it.cls == TestClass.VOICE || it.cls == TestClass.WIFI_CALLING } + changes.filter { it.cls == TestClass.OTHER }).filterNot { it.key in device }
+
+    /**
+     * Round 31's voice-loss split: every value the newest dataset ([newest]'s keys) serves that the
+     * build's dataset ([build], served while held) does not, as a change from the build's value to the
+     * newest one. Never group A or B, the version string or a key the device override sets.
+     */
+    fun differences(newest: Map<String, ExplainKey>, build: Map<String, ExplainKey>, datasetA: Set<String>, device: Set<String> = emptySet()): List<Changed> {
+        val out = mutableListOf<Changed>()
+        for (k in (newest.keys + build.keys).sorted()) {
+            if (TrialGuard.problem(k, datasetA, device) != null) continue
+            val n = newest[k]?.value
+            val b = build[k]?.value
+            if (TypedValues.same(n, b)) continue
+            out += Changed(k, b, n, newest[k]?.source.orEmpty())
+        }
+        return out
+    }
+
+    /** What a finished split tells CarrierSettings (R31.8), or null while it is not decided. */
+    sealed interface SplitEnd {
+        /** Winners in place of the failing values: release with `winners`. */
+        data class Winners(val keys: List<String>) : SplitEnd
+        /** All the newest values passed together: the loss was not theirs; release with `no_failing_value`. */
+        data object NoFailingValue : SplitEnd
+        /** A value failed and no other passed: the build's dataset stays held, and it is a stop event. */
+        data class NoWinner(val keys: List<String>) : SplitEnd
+    }
+
+    fun splitEnd(c: Campaign): SplitEnd? = when {
+        !c.done -> null
+        c.noValue.isNotEmpty() -> SplitEnd.NoWinner(c.noValue)
+        c.winners.isNotEmpty() && c.lastVerdict?.passed == true -> SplitEnd.Winners(c.winners.keys.toList())
+        c.winners.isEmpty() && c.lastVerdict?.passed == true -> SplitEnd.NoFailingValue
+        // Not decided (the trial cap, or the failure is in a value the app may not test): the build's dataset stays held.
+        else -> SplitEnd.NoWinner(emptyList())
+    }
 
     /**
      * The build's bundle as overrides (the final candidate): each key the build serves at its
      * value, and each key only the served bundle has at Android's default. Groups A and B are left
-     * to CarrierSettings, which serves them the same way under both datasets.
+     * to CarrierSettings, which serves them the same way under both datasets, and so are the keys the
+     * ROM's device override sets: it applies last under both datasets, and an override would replace it.
      */
-    fun buildOverrides(served: Map<String, ExplainKey>, build: Map<String, ExplainKey>, datasetA: Set<String>): Map<String, Candidate> {
+    fun buildOverrides(served: Map<String, ExplainKey>, build: Map<String, ExplainKey>, datasetA: Set<String>, device: Set<String> = emptySet()): Map<String, Candidate> {
         val out = LinkedHashMap<String, Candidate>()
-        for ((k, v) in build) if (TrialGuard.problem(k, datasetA) == null && !TypedValues.same(served[k]?.value, v.value)) out[k] = Candidate(v.value, Candidate.BUILD)
-        for (k in served.keys - build.keys) if (TrialGuard.problem(k, datasetA) == null && served[k]?.value != null) out[k] = Candidate(null, Candidate.BUILD)
+        for ((k, v) in build) if (TrialGuard.problem(k, datasetA, device) == null && !TypedValues.same(served[k]?.value, v.value)) out[k] = Candidate(v.value, Candidate.BUILD)
+        for (k in served.keys - build.keys) if (TrialGuard.problem(k, datasetA, device) == null && served[k]?.value != null) out[k] = Candidate(null, Candidate.BUILD)
         return out
     }
 }

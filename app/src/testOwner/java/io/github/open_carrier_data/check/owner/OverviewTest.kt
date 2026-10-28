@@ -319,7 +319,7 @@ class OverviewTest {
         val notSignedIn = state.copy(entries = listOf(record("vowifi:on", false, "observed", true)))
         assertEquals("Checked tonight at 03:12. Tap Test now to look for a fix", line(at(2026, 10, 20, 4, 0), s = notSignedIn))
         val broken = state.copy(overrides = listOf(LiveOverride(0, key, OwnerFeature.VOLTE.key, true, Hold.KEPT, now)), entries = listOf(record("volte:on", false, "observed", true)))
-        assertEquals("Turn on safe mode to go back to the ROM's own data", line(night, s = broken))
+        assertEquals("Disable this app in Android's Settings to go back to the ROM's own data", line(night, s = broken))
         val two = listOf(view, SimView(1, 4, "26223", "1&1"))
         assertEquals("Checked tonight at 03:12 on LIDL Connect and 1&1", line(at(2026, 10, 20, 4, 0), sims = two))
     }
