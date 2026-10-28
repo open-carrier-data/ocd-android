@@ -244,6 +244,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         val line = runCatching { OwnerScheduler.runTests(getApplication(), offs = offs, voiceCheckMs = if (voiceCheck) 120_000 else 0, apns = apns) }.getOrNull()
         when {
             line?.startsWith("queued already") == true -> say("A test is already running")
+            line?.startsWith("refused: ") == true -> say("Not tested: this app is older than the ROM's installer")
             line?.startsWith("queued") != true -> say("Couldn't start the test")
         }
         refresh()

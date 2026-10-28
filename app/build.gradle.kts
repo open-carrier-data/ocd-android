@@ -22,8 +22,11 @@ android {
         applicationId = "io.github.open_carrier_data.check"
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0"
+        // Every build that goes onto a phone raises it (OlderAppTest): Android drops an adb-installed update of a
+        // system app only for a system copy with a higher versionCode, so a ROM's newer copy of the same code
+        // stays shadowed by the older update (the S20 on 2026-10-28: round 30's e5240ec ran instead of round 31's 64e559c).
+        versionCode = 5
+        versionName = "0.4.1"
         // True only in the owner build type; debug and release stay read-only.
         buildConfigField("boolean", "OWNER", "false")
         // Round 31: which tester build this is: "" (read-only), "owner", or "rom" (the build other ROMs ship).
