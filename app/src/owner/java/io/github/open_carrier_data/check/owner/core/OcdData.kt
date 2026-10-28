@@ -229,6 +229,11 @@ data class DatasetStatus(
     val voiceLoss: VoiceLossState = VoiceLossState(),
     /** Round 31 (R31.9): the temporary emergency-less APN set is in place ("emergency default test set"). */
     val apnTestSet: Boolean = false,
+    /**
+     * The provider answers with a protocol newer than every one in [OcdDataProtocol.PROTOCOLS]: CarrierSettings has
+     * an installer, and this app is older than it ([OlderApp]). Null for every other unavailable provider.
+     */
+    val newerProtocol: Int? = null,
 ) {
     val servingInstalled: Boolean get() = serving == "installed"
 
@@ -244,7 +249,10 @@ data class DatasetStatus(
         fun parse(a: DataAnswer, nowMs: Long): DatasetStatus {
             if (!a.ok) return absent(if (a.error == DataAnswer.ABSENT) a.reason ?: "not on this ROM build" else a.line, nowMs)
             val protocol = a.long("protocol")?.toInt() ?: 0
-            if (protocol !in OcdDataProtocol.PROTOCOLS) return absent("protocol $protocol; this app speaks ${OcdDataProtocol.PROTOCOLS.sorted().joinToString(" and ")}", nowMs)
+            if (protocol !in OcdDataProtocol.PROTOCOLS) {
+                return absent("protocol $protocol; this app speaks ${OcdDataProtocol.PROTOCOLS.sorted().joinToString(" and ")}", nowMs)
+                    .copy(newerProtocol = protocol.takeIf { it > OcdDataProtocol.PROTOCOLS.max() })
+            }
             val b = a.obj("build")
             val staged = a.obj("staged")
             val voice = a.obj("voice_loss")
@@ -632,6 +640,26 @@ object InstallRefusal {
     }
 }
 
+/**
+ * This app older than its ROM's dataset installer (2026-10-28): CarrierSettings answers with a protocol this build
+ * does not read. That is no ROM without an installer: the ROM's own build of this app (or a newer one) speaks it, and
+ * this one is an older update that keeps running over it. It hands nothing over and tests nothing, also not the round
+ * 29 trials of a ROM without the installer, and says why; the light checks and reports go on. On the S20 the round 30
+ * update read round 31's protocol 3 as "no installer", and every "Test now" ran the round 29 trial chain instead.
+ */
+object OlderApp {
+    /** Why "Test now" and the night tests do nothing on this ROM; null when this app reads its provider, or there is none. */
+    fun refusal(status: DatasetStatus?): String? = status?.newerProtocol?.let {
+        "this app (protocol ${OcdDataProtocol.PROTOCOLS.sorted().joinToString(" and ")}) is older than the ROM's dataset installer " +
+            "(protocol $it): it hands nothing over and tests nothing; uninstall its updates so the ROM's own build runs, or install a newer build"
+    }
+
+    /** The "Carrier data" words for it. */
+    const val WORDS =
+        "This app is older than the ROM's installer for Open Carrier Data's dataset, so it hands no newer data over and tests nothing. " +
+            "Uninstall this app's updates in Android's Settings (Apps, Open Carrier Data, Uninstall updates) so the ROM's own build runs, or install a newer build"
+}
+
 /** The "Carrier data" section of the owner screen, in plain words (rounds 30 and 31): what serves, a pause, the tests, and the way back. */
 data class DatasetLines(val title: String, val lines: List<String>, val halted: String?, val available: Boolean)
 
@@ -647,6 +675,7 @@ object DatasetWords {
 
     fun of(status: DatasetStatus?, state: OwnerState): DatasetLines {
         if (status == null) return DatasetLines("Carrier data", listOf("Not looked at yet"), halted = null, available = false)
+        if (status.newerProtocol != null) return DatasetLines("Carrier data", listOf(OlderApp.WORDS), halted = null, available = false)
         if (!status.available) {
             return DatasetLines(
                 "Carrier data",

@@ -326,6 +326,13 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 quietLog(store, "dataset", "the dataset step failed: ${e.javaClass.simpleName}: ${e.message?.take(120)}")
                 store.read().datasetStatus?.available == true
             }
+            // An app older than the ROM's installer tests nothing at night either: the light check and the reports only.
+            io.github.open_carrier_data.check.owner.core.OlderApp.refusal(store.read().datasetStatus)?.let { why ->
+                OwnerScheduler.autoReport(context)
+                store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, "checked; nothing tested: $why")) }
+                quietLog(store, "check", "light check: no tests: $why")
+                return Result.success()
+            }
             if (round30) {
                 for (sim in sims) {
                     runCatching { OwnerEmergencyData.session(context, store, phone, OwnerDatasetStep.client(context), sim, manual = false) }
@@ -1035,6 +1042,12 @@ object OwnerScheduler {
     suspend fun runTests(context: Context, offs: Boolean, voiceCheckMs: Long, apns: Boolean): String {
         // Round 30: "Test now" pulls, hands over, installs and tests every changed value together, now (only the refusals stop it).
         val status = OwnerDatasetStep.status(context, FileStateStore(context))
+        // An app older than the ROM's installer (a newer protocol) hands nothing over and runs no trial chain either.
+        io.github.open_carrier_data.check.owner.core.OlderApp.refusal(status)?.let { why ->
+            FileStateStore(context).update { it.logged(System.currentTimeMillis(), "run", "test now refused: $why") }
+            runCatching { android.util.Log.i(OwnerActivity.TEST_NOW_TAG, "test now refused: $why") }
+            return "refused: $why"
+        }
         if (status.available) {
             if (!dataset(context, testNow = true)) return "queued already: a test is under way"
             FileStateStore(context).update { it.copy(undone = emptyList()).logged(System.currentTimeMillis(), "run", "test now: pull, hand over, install and test, now") }

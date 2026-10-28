@@ -2,7 +2,7 @@
 
 > **Early development.** Open Carrier Data is in early development. Data, formats, tools and apps change often, and values can be wrong or missing. Don't rely on it for anything important yet. Feedback and reports are welcome.
 >
-> OCD Check is a work in progress, version 0.4.0. It has no releases, is not on any app store and is not meant for general use yet.
+> OCD Check is a work in progress, version 0.4.1. It has no releases, is not on any app store and is not meant for general use yet.
 
 OCD Check is an Android app that reads a phone's SIM, network and carrier settings and compares them with [Open Carrier Data](https://github.com/open-carrier-data/open-carrier-data) (OCD). Its debug and release builds are read-only: they change nothing on the phone, and they have no internet permission, so they cannot send anything. A separate `owner` build, only for the owner's own phones, tests, applies and reverts carrier settings; see [The owner build](#the-owner-build).
 
