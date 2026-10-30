@@ -15,6 +15,7 @@ import android.telephony.TelephonyManager
 import android.telephony.data.ApnSetting
 import androidx.annotation.RequiresApi
 import io.github.open_carrier_data.check.core.AccountState
+import io.github.open_carrier_data.check.core.ProbeNet
 import io.github.open_carrier_data.check.owner.core.DiagnosisInputs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
@@ -24,9 +25,10 @@ import java.util.concurrent.Executor
  * OCD round 42, item 1 (D0/W0) on the owner (and rom) build: the passive read, with the privileged
  * permissions. It keeps only codes, classes and booleans: the last DataFailCause of each APN
  * (default, IMS, MMS and the IWLAN transport), the attach reject cause, whether the SIM's own
- * cellular network is up and validated (read on that network, not the default one), whether a VPN or
- * Data Saver is on, whether the Private DNS is broken, and the reason mobile data is off. Never an
- * address, an APN credential or an identifier. It sends no traffic.
+ * cellular network is up and validated, whether its Private DNS is strict and broken (each read on
+ * that network, not the default one), whether a VPN or Data Saver is on, and the reason mobile data
+ * is off. Never an address, an APN credential, a Private DNS hostname or an identifier. It sends
+ * no traffic.
  */
 @RequiresApi(Build.VERSION_CODES.S)
 object OwnerPassiveRead {
@@ -49,7 +51,9 @@ object OwnerPassiveRead {
             rejectCause = tm?.let { rejectCause(it) },
             cellularUp = cellular != null,
             dataValidated = cellular?.second?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
-            privateDnsBroken = privateDnsBroken(context),
+            // Private DNS as the SIM's cellular network has it: strict mode and the broken bit, read on that network.
+            privateDnsBroken = cellular?.second?.let { privateDnsBroken(it) } ?: false,
+            privateDnsStrict = cellular?.let { ProbeNet.privateDnsStrict(context, it.first) } ?: false,
             vpnActive = vpnActive(context),
             dataSaver = dataSaver(context),
             dataOffReason = dataOffReason(tm),
@@ -134,9 +138,13 @@ object OwnerPassiveRead {
         cm.restrictBackgroundStatus == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED
     }.getOrDefault(false)
 
-    /** NetworkCapabilities.isPrivateDnsBroken() is @SystemApi; the app is on the hidden-API allowlist, so read it by reflection. */
-    private fun privateDnsBroken(context: Context): Boolean = runCatching {
-        val caps = activeCaps(context) ?: return false
+    /**
+     * NetworkCapabilities.isPrivateDnsBroken() of the given (cellular) network's capabilities. It is
+     * @SystemApi; the app is on the hidden-API allowlist, so read it by reflection. NetworkMonitor
+     * sets it only once the HTTP probes passed, so on a silently blocked network it stays false; the
+     * ladder's D2c asks the Private DNS server itself.
+     */
+    fun privateDnsBroken(caps: NetworkCapabilities): Boolean = runCatching {
         NetworkCapabilities::class.java.getMethod("isPrivateDnsBroken").invoke(caps) as? Boolean ?: false
     }.getOrDefault(false)
 

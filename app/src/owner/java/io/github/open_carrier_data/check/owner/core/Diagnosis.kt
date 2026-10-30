@@ -7,6 +7,7 @@ import io.github.open_carrier_data.check.core.CauseVerdicts
 import io.github.open_carrier_data.check.core.DataFailCauseClass
 import io.github.open_carrier_data.check.core.EpdgLookup
 import io.github.open_carrier_data.check.core.EpdgW1
+import io.github.open_carrier_data.check.core.ProbeLadder
 import io.github.open_carrier_data.check.core.Refusal
 import io.github.open_carrier_data.check.core.RejectCauseClass
 import io.github.open_carrier_data.check.core.SipRegClass
@@ -54,8 +55,12 @@ data class DiagnosisInputs(
      * on that network, not the default one; null when not read or when no cellular network is up.
      */
     val dataValidated: Boolean? = null,
-    /** NetworkCapabilities.isPrivateDnsBroken() on the default network. */
+    /** NetworkCapabilities.isPrivateDnsBroken(), read on the SIM's cellular network, not the default one. */
     val privateDnsBroken: Boolean = false,
+    /** The SIM's cellular network uses Private DNS in strict mode (its LinkProperties name a Private DNS server). */
+    val privateDnsStrict: Boolean = false,
+    /** The probe ladder's D2c: the strict Private DNS server did not answer over the cellular network; null when it was not asked. */
+    val privateDnsFails: Boolean? = null,
     /** A VPN holds the default network (NetworkCapabilities: not NOT_VPN). */
     val vpnActive: Boolean = false,
     /** Data Saver is restricting background data (ConnectivityManager.getRestrictBackgroundStatus()). */
@@ -91,6 +96,9 @@ data class DiagnosisInputs(
      */
     val cellularUnvalidated: Boolean get() = cellularUp == true && dataValidated == false
 
+    /** Strict Private DNS cannot reach its server over the SIM's cellular network: the broken bit, or the ladder's D2c. */
+    val privateDnsUnreachable: Boolean get() = privateDnsStrict && (privateDnsBroken || privateDnsFails == true)
+
     /**
      * A measured mobile-data failure, the gate of the automatic probe ladder and the balance read: a
      * non-zero fail cause on the default APN, an attach reject, or the SIM's cellular network up but
@@ -107,9 +115,17 @@ data class Diagnosis(
     val dataRefusal: Refusal?,
     /** The account-state read that went into the verdict, for the test linkage. */
     val account: AccountState = AccountState.UNKNOWN,
+    /**
+     * Phone-side factors named beside the verdict, never as the carrier's fault and never as a refusal
+     * that could set a test aside: "Phone-side: Private DNS (strict) cannot reach its server over this network".
+     */
+    val factors: List<String> = emptyList(),
 ) {
     /** The headline line for the screen and the report: the mobile-data verdict first, else the first feature's. */
     val line: String? get() = (verdicts.firstOrNull { it.feature == VerdictFeature.MOBILE_DATA } ?: verdicts.firstOrNull())?.line
+
+    /** The headline and the phone-side factors, as the log keeps them; null when there is neither. */
+    val summary: String? get() = (listOfNotNull(line) + factors).joinToString("; ").ifEmpty { null }
 
     /**
      * Item 7, bounded: may a failed data or IMS test be set aside as "not counted, retry" because the
@@ -175,6 +191,11 @@ object Diagnoses {
             val cls = DataFailCauseClass.of(i.mmsDataCause)
             if (cls != CauseClass.UNKNOWN) CauseVerdicts.of(VerdictFeature.MMS, Refusal(cls, code = i.mmsDataCause), AccountState.UNKNOWN)?.let { verdicts += it }
         }
-        return Diagnosis(verdicts, data, i.account)
+        // Strict Private DNS that cannot reach its server is the phone's, never the carrier's: named beside the
+        // verdict, unless it already is the mobile-data verdict ("the Private DNS server can't be reached").
+        val factors = listOfNotNull(
+            "Phone-side: ${ProbeLadder.PRIVATE_DNS_FACTOR}".takeIf { i.privateDnsUnreachable && data?.userPlane != UserPlaneClass.PRIVATE_DNS_BROKEN },
+        )
+        return Diagnosis(verdicts, data, i.account, factors)
     }
 }

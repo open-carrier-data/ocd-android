@@ -497,20 +497,18 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                             checkNow = checkNow,
                             roaming = roamingNow,
                             dataOff = passive.dataOffReason != null,
-                            privateDnsOn = privateDnsOn(context),
-                            privateDnsBrokenHint = passive.privateDnsBroken,
                             nowMs = now,
                         )
                     }.getOrNull()
                     if (run != null) {
                         quietLog(store, "probe:${sim.slot}", "slot ${sim.slot + 1}: ${run.line}")
-                        passive = passive.copy(userPlane = run.userPlane)
+                        passive = passive.copy(userPlane = run.userPlane, privateDnsFails = run.results?.privateDnsFails())
                     }
                 }
                 // The latest ladder run of this SIM, under 6 hours old, feeds the verdict while the measured failure
                 // lasts, so the hourly checks between two runs keep the verdict instead of flipping back and forth.
                 if (passive.userPlane == null && measuredFailure) {
-                    ProbeRunMark.fresh(store.read().probeRuns, sim.key, now)?.let { passive = passive.copy(userPlane = it.userPlane) }
+                    ProbeRunMark.fresh(store.read().probeRuns, sim.key, now)?.let { passive = passive.copy(userPlane = it.userPlane, privateDnsFails = it.results?.privateDnsFails()) }
                 }
                 // Item 2, W1: the ePDG name lookup after a measured Wi-Fi-calling failure (the Wi-Fi resolver, plus the
                 // cellular one only when cellular data fails or is the default), or on the owner's "check now" (both).
@@ -536,17 +534,16 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                     .fresh(store.read().accountReads, sim.key, now, zone)
                 Diagnoses.of(passive.copy(account = account, balance = balance))
             }.getOrNull() ?: continue
-            val line = diagnosis.line ?: continue
+            // The verdict and its phone-side factors (strict Private DNS that cannot reach its server), in one line.
+            val line = diagnosis.summary ?: continue
             val tag = "diagnosis:${sim.slot}"
             if (store.read().log.lastOrNull { it.kind == tag }?.text == line) continue
             quietLog(store, tag, line)
         }
     }
 
-    /** Whether Private DNS is switched on (opportunistic or a set hostname), from the global setting. Read-only. */
-    private fun privateDnsOn(context: Context): Boolean = runCatching {
-        android.provider.Settings.Global.getString(context.contentResolver, "private_dns_mode")?.lowercase() in setOf("opportunistic", "hostname")
-    }.getOrDefault(false)
+    /** The ladder's D2c as the verdict reads it: the strict Private DNS server did not answer; null when it was not asked. */
+    private fun io.github.open_carrier_data.check.core.ProbeResults.privateDnsFails(): Boolean? = if (privateDnsOn) privateDnsOk == false else null
 
     /**
      * The owner's "Send a test SMS now": one data SMS to each SIM's own number, on the app's
