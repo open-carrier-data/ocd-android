@@ -58,7 +58,7 @@ data class Refusal(
 
 /** The verdict shown and reported: the plain line, the class, and whether two signals agreed. */
 @Serializable
-data class Verdict(
+data class CauseVerdict(
     val feature: VerdictFeature,
     val line: String,
     val cause: CauseClass,
@@ -66,7 +66,7 @@ data class Verdict(
     val confident: Boolean,
 )
 
-object Verdicts {
+object CauseVerdicts {
     /**
      * Builds the verdict for a failed feature from a [refusal] (optional) and an [account] read
      * (optional), plus a [balance] string the caller has already masked (null when none). A
@@ -78,9 +78,9 @@ object Verdicts {
         account: AccountState,
         balance: String? = null,
         mmsEnded: Boolean = false,
-    ): Verdict? {
+    ): CauseVerdict? {
         if (mmsEnded && feature == VerdictFeature.MMS) {
-            return Verdict(feature, "MMS ended on this network", CauseClass.NETWORK_WIDE, confident = true)
+            return CauseVerdict(feature, "MMS ended on this network", CauseClass.NETWORK_WIDE, confident = true)
         }
         if (refusal == null && account == AccountState.UNKNOWN) return null
 
@@ -92,9 +92,9 @@ object Verdicts {
         if (feature == VerdictFeature.MOBILE_DATA && (accountBlocks || refusal?.cause == CauseClass.BARRED)) {
             val bal = balance?.let { ": balance $it" } ?: ""
             return if (agree || (accountBlocks && refusal?.userPlane != null)) {
-                Verdict(feature, "Mobile data blocked by the account$bal", CauseClass.BARRED, confident = true)
+                CauseVerdict(feature, "Mobile data blocked by the account$bal", CauseClass.BARRED, confident = true)
             } else {
-                Verdict(feature, "Mobile data probably blocked by the account$bal", CauseClass.BARRED, confident = false)
+                CauseVerdict(feature, "Mobile data probably blocked by the account$bal", CauseClass.BARRED, confident = false)
             }
         }
 
@@ -116,7 +116,7 @@ object Verdicts {
         }
         // Temporary and phone-side lines are a single plain signal; the tariff/settings lines stay hedged by the word "probably".
         val confident = refusal.cause in setOf(CauseClass.TEMPORARY, CauseClass.PHONE_SIDE, CauseClass.DEVICE_NOT_ALLOWED, CauseClass.ROAMING)
-        return Verdict(feature, line, refusal.cause, confident)
+        return CauseVerdict(feature, line, refusal.cause, confident)
     }
 
     private fun phoneSide(refusal: Refusal): String = when (refusal.userPlane) {

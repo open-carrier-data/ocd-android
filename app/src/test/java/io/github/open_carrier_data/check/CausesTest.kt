@@ -9,7 +9,7 @@ import io.github.open_carrier_data.check.core.SipRegClass
 import io.github.open_carrier_data.check.core.TestBlame
 import io.github.open_carrier_data.check.core.UserPlaneClass
 import io.github.open_carrier_data.check.core.VerdictFeature
-import io.github.open_carrier_data.check.core.Verdicts
+import io.github.open_carrier_data.check.core.CauseVerdicts
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -73,7 +73,7 @@ class CausesTest {
     @Test
     fun `the account-block verdict is plain with two signals and hedged with one`() {
         // Two signals: the LIDL user-plane signature plus a zero balance read.
-        val two = Verdicts.of(
+        val two = CauseVerdicts.of(
             VerdictFeature.MOBILE_DATA,
             Refusal(CauseClass.BARRED, userPlane = UserPlaneClass.ACCOUNT_BLOCK_SIGNATURE),
             AccountState.BLOCKED,
@@ -83,7 +83,7 @@ class CausesTest {
         assertEquals("Mobile data blocked by the account: balance 0.10 EUR", two.line)
 
         // One signal: the balance alone.
-        val one = Verdicts.of(VerdictFeature.MOBILE_DATA, null, AccountState.BLOCKED)!!
+        val one = CauseVerdicts.of(VerdictFeature.MOBILE_DATA, null, AccountState.BLOCKED)!!
         assertFalse(one.confident)
         assertEquals("Mobile data probably blocked by the account", one.line)
     }
@@ -92,34 +92,34 @@ class CausesTest {
     fun `the fixed wordings match the ruling`() {
         assertEquals(
             "Refused for this SIM, probably the tariff (code 33)",
-            Verdicts.of(VerdictFeature.VOLTE, Refusal(CauseClass.NOT_BOOKED, code = 33), AccountState.UNKNOWN)!!.line,
+            CauseVerdicts.of(VerdictFeature.VOLTE, Refusal(CauseClass.NOT_BOOKED, code = 33), AccountState.UNKNOWN)!!.line,
         )
         assertEquals(
             "The network refused the access point name (code 27): probably wrong settings",
-            Verdicts.of(VerdictFeature.MOBILE_DATA, Refusal(CauseClass.WRONG_SETTINGS, code = 27), AccountState.UNKNOWN)!!.line,
+            CauseVerdicts.of(VerdictFeature.MOBILE_DATA, Refusal(CauseClass.WRONG_SETTINGS, code = 27), AccountState.UNKNOWN)!!.line,
         )
         assertEquals(
             "Temporary network fault (code 38)",
-            Verdicts.of(VerdictFeature.MOBILE_DATA, Refusal(CauseClass.TEMPORARY, code = 38, temporaryDefinite = true), AccountState.UNKNOWN)!!.line,
+            CauseVerdicts.of(VerdictFeature.MOBILE_DATA, Refusal(CauseClass.TEMPORARY, code = 38, temporaryDefinite = true), AccountState.UNKNOWN)!!.line,
         )
         assertEquals(
             "Phone-side: the Private DNS server can't be reached on mobile data",
-            Verdicts.of(VerdictFeature.MOBILE_DATA, Refusal(CauseClass.PHONE_SIDE, userPlane = UserPlaneClass.PRIVATE_DNS_BROKEN), AccountState.UNKNOWN)!!.line,
+            CauseVerdicts.of(VerdictFeature.MOBILE_DATA, Refusal(CauseClass.PHONE_SIDE, userPlane = UserPlaneClass.PRIVATE_DNS_BROKEN), AccountState.UNKNOWN)!!.line,
         )
         assertEquals(
             "Device not allowed by the network (code 6)",
-            Verdicts.of(VerdictFeature.VOLTE, Refusal(CauseClass.DEVICE_NOT_ALLOWED, code = 6), AccountState.UNKNOWN)!!.line,
+            CauseVerdicts.of(VerdictFeature.VOLTE, Refusal(CauseClass.DEVICE_NOT_ALLOWED, code = 6), AccountState.UNKNOWN)!!.line,
         )
         assertEquals(
             "MMS ended on this network",
-            Verdicts.of(VerdictFeature.MMS, null, AccountState.UNKNOWN, mmsEnded = true)!!.line,
+            CauseVerdicts.of(VerdictFeature.MMS, null, AccountState.UNKNOWN, mmsEnded = true)!!.line,
         )
     }
 
     @Test
     fun `a verdict never fires on a clean read`() {
-        assertNull(Verdicts.of(VerdictFeature.VOLTE, null, AccountState.UNKNOWN))
-        assertNull(Verdicts.of(VerdictFeature.VOLTE, Refusal(CauseClass.UNKNOWN), AccountState.UNKNOWN))
+        assertNull(CauseVerdicts.of(VerdictFeature.VOLTE, null, AccountState.UNKNOWN))
+        assertNull(CauseVerdicts.of(VerdictFeature.VOLTE, Refusal(CauseClass.UNKNOWN), AccountState.UNKNOWN))
     }
 
     @Test
