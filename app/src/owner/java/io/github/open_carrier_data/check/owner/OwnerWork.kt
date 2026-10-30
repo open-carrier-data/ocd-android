@@ -475,7 +475,8 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 )
                 // Items 2 and 4 run only after a measured cellular failure, never under a safety refusal (an
                 // emergency state, an active call, roaming). The balance USSD is also home-network only and capped.
-                val measuredFailure = passive.defaultDataCause != null || passive.rejectCause != null
+                // A non-zero cause only: a working connection reports cause 0, which is no failure.
+                val measuredFailure = passive.measuredDataFailure
                 if (measuredFailure && runCatching { OwnerSession(phone, store, sim).safety().refusal }.getOrNull() == null) {
                     // Item 4: the balance USSD (opt-in, capped) runs first, so its class can pair with the refusal.
                     runCatching { OwnerBalance.readIfDue(context, store, sim, measuredFailure = true, roaming = roamingNow, nowMs = now) }

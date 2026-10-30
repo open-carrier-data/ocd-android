@@ -11,6 +11,7 @@ import android.telephony.TelephonyManager
 import androidx.annotation.RequiresApi
 import io.github.open_carrier_data.check.core.AccountRead
 import io.github.open_carrier_data.check.core.AccountState
+import io.github.open_carrier_data.check.core.BalanceChoice
 import io.github.open_carrier_data.check.core.BalanceUssd
 import io.github.open_carrier_data.check.owner.core.AccountReadMark
 import io.github.open_carrier_data.check.owner.core.AccountSource
@@ -23,8 +24,11 @@ import java.util.concurrent.TimeUnit
 
 /**
  * OCD rule round 42, item 4, on the owner (and rom) build: the balance USSD. One
- * TelephonyManager.sendUssdRequest with the per-network allowlist of exact free read-only codes
- * ([BalanceUssd]), home network only, never roaming. The reply is classified and masked
+ * TelephonyManager.sendUssdRequest of the exact free read-only code of the SIM's brand
+ * ([BalanceUssd]), home network only, never roaming. The brand must be identified from the SIM's
+ * own provider name (EF_SPN, [io.github.open_carrier_data.check.core.SimIdentity.spn]); an unknown or
+ * ambiguous brand gets nothing sent and the record "balance code not sent: brand not identified"
+ * with the documented codes to dial by hand. The reply is classified and masked
  * ([BalanceUssd.classify]); a menu reply is never answered — it ends the session and is recorded as
  * "the balance needs a menu step; not read", for the owner to read by hand. A small daily cap, off
  * by default, and on the rom build behind SM9's opt-in. The read-only builds have no CALL_PHONE and
@@ -64,7 +68,17 @@ object OwnerBalance {
         val state = store.read()
         if (!allowed(state)) return null
         if (roaming != false) return null // home network only, and a SIM whose roaming cannot be read is refused
-        if (BalanceUssd.CODES[sim.identity.mccmnc] == null) return null
+        // Keyed by brand, never by network: an unidentified brand gets nothing sent, only the record and a hint.
+        val choice = BalanceUssd.choose(sim.identity.mccmnc, sim.identity.spn)
+        if (choice is BalanceChoice.NotSent) {
+            val slot = "slot ${sim.slot + 1}: "
+            val line = slot + choice.line
+            // Recorded once while it stays the same, so an hourly check keeps a quiet log.
+            if (store.read().log.lastOrNull { it.kind == "balance" && it.text.startsWith(slot) }?.text != line) {
+                store.updateLocked { it.logged(nowMs, "balance", line) }
+            }
+            return null
+        }
         if (!underCap(state.balanceAskedMs, nowMs)) return null
         // No second read on a day one was already read for this SIM.
         val zone = java.time.ZoneId.systemDefault()
@@ -85,11 +99,11 @@ object OwnerBalance {
         return read
     }
 
-    /** One sendUssdRequest of the allowlisted code for [sim]; its one reply classified and masked. */
+    /** One sendUssdRequest of the code of [sim]'s identified brand; its one reply classified and masked. */
     @SuppressLint("MissingPermission")
     suspend fun read(context: Context, sim: OwnerSim): AccountRead? {
-        val code = BalanceUssd.CODES[sim.identity.mccmnc] ?: return null
-        if (!BalanceUssd.allowed(sim.identity.mccmnc, code)) return null
+        val code = (BalanceUssd.choose(sim.identity.mccmnc, sim.identity.spn) as? BalanceChoice.Send)?.code ?: return null
+        if (!BalanceUssd.allowed(sim.identity.mccmnc, sim.identity.spn, code)) return null
         val tm = runCatching { context.getSystemService(TelephonyManager::class.java)?.createForSubscriptionId(sim.subId) }.getOrNull() ?: return null
         val done = CompletableDeferred<AccountRead?>()
         val handler = Handler(Looper.getMainLooper())

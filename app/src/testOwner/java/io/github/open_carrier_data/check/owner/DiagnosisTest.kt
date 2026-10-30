@@ -89,4 +89,15 @@ class DiagnosisTest {
         assertEquals("Temporary network fault (code 38)", d.line)
         assertTrue(d.notCounted())
     }
+
+    @Test
+    fun `a working connection's cause 0 is no measured failure, so nothing automatic runs`() {
+        // PreciseDataConnectionState.getLastCauseCode() is 0 (DataFailCause.NONE) on a working connection.
+        assertFalse(DiagnosisInputs(defaultDataCause = 0).measuredDataFailure)
+        assertFalse(DiagnosisInputs().measuredDataFailure)
+        assertTrue(DiagnosisInputs(defaultDataCause = 33).measuredDataFailure)
+        assertTrue(DiagnosisInputs(defaultDataCause = 0, rejectCause = 7).measuredDataFailure)
+        // And cause 0 names no verdict.
+        assertNull(Diagnoses.of(DiagnosisInputs(defaultDataCause = 0)).line)
+    }
 }

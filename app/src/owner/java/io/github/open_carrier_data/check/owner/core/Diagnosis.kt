@@ -67,7 +67,14 @@ data class DiagnosisInputs(
     val balance: String? = null,
     /** This SIM's network ended MMS (the published statements / mms-ended list). */
     val mmsEnded: Boolean = false,
-)
+) {
+    /**
+     * A measured mobile-data failure, the gate of the automatic probe ladder and the balance read: a
+     * non-zero fail cause on the default APN or an attach reject. A working connection reports
+     * getLastCauseCode() 0 (DataFailCause.NONE), which is no failure.
+     */
+    val measuredDataFailure: Boolean get() = (defaultDataCause ?: 0) != 0 || rejectCause != null
+}
 
 /** The diagnosis of one SIM: the per-feature verdicts, and whether a failed test should not count. */
 data class Diagnosis(

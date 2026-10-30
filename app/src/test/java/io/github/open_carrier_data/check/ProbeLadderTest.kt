@@ -56,13 +56,13 @@ class ProbeLadderTest {
     }
 
     @Test
-    fun `balance USSD allows only the exact free code and refuses dangerous forms`() {
-        assertTrue(BalanceUssd.allowed("26202", "*100#"))
-        assertTrue(BalanceUssd.allowed("26203", "*101#"))
-        assertFalse(BalanceUssd.allowed("26202", "*101#"))
-        assertFalse(BalanceUssd.allowed("26202", "*100*1234#")) // a top-up/voucher argument
-        assertFalse(BalanceUssd.allowed("26202", "*123#")) // a credit advance
-        assertFalse(BalanceUssd.allowed("99999", "*100#")) // not an allowlisted network
+    fun `balance USSD allows only the identified brand's exact free code and refuses dangerous forms`() {
+        assertTrue(BalanceUssd.allowed("26202", "LIDL Connect", "*100#"))
+        assertFalse(BalanceUssd.allowed("26202", "LIDL Connect", "*101#"))
+        assertFalse(BalanceUssd.allowed("26202", "LIDL Connect", "*100*1234#")) // a top-up/voucher argument
+        assertFalse(BalanceUssd.allowed("26202", "LIDL Connect", "*123#")) // a credit advance
+        assertFalse(BalanceUssd.allowed("26203", "", "*101#")) // a network alone names no code (BalanceBrandTest)
+        assertFalse(BalanceUssd.allowed("99999", "LIDL Connect", "*100#")) // not the brand's network
     }
 
     @Test
