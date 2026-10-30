@@ -4,7 +4,7 @@
 // one is package com.android.carriersettings, platform-signed by each ROM builder, privileged,
 // system_ext, directBootAware, with no INTERNET, no UI and no network or checker code.
 //
-// Moved from the owner's ROM tree (vendor/extra main cfa8ee1); README.md lists every difference
+// Moved from the owner's ROM tree (vendor/extra main 64c73cb); README.md lists every difference
 // from that copy. A ROM adds it with one repo project and PRODUCT_PACKAGES +=
 // OcdCarrierSettingsDataset. The ROM tree supplies what belongs to the ROM or the device, and the
 // build fails without it:

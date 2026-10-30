@@ -200,7 +200,12 @@ class Engine(private val p: Platform) {
 
     fun state(): State = store.readState(p.nowMs())
 
-    internal fun update(block: (State) -> State): State = locked {
+    /**
+     * Not `internal`: Kotlin gives an internal member a JVM name with Soong's module name in it,
+     * which Soong takes from the module's directory, so the dex would differ with where a ROM puts
+     * this module (OCD rule round 37, step 3). The tests call it.
+     */
+    fun update(block: (State) -> State): State = locked {
         val next = block(store.readState(p.nowMs()))
         store.writeState(next)
         next

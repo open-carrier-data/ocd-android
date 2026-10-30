@@ -78,8 +78,8 @@ jobs:
       # Kotlin module after its directory, and Kotlin bakes that name into internal members.
       - name: Same code under any ROM path
         run: |
-          d8=$(ls -d "$ANDROID_HOME"/build-tools/*/d8 | sort -V | tail -n 1)
-          sh carriersettings/check_path_independent.sh "$ANDROID_HOME/platforms/android-36/android.jar" "$d8"
+          r8=$(find "$ANDROID_HOME/build-tools" -path '*/lib/d8.jar' | sort -V | tail -n 1)
+          sh carriersettings/check_path_independent.sh "$ANDROID_HOME/platforms/android-36/android.jar" "$r8"
 
       - name: Byte record of the move from vendor/extra
         run: python3 -I carriersettings/check_cut.py
