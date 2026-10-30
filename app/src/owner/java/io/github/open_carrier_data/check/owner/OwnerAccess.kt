@@ -88,15 +88,22 @@ object OwnerAccess {
         "android.permission.PACKAGE_USAGE_STATS",
         // Round 30: the emergency data test's request for NET_CAPABILITY_EIMS, a restricted network.
         "android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS",
+        // Round 42 (entitlement note): declared next to READ_PRIVILEGED_PHONE_STATE for the EAP-AKA
+        // getIccAuthentication path. Behind an aconfig flag and not required, so the privileged route
+        // does not depend on it (filtered out of privilegedGranted below).
+        "android.permission.USE_ICC_AUTH",
     )
 
     /** Only the emergency data test needs it; a ROM build denies it unless its builder turned the test on (round 31, SM10). */
     const val RESTRICTED_NETWORKS = "android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS"
 
+    /** Round 42: Android 16's SIM-auth permission, behind an aconfig flag; nothing uses it yet, so it is not required. */
+    const val ICC_AUTH = "android.permission.USE_ICC_AUTH"
+
     fun privilegedGranted(context: Context): Boolean {
         val info = context.applicationInfo
         val system = info.flags and ApplicationInfo.FLAG_SYSTEM != 0
-        return system && PRIVILEGED_PERMISSIONS.filterNot { it == RESTRICTED_NETWORKS }.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+        return system && PRIVILEGED_PERMISSIONS.filterNot { it == RESTRICTED_NETWORKS || it == ICC_AUTH }.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
     }
 
     fun restrictedNetworksGranted(context: Context): Boolean = context.checkSelfPermission(RESTRICTED_NETWORKS) == PackageManager.PERMISSION_GRANTED

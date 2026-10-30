@@ -25,6 +25,8 @@
         <permission name="android.permission.WRITE_APN_SETTINGS" />
         <permission name="android.permission.DUMP" />
         <permission name="android.permission.PACKAGE_USAGE_STATS" />
+        <!-- Round 42 (entitlement note): USE_ICC_AUTH, as in the owner build; nothing uses it yet. -->
+        <permission name="android.permission.USE_ICC_AUTH" />
         <deny-permission name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />
     </privapp-permissions>
 
