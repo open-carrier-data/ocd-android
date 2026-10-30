@@ -133,7 +133,7 @@ fun CheckScreen(viewModel: CheckViewModel, toCallTest: Boolean = false) {
                     SimSection(state)
                     NetworkSection(state)
                     CarrierSettingsSection(state, bundle)
-                    ConnectionsSection(state)
+                    ConnectionsSection(state, viewModel)
                     DeepCheckSection(state, viewModel)
                     SwitchSection(state, viewModel)
                     Column(Modifier.onGloballyPositioned { callTestY = it.positionInParent().y.toInt() }) { CallTestSection(state, viewModel) }
@@ -193,11 +193,16 @@ private fun Header(state: UiState, onRefresh: () -> Unit, onPull: () -> Unit) {
     }
 }
 
-/** Round 32 U1: the read-only builds' privacy sentence (round 9's "cannot send anything" no longer holds). */
+/**
+ * The read-only builds' privacy sentence. Round 32 U1 added the tapped data pull; round 42 (item 2)
+ * adds the tapped mobile-data path check, so the plain "sends nothing" wording is corrected to
+ * disclose both tapped requests, which carry no identifier.
+ */
 private const val PRIVACY =
-    "It sends nothing but requests for OCD's public data, and only when you tap Get newest data: " +
-        "to GitHub, which hosts OCD, with no identifier of the phone or the SIM. " +
-        "A report leaves the phone only if you copy or share it."
+    "It sends nothing by itself. Only when you tap Get newest data it fetches OCD's public data from " +
+        "GitHub, and only when you tap \"Why is mobile data not working?\" it sends a few kilobytes of " +
+        "mobile data to fixed test hosts to find the cause. Both carry no identifier of the phone or the " +
+        "SIM. A report leaves the phone only if you copy or share it."
 
 /** Round 32 part A: what the SIM's operator states on its own pages; shown, never used as a value. */
 @Composable
@@ -374,7 +379,7 @@ private fun CarrierSettingsSection(state: UiState, bundle: OcdBundle) {
 }
 
 @Composable
-private fun ConnectionsSection(state: UiState) {
+private fun ConnectionsSection(state: UiState, viewModel: CheckViewModel) {
     val connections = state.readings?.dataConnections ?: return
     Section("Mobile data connections") {
         if (connections.isEmpty()) Note("None visible to this app right now.")
@@ -389,6 +394,13 @@ private fun ConnectionsSection(state: UiState) {
             Note("An IMS data connection is up. VoLTE needs it, but it does not show that the phone is signed in for calls.")
         }
         Note("Only the connections Android shows to normal apps. The phone's APN list needs the deep check below.")
+        // Round 42 item 2: the read-only probe ladder, on a tap only. It checks the mobile-data path
+        // over the cellular link and sends a few kilobytes of mobile data; no automatic run.
+        OutlinedButton(onClick = viewModel::runProbes, enabled = !state.probing) {
+            Text("Why is mobile data not working?")
+        }
+        if (state.probing) Note("Checking the mobile-data path…")
+        state.probeLine?.let { Note(it) }
     }
 }
 

@@ -1,6 +1,9 @@
 package io.github.open_carrier_data.check.ui
 
 import android.app.Application
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.open_carrier_data.check.BuildConfig
@@ -21,6 +24,9 @@ import io.github.open_carrier_data.check.core.Matcher
 import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.PhoneReadings
 import io.github.open_carrier_data.check.core.PhoneSwitches
+import io.github.open_carrier_data.check.core.ProbeLadder
+import io.github.open_carrier_data.check.core.ProbeNet
+import io.github.open_carrier_data.check.core.ProbePolicy
 import io.github.open_carrier_data.check.core.Report
 import io.github.open_carrier_data.check.core.ReportResult
 import io.github.open_carrier_data.check.core.Resolution
@@ -82,6 +88,10 @@ data class UiState(
     val pullLine: String? = null,
     /** Round 32 part A: what the SIM's operator states on its own pages, from the pulled data; null without it. */
     val statements: StatementDisplay? = null,
+    /** Round 42 item 2 (read-only tap): the probe ladder is running now. */
+    val probing: Boolean = false,
+    /** Round 42 item 2 (read-only tap): the last probe's plain line, or a note why it could not run. */
+    val probeLine: String? = null,
 ) {
     /** The read-only builds pull with a tap (U1); the owner and ROM builds pull through their own tester. */
     val canPull: Boolean get() = BuildConfig.TESTER.isEmpty()
@@ -161,6 +171,9 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
     private var callPoll: Job? = null
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state
+
+    /** Round 42 item 2: when the probe ladder last ran on a tap, for the short cooldown. In memory only. */
+    private var lastProbeMs: Long? = null
 
     private val binderReceived = Shizuku.OnBinderReceivedListener { refreshShizuku() }
     private val binderDead = Shizuku.OnBinderDeadListener { refreshShizuku() }
@@ -284,6 +297,48 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
             val pulled = withContext(Dispatchers.IO) { publicData.current() }
             _state.update { it.copy(pulling = false, pullLine = line, pulled = pulled, bundle = pulled?.bundle ?: base) }
             reload()
+        }
+    }
+
+    /**
+     * OCD rule round 42, item 2 (the read-only tap): run the cellular mobile-data probe ladder when
+     * the person taps, and show the plain cause. The read-only builds hold no CHANGE_NETWORK_STATE,
+     * so [ProbeNet] runs on the active network only while mobile data is the default (with Wi-Fi as
+     * the default it cannot reach the cellular link). D1-D4 only, never D5 (the carrier self-care
+     * page stays out of the read-only builds). A short cooldown between taps. No automatic run.
+     */
+    fun runProbes() {
+        if (_state.value.probing) return
+        val now = System.currentTimeMillis()
+        if (!ProbePolicy.tapAllowed(lastProbeMs, now)) {
+            _state.update { it.copy(probeLine = "Please wait a moment before checking the mobile-data path again.") }
+            return
+        }
+        _state.update { it.copy(probing = true, probeLine = null) }
+        viewModelScope.launch {
+            val line = withContext(Dispatchers.IO) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@withContext "This check needs Android 10 or newer."
+                val cm = getApplication<Application>().getSystemService(ConnectivityManager::class.java)
+                    ?: return@withContext "The network state could not be read."
+                val network = cm.activeNetwork
+                val caps = network?.let { cm.getNetworkCapabilities(it) }
+                when {
+                    network == null || caps == null -> "No active network to check."
+                    !caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ->
+                        "This checks mobile data over the cellular link. Turn Wi-Fi off, then tap again."
+                    else -> {
+                        lastProbeMs = now
+                        val privateDnsOn = runCatching {
+                            android.provider.Settings.Global.getString(getApplication<Application>().contentResolver, "private_dns_mode")?.lowercase() in setOf("opportunistic", "hostname")
+                        }.getOrDefault(false)
+                        val mccmnc = _state.value.readings?.sim?.homeMccMnc
+                        // D1-D4, never D5: the read-only builds keep the carrier self-care page out.
+                        val results = ProbeNet.run(network, mccmnc, includeD5 = false, privateDnsOn = privateDnsOn, privateDnsBrokenHint = null)
+                        "The mobile-data path check: " + ProbeLadder.classify(results).plain + ". This check used a few kilobytes of mobile data."
+                    }
+                }
+            }
+            _state.update { it.copy(probing = false, probeLine = line) }
         }
     }
 

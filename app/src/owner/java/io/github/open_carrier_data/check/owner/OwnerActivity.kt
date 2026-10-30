@@ -355,6 +355,18 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    /** Round 42 item 4: the balance USSD opt-in; off by default. */
+    fun setBalanceUssd(on: Boolean) = viewModelScope.launch {
+        store.update { it.copy(balanceUssdOn = on).logged(System.currentTimeMillis(), "balance", if (on) "balance reads on: your carrier's free balance code after a data failure, never a menu digit" else "balance reads off") }
+        refresh()
+    }
+
+    /** Round 42 item 5: the carrier-SMS reading opt-in; off by default. */
+    fun setCarrierSms(on: Boolean) = viewModelScope.launch {
+        store.update { it.copy(carrierSmsOn = on).logged(System.currentTimeMillis(), "carrier_sms", if (on) "carrier status messages on: only your carrier's own senders, only a class kept, never a reply" else "carrier status messages off") }
+        refresh()
+    }
+
     /**
      * Round 31 (SM9), ROM builds: the person's opt-in for the active tests, off by default. On, the
      * mailbox calls go live and the test SMS is on (both only where the allowlist marks them free);
@@ -493,6 +505,8 @@ class OwnerActivity : ComponentActivity() {
             dryRunCallsOut = viewModel::dryRunCallsOut,
             setSelfSms = { viewModel.setSelfSms(it) },
             selfSmsNow = { viewModel.selfSmsNow() },
+            setBalanceUssd = { viewModel.setBalanceUssd(it) },
+            setCarrierSms = { viewModel.setCarrierSms(it) },
             setActiveTests = { viewModel.setActiveTests(it) },
             saveToken = { text, done -> viewModel.saveToken(text, done) },
             removeToken = { viewModel.removeToken() },

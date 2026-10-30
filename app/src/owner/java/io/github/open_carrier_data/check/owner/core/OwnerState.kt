@@ -312,6 +312,16 @@ data class OwnerState(
     val apnTrials: List<ApnTrial> = emptyList(),
     /** The ROM build (its incremental) whose CarrierSettings answered `unknown_method` for the candidate set: no candidate is computed there. */
     val apnCandidateMissingOn: String? = null,
+    /** Round 42 (item 2): when the mobile-data probe ladder last ran for a SIM, so an automatic run keeps to once per SIM per 6 hours. */
+    val probeRuns: List<ProbeRunMark> = emptyList(),
+    /** Round 42 (items 4/5): the last account-state read per SIM (a balance USSD reply or a carrier-SMS class), fed into the verdict while fresh. */
+    val accountReads: List<AccountReadMark> = emptyList(),
+    /** Round 42 (item 4): the owner's opt-in for the balance USSD read; off by default, and on rom also behind the active-tests opt-in (SM9). */
+    val balanceUssdOn: Boolean = false,
+    /** Round 42 (item 4): when a balance USSD was last sent, for the small daily cap. */
+    val balanceAskedMs: List<Long> = emptyList(),
+    /** Round 42 (item 5): the person's opt-in for reading the carrier's own plan SMS; off by default, and on rom behind SM9's opt-in. */
+    val carrierSmsOn: Boolean = false,
 ) {
     val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
 
