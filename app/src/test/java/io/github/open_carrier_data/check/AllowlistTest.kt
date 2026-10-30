@@ -197,9 +197,24 @@ class AllowlistTest {
     }
 
     @Test
-    fun `round 32 U1 - only the data pull opens a network connection, and only to OCD's public data on GitHub`() {
+    fun `round 32 U1 and round 42 item 2 - only the data pull and the tapped probe open a network connection`() {
         val network = Regex("openConnection|HttpURLConnection|HttpsURLConnection|Socket\\(|DatagramSocket|URLConnection|WebView|DownloadManager|OkHttp")
-        assertEquals(listOf("PublicDataPhone.kt"), mainSources.filter { network.containsMatchIn(it.readText()) }.map { it.name })
+        // Round 42 (item 2) adds the mobile-data probe ladder (ProbeNet.kt), which the person runs on a tap.
+        assertEquals(
+            listOf("PublicDataPhone.kt", "ProbeNet.kt").sorted(),
+            mainSources.filter { network.containsMatchIn(it.readText()) }.map { it.name }.sorted(),
+        )
+        // ProbeNet binds every socket and DnsResolver query to the Network the caller passes, and it is only
+        // ever reached from the view model's tap (runProbes), never the background daily check.
+        val probeNet = mainSources.single { it.name == "ProbeNet.kt" }.readText()
+        assertTrue(probeNet.contains("network.socketFactory.createSocket()"))
+        assertTrue(probeNet.contains("network.bindSocket(socket)"))
+        assertTrue("ProbeNet must never fetch the carrier page in a read-only call", probeNet.contains("if (includeD5)"))
+        // Only the view model runs the probe (ProbeNet.run), and only the screen's tap invokes it (::runProbes).
+        assertEquals(listOf("CheckViewModel.kt"), mainSources.filter { Regex("ProbeNet\\.run\\(").containsMatchIn(it.readText()) }.map { it.name })
+        assertEquals(listOf("CheckScreen.kt", "CheckViewModel.kt"), mainSources.filter { Regex("runProbes").containsMatchIn(it.readText()) }.map { it.name }.sorted())
+        // The read-only probe never fetches the carrier self-care page (D5): includeD5 is false in the view model.
+        assertTrue(mainSources.single { it.name == "CheckViewModel.kt" }.readText().contains("includeD5 = false"))
         val phone = mainSources.single { it.name == "PublicDataPhone.kt" }.readText()
         // Every request and every redirect is checked before it is sent; redirects are never followed by the platform.
         assertTrue(phone.contains("if (!PublicData.allowed(target)) throw PullException"))

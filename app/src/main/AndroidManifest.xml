@@ -5,9 +5,11 @@
     <!-- The only three permissions. Read-only.
          READ_PHONE_STATE (asked at run time): GID1, carrier settings, network type, active SIM list.
          ACCESS_NETWORK_STATE: the APN name and types of the mobile data connections, and whether the network is metered.
-         INTERNET (OCD's round 32, U1): only for the data pull the person taps, to GitHub's API and raw hosts
-         for OCD's public repository, with no identifier (core/PublicPull.kt, phone/PublicDataPhone.kt). The app
-         sends nothing but requests for OCD's public data. -->
+         INTERNET: two tapped uses, each with no identifier. OCD's round 32 (U1): the data pull the person
+         taps, to GitHub's API and raw hosts for OCD's public repository (core/PublicPull.kt,
+         phone/PublicDataPhone.kt). OCD's round 42 (item 2): the mobile-data path check the person taps,
+         a few kilobytes to fixed test hosts over the cellular link (core/ProbeNet.kt, bound to the
+         active cellular Network). No automatic use; the app sends nothing by itself. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />

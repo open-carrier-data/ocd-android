@@ -219,6 +219,21 @@
             </intent-filter>
         </receiver>
 
+        <!--
+            Round 42 item 5: reads the carrier's own plan SMS as a passive account-state signal. Only
+            the system (BROADCAST_SMS) delivers SMS_RECEIVED. Off by default; it classifies only
+            messages from the SIM carrier's own senders, keeps only a class, and never sends or
+            replies. It never aborts the broadcast, so the default SMS app still receives every SMS.
+        -->
+        <receiver
+            android:name=".owner.CarrierSmsReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Boot, the app's own update and carrier-config changes (all exempt from the implicit-broadcast limits). -->
         <receiver
             android:name=".owner.OwnerBootReceiver"

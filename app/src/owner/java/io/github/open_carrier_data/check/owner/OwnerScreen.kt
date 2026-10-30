@@ -139,6 +139,10 @@ class OwnerActions(
     val setSelfSms: (Boolean) -> Unit,
     /** One test SMS to the phone's own number now. */
     val selfSmsNow: () -> Unit = {},
+    /** Round 42 item 4: the opt-in for the balance USSD read (off by default). */
+    val setBalanceUssd: (Boolean) -> Unit = {},
+    /** Round 42 item 5: the opt-in for reading the carrier's own plan SMS (off by default). */
+    val setCarrierSms: (Boolean) -> Unit = {},
     /** Round 31 (SM9), ROM builds only: the person's opt-in for the active tests. */
     val setActiveTests: (Boolean) -> Unit = {},
     /** Round 29: stores the owner's token for automatic reports; the callback says whether it was stored. */
@@ -718,6 +722,30 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         }
         if (owner || state.activeTests.on) item {
             ToolRow("Send a test SMS now", if (owner) "One hidden SMS to your own number; it may cost an SMS" else "One hidden SMS to your own number, only where it is free for your carrier", onClick = actions.selfSmsNow)
+        }
+    }
+
+    // Round 42 items 4 and 5: the two account-state reads, opt-in and off by default. On the rom build
+    // they also ride on the active-tests opt-in (SM9); shown there only once that is on.
+    if (owner || state.activeTests.on) {
+        SectionTitle("Why a feature fails (account state)")
+        Group {
+            item {
+                SwitchRow(
+                    "Read the plan balance",
+                    "After a data failure, send your carrier's own free balance code (like *100#) and read the reply. It never presses a menu digit; a menu reply is left for you to read by hand. Home network only, a few times a day at most.",
+                    state.balanceUssdOn,
+                    actions.setBalanceUssd,
+                )
+            }
+            item {
+                SwitchRow(
+                    "Read carrier status messages",
+                    "Read the plan messages from your carrier's own senders (option paused, volume used up, option active again) to tell the plan's state. It keeps only the state, the network and the time, never the text or the sender, and never replies.",
+                    state.carrierSmsOn,
+                    actions.setCarrierSms,
+                )
+            }
         }
     }
 

@@ -461,17 +461,40 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
         val context = applicationContext
         val ended = runCatching { OwnerMms.ended(context) }.getOrNull().orEmpty()
+        val now = System.currentTimeMillis()
+        val zone = java.time.ZoneId.systemDefault()
         for (sim in sims) {
             val diagnosis = runCatching {
-                val roaming = QuietReader.roaming(context) == true
+                val roamingNow = QuietReader.roaming(context)
                 val reason = ImsReasonReader.read(context, sim.subId)
                 val mmsEnded = MmsProbe.ended(ended, sim.identity.mccmnc) != null
-                val inputs = OwnerPassiveRead.read(context, sim.subId, roaming, mmsEnded = mmsEnded).copy(
+                var passive = OwnerPassiveRead.read(context, sim.subId, roamingNow == true, mmsEnded = mmsEnded).copy(
                     imsRegistered = reason.registered,
                     imsReasonCode = reason.imsReasonCode,
                     sipResponseCode = reason.sipResponseCode,
                 )
-                Diagnoses.of(inputs)
+                // Items 2 and 4 run only after a measured cellular failure, never under a safety refusal (an
+                // emergency state, an active call, roaming). The balance USSD is also home-network only and capped.
+                val measuredFailure = passive.defaultDataCause != null || passive.rejectCause != null
+                if (measuredFailure && runCatching { OwnerSession(phone, store, sim).safety().refusal }.getOrNull() == null) {
+                    // Item 4: the balance USSD (opt-in, capped) runs first, so its class can pair with the refusal.
+                    runCatching { OwnerBalance.readIfDue(context, store, sim, measuredFailure = true, roaming = roamingNow, nowMs = now) }
+                    // Item 2: the automatic cellular probe ladder, at most once per SIM per 6 hours ([OwnerProbe]).
+                    val userPlane = OwnerProbe.runIfDue(
+                        context, store, sim,
+                        measuredFailure = true,
+                        roaming = roamingNow,
+                        dataOff = passive.dataOffReason != null,
+                        privateDnsOn = privateDnsOn(context),
+                        privateDnsBrokenHint = passive.privateDnsBroken,
+                        nowMs = now,
+                    )
+                    if (userPlane != null) passive = passive.copy(userPlane = userPlane)
+                }
+                // Items 4/5: the freshest account-state read for this SIM (balance same day, carrier-SMS class up to 31 days).
+                val (account, balance) = io.github.open_carrier_data.check.owner.core.AccountReadMark
+                    .fresh(store.read().accountReads, sim.key, now, zone)
+                Diagnoses.of(passive.copy(account = account, balance = balance))
             }.getOrNull() ?: continue
             val line = diagnosis.line ?: continue
             val tag = "diagnosis:${sim.slot}"
@@ -479,6 +502,11 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             quietLog(store, tag, line)
         }
     }
+
+    /** Whether Private DNS is switched on (opportunistic or a set hostname), from the global setting. Read-only. */
+    private fun privateDnsOn(context: Context): Boolean = runCatching {
+        android.provider.Settings.Global.getString(context.contentResolver, "private_dns_mode")?.lowercase() in setOf("opportunistic", "hostname")
+    }.getOrDefault(false)
 
     /**
      * The owner's "Send a test SMS now": one data SMS to each SIM's own number, on the app's

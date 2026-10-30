@@ -72,6 +72,8 @@ class OwnerManifestTest {
         // Round 26: only the system sends these (PHONE_STATE to privileged phone-state holders, the data SMS with BROADCAST_SMS).
         assertEquals("android.permission.READ_PRIVILEGED_PHONE_STATE", exported["io.github.open_carrier_data.check.owner.PhoneStateReceiver"])
         assertEquals("android.permission.BROADCAST_SMS", exported["io.github.open_carrier_data.check.owner.SelfSmsReceiver"])
+        // Round 42 item 5: the carrier-SMS reader; only the system (BROADCAST_SMS) delivers SMS_RECEIVED.
+        assertEquals("android.permission.BROADCAST_SMS", exported["io.github.open_carrier_data.check.owner.CarrierSmsReceiver"])
         assertTrue("io.github.open_carrier_data.check.owner.CallWatchService" !in exported)
         // 2026-10-25: only the call watch's receiver runs before the first unlock (it notes call times in device-protected storage).
         val directBoot = listOf("activity", "provider", "receiver", "service").flatMap { elements(it) }
@@ -83,6 +85,7 @@ class OwnerManifestTest {
                 "io.github.open_carrier_data.check.owner.OwnerActivity", "rikka.shizuku.ShizukuProvider",
                 "io.github.open_carrier_data.check.owner.OwnerSettingsProvider", "io.github.open_carrier_data.check.owner.OwnerBootReceiver",
                 "io.github.open_carrier_data.check.owner.PhoneStateReceiver", "io.github.open_carrier_data.check.owner.SelfSmsReceiver",
+                "io.github.open_carrier_data.check.owner.CarrierSmsReceiver",
             ),
             exported.keys.filterNot { it.startsWith("androidx.work") || it.startsWith("androidx.profileinstaller") }.toSet(),
         )
