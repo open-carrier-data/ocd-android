@@ -11,13 +11,16 @@ import java.io.File
  * The serving index of one dataset (spec 9.3), built once on the worker, off every binder:
  * - `meta.json`: commit, digests, registry types and forks, the resolved group A, B and X6
  *   sets, and the Google `default` and `no_sim` values;
- * - `net/<mcc>-<mnc>.json`: that network's profiles, each fill entry resolved inline;
+ * - `net/<mcc>-<mnc>.json`: that network's profiles, each fill entry resolved inline, with the
+ *   source families of their values (a group A read admits a value only for one of them, R31.7);
  * - `records.json`: the dataset's records whose cell matches this phone;
- * - `complete`: written last, so a half-built index is never read.
+ * - `complete`: written last, so a half-built index is never read; it names the schema, so an
+ *   index of another schema is never complete and is built again.
  * A load reads `meta.json`, one network file and `records.json` (9.4).
  */
 object ServingIndex {
-    const val SCHEMA = "ocd-index/1"
+    /** 2: the profiles' sources (ocd-index/1 left them out, so no read admitted a profile's own value). */
+    const val SCHEMA = "ocd-index/2"
 
     fun write(dataset: Dataset, dir: File, role: String, cell: BuildCell?, cellKey: String) {
         Files.deleteTree(dir)
@@ -69,6 +72,7 @@ object ServingIndex {
                         )
                     },
                     "values" to values(p.values),
+                    "sources" to p.sources,
                     "alternatives" to p.alternatives.mapValues { (k, alts) -> alts.map { linkedMapOf("value" to Types.toJson(types.getValue(k), it.value), "families" to it.families) } },
                     "apn_rows" to p.apnRows,
                 )
@@ -78,7 +82,7 @@ object ServingIndex {
         val records = dataset.records.records.filter { cell != null && cell.matches(it) }.map { it.json }
         Files.atomicWrite(File(dir, "records.json"), Json.write(linkedMapOf("records" to records)).toByteArray(Charsets.UTF_8))
         Files.atomicWrite(File(dir, "meta.json"), Json.write(meta).toByteArray(Charsets.UTF_8))
-        Files.atomicWrite(File(dir, "complete"), "${dataset.datasetDigest} ${dataset.commit}".toByteArray(Charsets.UTF_8))
+        Files.atomicWrite(File(dir, "complete"), "${dataset.datasetDigest} ${dataset.commit} $SCHEMA".toByteArray(Charsets.UTF_8))
     }
 
     /** The `proceed` and `hold` reads for this phone's ROM family and IMS stack (a fork-less read covers every fork). */
@@ -88,15 +92,17 @@ object ServingIndex {
     }
 
     /**
-     * Whether [dir] holds a complete index of this dataset at this commit (two pins of the same
-     * files share a dataset_digest, but the version string names the served pin's commit).
+     * Whether [dir] holds a complete index of this schema, of this dataset at this commit (two pins
+     * of the same files share a dataset_digest, but the version string names the served pin's commit).
      */
     fun complete(dir: File, datasetDigest: String?, cellKey: String?, commit: String? = null): Boolean {
         val marker = File(dir, "complete")
         if (!marker.isFile) return false
         val text = runCatching { marker.readText() }.getOrNull() ?: return false
-        if (datasetDigest != null && text.substringBefore(' ') != datasetDigest) return false
-        if (commit != null && text.substringAfter(' ') != commit) return false
+        val parts = text.split(' ')
+        if (parts.size != 3 || parts[2] != SCHEMA) return false
+        if (datasetDigest != null && parts[0] != datasetDigest) return false
+        if (commit != null && parts[1] != commit) return false
         if (cellKey != null) {
             val meta = runCatching { Obj.of(Json.parseBytes(Files.readBounded(File(dir, "meta.json"), 4L * 1024 * 1024)), "meta.json") }.getOrNull() ?: return false
             if (meta.raw["cell_key"] != cellKey) return false
@@ -167,11 +173,12 @@ object ServingIndex {
                 fillValues[fo.str("entry")] = fo.objOrNull("values")?.let { v -> v.keys.filter { it in types }.associateWithTo(LinkedHashMap()) { k -> typed(k, v.any(k)) } }
             }
             val vo = p.obj("values")
+            val so = p.obj("sources")
             val ao = p.obj("alternatives")
             val profile = Profile(
                 p.str("id"), p.str("kind"), p.str("name"), Match.parse(p.any("match"), p.str("id")), p.int("specificity"), fill,
                 vo.keys.filter { it in types }.associateWithTo(LinkedHashMap()) { k -> typed(k, vo.any(k)) },
-                emptyMap(),
+                so.keys.associateWithTo(LinkedHashMap()) { k -> so.strings(k) },
                 ao.keys.filter { it in types }.associateWith { k -> ao.list(k).map { a -> Obj.of(a, "alt").let { Alternative(typed(k, it.any("value")), it.strings("families")) } } },
                 p.int("apn_rows"),
             )

@@ -155,7 +155,8 @@
     "ocd/src/com/android/carriersettings/ocd/ServingIndex.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/ServingIndex.kt",
       "blob": "557df9f92700edc4b26f5c1752ad219e8245de46",
-      "status": "equal"
+      "status": "changed",
+      "why": "carriersettings/v1.0.2: the serving index carries each profile's sources (schema ocd-index/2, named in the complete marker so an ocd-index/1 index is built again). Without them no group A read admitted a profile's own value from the index, while the streamed baked files at boot and the dataset itself served it: on the S20 the first load after boot and every later load differed (build E, LIDL, carrier_use_ims_first_for_emergency_bool)."
     },
     "ocd/src/com/android/carriersettings/ocd/State.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/State.kt",
@@ -186,7 +187,8 @@
     "ocd/test/src/BundleTest.kt": {
       "from": "carriersettings/ocd/test/src/BundleTest.kt",
       "blob": "f903c0c2b11c0036d8b6ab0a7caa61f99dd04924",
-      "status": "equal"
+      "status": "changed",
+      "why": "carriersettings/v1.0.2: the index, the streamed baked files and the dataset serve the same bundle with group A reads; an index without the sources is never complete nor read."
     },
     "ocd/test/src/CandidateTest.kt": {
       "from": "carriersettings/ocd/test/src/CandidateTest.kt",
