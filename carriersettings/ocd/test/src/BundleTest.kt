@@ -367,6 +367,52 @@ class BundleTest {
         }
     }
 
+    /**
+     * Build E's finding (S20, LIDL, 500525ec): the first load after boot streams the baked files
+     * and served `carrier_use_ims_first_for_emergency_bool` true, admitted by a `proceed` read of
+     * the profile's own value; every load from the serving index left it out, and explain said
+     * `group_a:android_default`. A read must name a family of the value it admits, and the index
+     * lost each profile's sources. The index, the streamed baked files and the dataset itself
+     * serve the same bundle: values and sources, for a read over Android's default (LIDL) and one
+     * over a Google value (O2), and for keys no read admits.
+     */
+    @Test
+    fun theIndexAndTheStreamedBakedFilesServeAReadAsTheDatasetDoes() {
+        val key = "carrier_use_ims_first_for_emergency_bool"
+        val lidlProfile = "open.26202.8cebd7550c67"
+        val values = Fixture.VALUES + (lidlProfile to (Fixture.VALUES.getValue(lidlProfile) + (key to true)))
+        val sources = Fixture.SOURCES + (lidlProfile to mapOf(key to listOf("lineageos_device_overlays")))
+        val reads = Fixture.readsJson(listOf(Fixture.read(), Fixture.read(key = key, value = true, family = "lineageos_device_overlays", profile = lidlProfile, id = "gar:0000000000000002")))
+        val profiles = Fixture.profilesJson(values = values, sources = sources, keys = Fixture.KEYS + (key to ("bool" to "A")))
+        val files = Fixture.files(profiles = profiles, lane = Fixture.laneJson(state = "private_lane_at_build_pin"), role = "build", reads = reads)
+        val baked = Fixture.write(Fixture.tempDir("bundle-read-baked"), Fixture.seal(files, role = "build", laneAsExtra = true))
+        val ds = Fixture.dataset(baked, role = "build")
+        val dir = Fixture.tempDir("bundle-read-index")
+        ServingIndex.write(ds, dir, "build", Fixture.CELL, "cell")
+        val fromIndex = ServingIndex.read(dir)
+        val direct = ServingIndex.direct(ds, "build", Fixture.CELL)
+        val lidl = SimId("262", "02", imsi = "262020000000001")
+        for (sim in listOf(lidl, o2, tchibo, gid11)) {
+            val want = build(sim, direct)
+            val streamed = build(sim, ServingIndex.streamBaked(baked, sim.network, Fixture.CELL))
+            val indexed = build(sim, fromIndex)
+            assertEquals("streamed values, ${sim.network}", want.values, streamed.values)
+            assertEquals("streamed sources, ${sim.network}", want.sources, streamed.sources)
+            assertEquals("index values, ${sim.network}", want.values, indexed.values)
+            assertEquals("index sources, ${sim.network}", want.sources, indexed.sources)
+        }
+        val l = build(lidl, fromIndex)
+        assertEquals(true, l.values[key])
+        assertEquals("group_a:read:gar:0000000000000002", l.sources[key])
+        val o = build(o2, fromIndex)
+        assertEquals(listOf(9, 9, 9), o.values[domain])
+        assertEquals("group_a:read:gar:0000000000000001", o.sources[domain])
+        // Without its read the key is Android's default on every path.
+        val t = build(tchibo, fromIndex)
+        assertFalse(t.values.containsKey("rtt_supported_bool"))
+        assertEquals("group_a:android_default", t.sources["rtt_supported_bool"])
+    }
+
     @Test
     fun streamingTheBakedFilesServesTheSame() {
         val files = Fixture.files(lane = Fixture.laneJson(state = "private_lane_at_build_pin"), role = "build")
