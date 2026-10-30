@@ -75,12 +75,23 @@ object QuietWindow {
 
     fun night(minuteOfDay: Int): Boolean = minuteOfDay in NIGHT_FROM_MINUTE until NIGHT_UNTIL_MINUTE
 
-    /** The light read-only check: the screen off and no call. Null: it may run. */
-    fun checkBlocker(i: QuietInputs): QuietBlock? = when {
-        i.interactive != false -> QuietBlock.SCREEN_ON
+    /**
+     * The light read-only check. A background run needs the screen off and no call; the owner's tap
+     * ([ownerTap], "check now" on the owner screen, which can only be tapped with the screen on) runs at
+     * once with the screen on, never during a call. Null: it may run.
+     */
+    fun checkBlocker(i: QuietInputs, ownerTap: Boolean = false): QuietBlock? = when {
+        !ownerTap && i.interactive != false -> QuietBlock.SCREEN_ON
         i.inCall != false -> QuietBlock.IN_CALL
         else -> null
     }
+
+    /**
+     * Whether an owner's tap is the check only: with the screen on, or with "Test automatically" off,
+     * it reads and diagnoses, and leaves the dataset step, the emergency data test, the revert of a
+     * provisional keep and the night's tests to the background run, which keeps the screen-off condition.
+     */
+    fun checkOnly(ownerTap: Boolean, i: QuietInputs, scheduleOn: Boolean): Boolean = ownerTap && (i.interactive != false || !scheduleOn)
 
     /**
      * Trials: every condition of the report. Null when the window is open.
