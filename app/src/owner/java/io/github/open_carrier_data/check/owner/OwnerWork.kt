@@ -50,6 +50,7 @@ import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.Plan
 import io.github.open_carrier_data.check.owner.core.QuietBlock
 import io.github.open_carrier_data.check.owner.core.QuietPlan
+import io.github.open_carrier_data.check.owner.core.ProbeRunMark
 import io.github.open_carrier_data.check.owner.core.QuietWindow
 import io.github.open_carrier_data.check.owner.core.RunInterrupted
 import io.github.open_carrier_data.check.owner.core.RunOptions
@@ -478,24 +479,38 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 )
                 // Items 2 and 4 run only after a measured cellular failure, never under a safety refusal (an
                 // emergency state, an active call, roaming). The balance USSD is also home-network only and capped.
-                // A non-zero cause only: a working connection reports cause 0, which is no failure.
+                // A measured failure is a non-zero cause, an attach reject, or the SIM's cellular network up but not
+                // validated (the silent block, which leaves every cause 0); a working connection's cause 0 is none.
                 val measuredFailure = passive.measuredDataFailure
+                // The owner's "check now" also runs the ladder on demand, within the same refusals and a short cooldown.
+                val checkNow = !periodic
                 // A safety refusal that cannot be read counts as a refusal: nothing is sent then.
                 val safe: suspend () -> Boolean = { runCatching { OwnerSession(phone, store, sim).safety().refusal == null }.getOrDefault(false) }
-                if (measuredFailure && safe()) {
+                if ((measuredFailure || checkNow) && safe()) {
                     // Item 4: the balance USSD (opt-in, capped) runs first, so its class can pair with the refusal.
-                    runCatching { OwnerBalance.readIfDue(context, store, sim, measuredFailure = true, roaming = roamingNow, nowMs = now) }
-                    // Item 2: the automatic cellular probe ladder, at most once per SIM per 6 hours ([OwnerProbe]).
-                    val userPlane = OwnerProbe.runIfDue(
-                        context, store, sim,
-                        measuredFailure = true,
-                        roaming = roamingNow,
-                        dataOff = passive.dataOffReason != null,
-                        privateDnsOn = privateDnsOn(context),
-                        privateDnsBrokenHint = passive.privateDnsBroken,
-                        nowMs = now,
-                    )
-                    if (userPlane != null) passive = passive.copy(userPlane = userPlane)
+                    if (measuredFailure) runCatching { OwnerBalance.readIfDue(context, store, sim, measuredFailure = true, roaming = roamingNow, nowMs = now) }
+                    // Item 2: the cellular probe ladder, automatic at most once per SIM per 6 hours, or on "check now" ([OwnerProbe]).
+                    val run = runCatching {
+                        OwnerProbe.runIfDue(
+                            context, store, sim,
+                            measuredFailure = measuredFailure,
+                            checkNow = checkNow,
+                            roaming = roamingNow,
+                            dataOff = passive.dataOffReason != null,
+                            privateDnsOn = privateDnsOn(context),
+                            privateDnsBrokenHint = passive.privateDnsBroken,
+                            nowMs = now,
+                        )
+                    }.getOrNull()
+                    if (run != null) {
+                        quietLog(store, "probe:${sim.slot}", "slot ${sim.slot + 1}: ${run.line}")
+                        passive = passive.copy(userPlane = run.userPlane)
+                    }
+                }
+                // The latest ladder run of this SIM, under 6 hours old, feeds the verdict while the measured failure
+                // lasts, so the hourly checks between two runs keep the verdict instead of flipping back and forth.
+                if (passive.userPlane == null && measuredFailure) {
+                    ProbeRunMark.fresh(store.read().probeRuns, sim.key, now)?.let { passive = passive.copy(userPlane = it.userPlane) }
                 }
                 // Item 2, W1: the ePDG name lookup after a measured Wi-Fi-calling failure (the Wi-Fi resolver, plus the
                 // cellular one only when cellular data fails or is the default), or on the owner's "check now" (both).

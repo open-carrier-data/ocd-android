@@ -16,6 +16,7 @@ import io.github.open_carrier_data.check.core.HomeNetwork
 import io.github.open_carrier_data.check.core.ProbeLadder
 import io.github.open_carrier_data.check.core.ProbeNet
 import io.github.open_carrier_data.check.core.ProbePolicy
+import io.github.open_carrier_data.check.core.ProbeResults
 import io.github.open_carrier_data.check.core.UserPlaneClass
 import io.github.open_carrier_data.check.owner.core.EpdgRunMark
 import io.github.open_carrier_data.check.owner.core.OwnerSim
@@ -35,7 +36,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * cellular network's resolver, and keeps each answer as a class only. W2 (IKE) is not built.
  *
  * The bounds ([ProbePolicy], [EpdgPolicy]): automatic only after a measured cellular (D1-D5) or
- * Wi-Fi-calling (W1) failure, at most once per SIM per 6 hours, never while roaming or with mobile
+ * Wi-Fi-calling (W1) failure, at most once per SIM per 6 hours, plus the owner's "check now" on demand
+ * after a short cooldown (D1-D5), never while roaming or with mobile
  * data off, and never under the emergency and call refusals (the caller checks those through
  * [io.github.open_carrier_data.check.owner.core.Refusals] before this runs). An automatic W1 asks the
  * cellular resolver only when cellular data itself fails or is the default network; the owner's
@@ -47,14 +49,13 @@ object OwnerProbe {
     private const val WIFI_MS = 2_000L
 
     /**
-     * Runs the ladder for [sim] on a freshly requested cellular network and returns the user-plane
-     * class, or null when the network did not come up. [privateDnsBrokenHint] is the passive read's
+     * Runs the ladder for [sim] on a freshly requested cellular network and returns each step's
+     * outcome, or null when the network did not come up. [privateDnsBrokenHint] is the passive read's
      * NetworkCapabilities bit. D5 runs (owner and rom only path).
      */
-    suspend fun run(context: Context, sim: OwnerSim, privateDnsOn: Boolean, privateDnsBrokenHint: Boolean?): UserPlaneClass? =
+    suspend fun run(context: Context, sim: OwnerSim, privateDnsOn: Boolean, privateDnsBrokenHint: Boolean?): ProbeResults? =
         onCellular(context, sim) { network ->
-            val results = ProbeNet.run(network, sim.identity.mccmnc, includeD5 = true, privateDnsOn = privateDnsOn, privateDnsBrokenHint = privateDnsBrokenHint)
-            ProbeLadder.classify(results)
+            ProbeNet.run(network, sim.identity.mccmnc, includeD5 = true, privateDnsOn = privateDnsOn, privateDnsBrokenHint = privateDnsBrokenHint)
         }
 
     /**
@@ -127,9 +128,12 @@ object OwnerProbe {
     }.getOrNull()
 
     /**
-     * The automatic run for the light check: only after a measured cellular failure, and only when
-     * the last run of this SIM was at least 6 hours ago. Records the run's time and class and returns
-     * the class, or null when it did not run or did not come up.
+     * The ladder for the light check: automatic only after a measured cellular failure and only when
+     * the last run of this SIM was at least 6 hours ago; on the owner's "check now" ([checkNow]) on
+     * demand, once the short cooldown since the SIM's last run has passed ([ProbePolicy.due]). Never
+     * roaming or with mobile data off; the caller has checked the emergency and call refusals. Records
+     * the run (its time, class and each step's outcome) and returns it, or null when it did not run
+     * or the network did not come up.
      */
     @SuppressLint("MissingPermission")
     suspend fun runIfDue(
@@ -137,18 +141,20 @@ object OwnerProbe {
         store: FileStateStore,
         sim: OwnerSim,
         measuredFailure: Boolean,
+        checkNow: Boolean,
         roaming: Boolean?,
         dataOff: Boolean,
         privateDnsOn: Boolean,
         privateDnsBrokenHint: Boolean?,
         nowMs: Long,
-    ): UserPlaneClass? {
+    ): ProbeRunMark? {
         if (ProbePolicy.refusal(roaming, dataOff) != null) return null
         val last = ProbeRunMark.last(store.read().probeRuns, sim.key)
-        if (!ProbePolicy.autoDue(measuredFailure, last?.atMs, nowMs)) return null
-        val cls = run(context, sim, privateDnsOn, privateDnsBrokenHint) ?: return null
-        store.updateLocked { it.copy(probeRuns = ProbeRunMark.add(it.probeRuns, ProbeRunMark(sim.key, nowMs, cls))) }
-        return cls
+        if (!ProbePolicy.due(measuredFailure, checkNow, last?.atMs, nowMs)) return null
+        val results = run(context, sim, privateDnsOn, privateDnsBrokenHint) ?: return null
+        val mark = ProbeRunMark(sim.key, nowMs, ProbeLadder.classify(results), results, checkNow)
+        store.updateLocked { it.copy(probeRuns = ProbeRunMark.add(it.probeRuns, mark)) }
+        return mark
     }
 
     /**

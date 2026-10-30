@@ -77,4 +77,45 @@ object ProbeLadder {
         }
         return UserPlaneClass.PATH_CLEAN
     }
+
+    /**
+     * Each step's outcome in plain words, for the owner's log and report: only "ok", "fails", "answered"
+     * or a redirect class, never an address or a host. A step that did not run says so.
+     */
+    fun steps(r: ProbeResults): String = listOf(
+        "D1 " + when {
+            r.socketBlocked -> "this app's sockets are blocked"
+            else -> "loopback ${okOrFails(r.loopbackOk)}"
+        },
+        "D2a carrier resolver ${answered(r.carrierDnsOk)}",
+        "D2b public resolver (UDP 53) ${answered(r.publicDnsOk)}",
+        "D2c " + if (!r.privateDnsOn) "Private DNS off" else "Private DNS ${okOrFails(r.privateDnsOk)}",
+        "D3 IPv4 literal ${okOrFails(r.ipv4LiteralOk)}, IPv6 literal ${okOrFails(r.ipv6LiteralOk)}, host ${okOrFails(r.hostOk)}",
+        "D4 " + when (r.http204Clean) {
+            true -> "204"
+            false -> "no 204"
+            null -> "no answer"
+        } + ", " + when (r.redirect) {
+            RedirectHost.NONE -> "no redirect"
+            RedirectHost.CARRIER_PORTAL -> "redirect to the carrier's page"
+            RedirectHost.OTHER -> "redirect to another host"
+        },
+        "D5 " + when (r.carrierPageOk) {
+            null -> "not run"
+            true -> "carrier page answered"
+            false -> "carrier page did not answer"
+        },
+    ).joinToString("; ")
+
+    private fun okOrFails(v: Boolean?): String = when (v) {
+        true -> "ok"
+        false -> "fails"
+        null -> "not run"
+    }
+
+    private fun answered(v: Boolean?): String = when (v) {
+        true -> "answered"
+        false -> "did not answer"
+        null -> "not run"
+    }
 }

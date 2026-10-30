@@ -43,7 +43,16 @@ data class DiagnosisInputs(
     val iwlanDataCause: Int? = null,
     /** NetworkRegistrationInfo.getRejectCause() for the WWAN packet-switched registration. */
     val rejectCause: Int? = null,
-    /** The default mobile network validated (NetworkCapabilities VALIDATED); null when not read. */
+    /**
+     * The SIM's own cellular internet network is connected: read on that network (its
+     * TelephonyNetworkSpecifier), never the default network, which is the Wi-Fi while Wi-Fi is on.
+     * Null when not read.
+     */
+    val cellularUp: Boolean? = null,
+    /**
+     * Android's NetworkMonitor validated the SIM's cellular network (NetworkCapabilities VALIDATED), read
+     * on that network, not the default one; null when not read or when no cellular network is up.
+     */
     val dataValidated: Boolean? = null,
     /** NetworkCapabilities.isPrivateDnsBroken() on the default network. */
     val privateDnsBroken: Boolean = false,
@@ -75,11 +84,20 @@ data class DiagnosisInputs(
     val epdgCellular: EpdgLookup? = null,
 ) {
     /**
-     * A measured mobile-data failure, the gate of the automatic probe ladder and the balance read: a
-     * non-zero fail cause on the default APN or an attach reject. A working connection reports
-     * getLastCauseCode() 0 (DataFailCause.NONE), which is no failure.
+     * The silent block (the LIDL case): the SIM's cellular internet network is up and Android's
+     * NetworkMonitor, which re-validates it about every 10 minutes even while Wi-Fi is the default,
+     * does not validate it. Every cause stays 0 then, so no code would ever show it. Unreadable counts
+     * as no failure: nothing runs on a guess.
      */
-    val measuredDataFailure: Boolean get() = (defaultDataCause ?: 0) != 0 || rejectCause != null
+    val cellularUnvalidated: Boolean get() = cellularUp == true && dataValidated == false
+
+    /**
+     * A measured mobile-data failure, the gate of the automatic probe ladder and the balance read: a
+     * non-zero fail cause on the default APN, an attach reject, or the SIM's cellular network up but
+     * not validated ([cellularUnvalidated]). A working connection reports getLastCauseCode() 0
+     * (DataFailCause.NONE), which is no failure.
+     */
+    val measuredDataFailure: Boolean get() = (defaultDataCause ?: 0) != 0 || rejectCause != null || cellularUnvalidated
 }
 
 /** The diagnosis of one SIM: the per-feature verdicts, and whether a failed test should not count. */

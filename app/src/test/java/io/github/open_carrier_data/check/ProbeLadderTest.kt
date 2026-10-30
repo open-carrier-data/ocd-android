@@ -28,6 +28,24 @@ class ProbeLadderTest {
     }
 
     @Test
+    fun `each step is recorded in plain words, a step that did not run says so, and no address is kept`() {
+        val r = ProbeResults(
+            loopbackOk = true, carrierDnsOk = true, publicDnsOk = false,
+            http204Clean = false, hostOk = false, ipv4LiteralOk = false, ipv6LiteralOk = null,
+            redirect = RedirectHost.NONE,
+        )
+        assertEquals(
+            "D1 loopback ok; D2a carrier resolver answered; D2b public resolver (UDP 53) did not answer; D2c Private DNS off; " +
+                "D3 IPv4 literal fails, IPv6 literal not run, host fails; D4 no 204, no redirect; D5 not run",
+            ProbeLadder.steps(r),
+        )
+        assertTrue(ProbeLadder.steps(ProbeResults(socketBlocked = true)).startsWith("D1 this app's sockets are blocked"))
+        assertTrue(ProbeLadder.steps(ProbeResults(redirect = RedirectHost.CARRIER_PORTAL)).contains("redirect to the carrier's page"))
+        assertTrue(ProbeLadder.steps(ProbeResults(redirect = RedirectHost.OTHER, carrierPageOk = true)).contains("redirect to another host; D5 carrier page answered"))
+        assertFalse(Regex("\\d+\\.\\d+\\.\\d+|::|https?:").containsMatchIn(ProbeLadder.steps(r)))
+    }
+
+    @Test
     fun `a captive portal redirect is read as a block, a broken private DNS as phone-side`() {
         assertEquals(
             UserPlaneClass.PORTAL_REDIRECT,

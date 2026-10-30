@@ -3,7 +3,9 @@ package io.github.open_carrier_data.check.owner
 import android.annotation.SuppressLint
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.TelephonyNetworkSpecifier
 import android.os.Build
 import android.telephony.AccessNetworkConstants
 import android.telephony.PreciseDataConnectionState
@@ -21,9 +23,10 @@ import java.util.concurrent.Executor
 /**
  * OCD round 42, item 1 (D0/W0) on the owner (and rom) build: the passive read, with the privileged
  * permissions. It keeps only codes, classes and booleans: the last DataFailCause of each APN
- * (default, IMS, MMS and the IWLAN transport), the attach reject cause, whether the default network
- * validated, whether a VPN or Data Saver is on, whether the Private DNS is broken, and the reason
- * mobile data is off. Never an address, an APN credential or an identifier. It sends no traffic.
+ * (default, IMS, MMS and the IWLAN transport), the attach reject cause, whether the SIM's own
+ * cellular network is up and validated (read on that network, not the default one), whether a VPN or
+ * Data Saver is on, whether the Private DNS is broken, and the reason mobile data is off. Never an
+ * address, an APN credential or an identifier. It sends no traffic.
  */
 @RequiresApi(Build.VERSION_CODES.S)
 object OwnerPassiveRead {
@@ -35,6 +38,8 @@ object OwnerPassiveRead {
     suspend fun read(context: Context, subId: Int, roaming: Boolean, account: AccountState = AccountState.UNKNOWN, balance: String? = null, mmsEnded: Boolean = false): DiagnosisInputs {
         val tm = runCatching { context.getSystemService(TelephonyManager::class.java)?.createForSubscriptionId(subId) }.getOrNull()
         val causes = tm?.let { preciseCauses(it) } ?: Causes()
+        // The SIM's own cellular network, not the default one (the Wi-Fi while Wi-Fi is on).
+        val cellular = cellularNetwork(context, subId)
         return DiagnosisInputs(
             roaming = roaming,
             defaultDataCause = causes.default,
@@ -42,7 +47,8 @@ object OwnerPassiveRead {
             mmsDataCause = causes.mms,
             iwlanDataCause = causes.iwlan,
             rejectCause = tm?.let { rejectCause(it) },
-            dataValidated = validated(context),
+            cellularUp = cellular != null,
+            dataValidated = cellular?.second?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
             privateDnsBroken = privateDnsBroken(context),
             vpnActive = vpnActive(context),
             dataSaver = dataSaver(context),
@@ -98,8 +104,27 @@ object OwnerPassiveRead {
         cm.getNetworkCapabilities(cm.activeNetwork)
     }.getOrNull()
 
-    private fun validated(context: Context): Boolean? =
-        activeCaps(context)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    /**
+     * The SIM's connected cellular internet network and its capabilities, found without requesting or
+     * bringing up anything: among the networks Android already has, the one with TRANSPORT_CELLULAR and
+     * INTERNET whose TelephonyNetworkSpecifier names [subId]; when no network carries a specifier, the
+     * single cellular internet network. Null when none is up (mobile data off, no service) or when it
+     * cannot be told which SIM a network belongs to.
+     */
+    fun cellularNetwork(context: Context, subId: Int): Pair<Network, NetworkCapabilities>? = runCatching {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
+        @Suppress("DEPRECATION")
+        val cellular = cm.allNetworks.mapNotNull { network ->
+            val caps = cm.getNetworkCapabilities(network) ?: return@mapNotNull null
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) network to caps else null
+        }
+        val specified = cellular.filter { (it.second.networkSpecifier as? TelephonyNetworkSpecifier)?.subscriptionId == subId }
+        when {
+            specified.isNotEmpty() -> specified.first()
+            cellular.size == 1 && cellular.single().second.networkSpecifier !is TelephonyNetworkSpecifier -> cellular.single()
+            else -> null
+        }
+    }.getOrNull()
 
     private fun vpnActive(context: Context): Boolean =
         activeCaps(context)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) == false
