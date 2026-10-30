@@ -27,6 +27,7 @@ import io.github.open_carrier_data.check.owner.core.DataPin
 import io.github.open_carrier_data.check.owner.core.DatasetCheck
 import io.github.open_carrier_data.check.owner.core.DatasetClient
 import io.github.open_carrier_data.check.owner.core.DatasetFiles
+import io.github.open_carrier_data.check.owner.core.DatasetJobs
 import io.github.open_carrier_data.check.owner.core.DatasetPull
 import io.github.open_carrier_data.check.owner.core.DatasetStatus
 import io.github.open_carrier_data.check.owner.core.DeviceKeys
@@ -491,20 +492,24 @@ object OwnerDatasetStep {
         return MeasuredRecord.text(record)
     }
 
-    /** install_status every 2 s for up to 3 minutes until verified or final. */
-    private suspend fun poll(store: StateStore, client: DatasetClient, id: String, until: (InstallView) -> Boolean = { it.final || it.state == InstallState.VERIFIED }, maxMs: Long = 180_000): String {
-        var waited = 0L
-        var view: InstallView
-        while (true) {
-            view = InstallView.parse(id, client.installStatus(id))
-            if (until(view) || waited >= maxMs) break
-            kotlinx.coroutines.delay(2_000)
-            waited += 2_000
-        }
+    /** CarrierSettings's jobs are followed on the elapsed clock (0.4.4, [DatasetJobs]). */
+    private val clock = object : io.github.open_carrier_data.check.owner.core.JobClock {
+        override fun uptimeMs(): Long = android.os.SystemClock.elapsedRealtime()
+        override suspend fun sleep(ms: Long) = kotlinx.coroutines.delay(ms)
+    }
+
+    /**
+     * install_status every 2 s until verified or final ([DatasetJobs.verification]), or, for an [activation], until final
+     * within the activation's longest time from CarrierSettings's source and the margin ([DatasetJobs.activation], 0.4.4;
+     * 0.4.3 gave up after 300 s). A job the app stops following is left to CarrierSettings, and the line says so.
+     */
+    private suspend fun poll(store: StateStore, client: DatasetClient, id: String, activation: Boolean = false): String {
+        val f = if (activation) DatasetJobs.activation(client, id, clock) else DatasetJobs.verification(client, id, clock)
+        val view = InstallView.parse(id, f.answer ?: DataAnswer.absent("no answer"))
         val before = store.read().install?.takeIf { it.installId == id }
         store.update { s -> s.copy(install = view.copy(datasetDigest = view.datasetDigest.ifEmpty { before?.datasetDigest.orEmpty() }, commit = view.commit.ifEmpty { before?.commit.orEmpty() }, carrierSettings = before?.carrierSettings.orEmpty())) }
         val line = "install $id: ${view.state}" + (view.error?.let { " ($it${view.reason?.let { r -> ": $r" } ?: ""})" } ?: "") +
-            (if (view.failedChecks.isNotEmpty()) "; failed checks: ${view.failedChecks.joinToString()}" else "")
+            (if (view.failedChecks.isNotEmpty()) "; failed checks: ${view.failedChecks.joinToString()}" else "") + DatasetJobs.left(f, activation).orEmpty()
         store.update { it.logged(System.currentTimeMillis(), "dataset", line).copy(datasetLine = line) }
         // An APN shrink, a SIM that would lose rows or coupling: a source review (spec 12.3).
         if (view.state == InstallState.REFUSED && view.error in setOf("apn_shrink", "sim_loses_internet", "sim_loses_ims", "apn_coupling_lost")) {
@@ -531,7 +536,7 @@ object OwnerDatasetStep {
             return "activate waits: $why"
         }
         for (sim in sims) store.update { it.copy(caps = TestCaps.add(it.caps, sim.key, CapEvent.REREGISTRATION, now)) }
-        val line = poll(store, client, install.installId, until = { it.final }, maxMs = 300_000)
+        val line = poll(store, client, install.installId, activation = true)
         val view = store.read().install ?: return line
         if (view.state != InstallState.INSTALLED) return line
         val status = status(context, store)

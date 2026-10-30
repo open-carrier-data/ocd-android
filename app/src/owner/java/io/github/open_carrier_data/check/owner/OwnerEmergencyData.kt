@@ -24,6 +24,7 @@ import io.github.open_carrier_data.check.owner.core.EmergencyData
 import io.github.open_carrier_data.check.owner.core.EmergencyDump
 import io.github.open_carrier_data.check.owner.core.EmergencyFirstUse
 import io.github.open_carrier_data.check.owner.core.EmergencySession
+import io.github.open_carrier_data.check.owner.core.EmergencySetJobs
 import io.github.open_carrier_data.check.owner.core.InstallState
 import io.github.open_carrier_data.check.owner.core.OcdDataProtocol
 import io.github.open_carrier_data.check.owner.core.ExplainRow
@@ -33,6 +34,7 @@ import io.github.open_carrier_data.check.owner.core.Notice
 import io.github.open_carrier_data.check.owner.core.OwnerPhone
 import io.github.open_carrier_data.check.owner.core.OwnerSession
 import io.github.open_carrier_data.check.owner.core.OwnerSim
+import io.github.open_carrier_data.check.owner.core.ProviderReason
 import io.github.open_carrier_data.check.owner.core.RecordCarrier
 import io.github.open_carrier_data.check.owner.core.RecordCell
 import io.github.open_carrier_data.check.owner.core.RecordInput
@@ -355,19 +357,27 @@ object OwnerEmergencyData {
 
         private fun count() = store.update { it.copy(caps = io.github.open_carrier_data.check.owner.core.TestCaps.add(it.caps, sim.key, io.github.open_carrier_data.check.owner.core.CapEvent.REREGISTRATION, System.currentTimeMillis())) }
 
-        /** Null when the set is in place; else why not (the session's "not run"). */
+        /** CarrierSettings's jobs are followed on the elapsed clock (0.4.4, [EmergencySetJobs]). */
+        private val clock = object : io.github.open_carrier_data.check.owner.core.JobClock {
+            override fun uptimeMs(): Long = android.os.SystemClock.elapsedRealtime()
+            override suspend fun sleep(ms: Long) = delay(ms)
+        }
+
+        /**
+         * Null when the set is in place; else why not (the session's "not run"). 0.4.4: the install is followed until
+         * CarrierSettings reports its end, within its own deadline less the margin and the session; when the app gives up
+         * it asks for the restore at once ([EmergencySetJobs.set]).
+         */
         suspend fun install(): String? {
-            val a = client.emergencyDefaultSet(sim.subId)
-            if (!a.ok) return EmergencyData.setRefusal(a.error).also { log(store, "slot ${sim.slot + 1}: emergency_default_set ${a.line}") }
-            val job = a.str(OcdDataProtocol.JOB_ID) ?: a.str(OcdDataProtocol.INSTALL_ID) ?: return "not run: no job ID"
-            count()
-            val view = poll(job, InstallState.SET_FINAL, 180_000)
-            val removed = view?.arr("removed_rows").orEmpty().mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content ?: (it as? kotlinx.serialization.json.JsonObject)?.let { o -> io.github.open_carrier_data.check.owner.core.DatasetStatus.s(o, "row_key") } }
-            log(store, "slot ${sim.slot + 1}: the emergency default test set: ${view?.str("state") ?: "no answer"}; removed rows ${removed.ifEmpty { listOf("none") }}, rows ${view?.long("rows") ?: "?"}, preferred APN recorded ${view?.bool("preferred_apn_recorded") ?: "?"}")
-            if (view?.str("state") != InstallState.IN_PLACE) {
-                // apn_not_confirmed: CarrierSettings restored the full set itself.
-                return "not run: the set did not go in place (${view?.str("state") ?: "no answer"}${view?.str("error")?.let { ", $it" } ?: ""})"
+            val end = EmergencySetJobs.set(client, sim.subId, clock, placed = { count() }, restore = { until -> restoreFollowed(keep = false, retryBusyUntil = until) })
+            end.refusal?.let { a ->
+                log(store, "slot ${sim.slot + 1}: emergency_default_set refused (${ProviderReason.of(a.error ?: "no answer", a.str(OcdDataProtocol.REASON))})")
+                return end.notRun
             }
+            val view = end.view ?: return end.notRun
+            val removed = view.arr("removed_rows").orEmpty().mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content ?: (it as? kotlinx.serialization.json.JsonObject)?.let { o -> io.github.open_carrier_data.check.owner.core.DatasetStatus.s(o, "row_key") } }
+            log(store, "slot ${sim.slot + 1}: the emergency default test set: ${view.str("state") ?: "no answer"}; removed rows ${removed.ifEmpty { listOf("none") }}, rows ${view.long("rows") ?: "?"}, preferred APN recorded ${view.bool("preferred_apn_recorded") ?: "?"}")
+            if (!end.inPlace) return end.notRun
             placed = true
             removedOnlyEmergency = removed.isNotEmpty() && (emergencyRows.isEmpty() || emergencyRows.containsAll(removed))
             return null
@@ -385,46 +395,37 @@ object OwnerEmergencyData {
             }
         }
 
-        /** The restore, polled until it ends or 5 minutes pass (CarrierSettings finishes a waiting restore on its own). */
-        suspend fun restore(keep: Boolean): String {
-            if (!placed) return "nothing to restore"
+        /**
+         * The restore, followed until it ends ([EmergencySetJobs.restore], 0.4.4: its install and its checks' wait;
+         * CarrierSettings finishes a waiting restore on its own). [retryBusyUntil]: the app gave up on the set's install
+         * and asks for the restore at once, again while CarrierSettings still installs, until that uptime.
+         */
+        suspend fun restore(keep: Boolean): String = restoreFollowed(keep, null).line
+
+        private suspend fun restoreFollowed(keep: Boolean, retryBusyUntil: Long?): EmergencySetJobs.RestoreEnd {
+            if (!placed && retryBusyUntil == null) return EmergencySetJobs.RestoreEnd(null, null, null, "nothing to restore")
             restoreAttempted = true
-            val a = client.emergencyDefaultRestore(keep)
-            if (!a.ok) {
-                log(store, "slot ${sim.slot + 1}: emergency_default_restore ${a.line}")
-                return "restore refused: ${a.line}"
+            val r = EmergencySetJobs.restore(client, clock, keep, accepted = { count() }, retryBusyUntil = retryBusyUntil)
+            if (!r.accepted) {
+                log(store, "slot ${sim.slot + 1}: emergency_default_${r.line}")
+                return r
             }
-            val job = a.str(OcdDataProtocol.JOB_ID) ?: a.str(OcdDataProtocol.INSTALL_ID)
-            count()
-            val view = job?.let { poll(it, InstallState.RESTORE_FINAL, 300_000) }
-            val state = view?.str("state") ?: "no answer"
+            val view = r.view
+            val state = r.state ?: "no answer"
             restoredState = state
             val failed = view?.arr("checks").orEmpty().mapNotNull { it as? kotlinx.serialization.json.JsonObject }.filter { io.github.open_carrier_data.check.owner.core.DatasetStatus.bool(it, "ok") == false }
                 .map { "${io.github.open_carrier_data.check.owner.core.DatasetStatus.s(it, "check")}: ${io.github.open_carrier_data.check.owner.core.DatasetStatus.s(it, "detail").orEmpty().take(80)}" }
             restoreChecksOk = state in setOf(InstallState.RESTORED, InstallState.KEPT) && failed.isEmpty()
             val line = "the emergency default test set ${if (keep) "kept without the row for this cell" else "restored"}: $state" +
                 (view?.long("rows")?.let { ", rows $it" } ?: "") + (if (failed.isEmpty()) "" else "; failed checks: ${failed.joinToString()}") +
-                (view?.str("waiting_for")?.takeIf { state == InstallState.WAITING }?.let { "; waiting for ${io.github.open_carrier_data.check.owner.core.InstallRefusal.waiting(it)}, CarrierSettings finishes it" } ?: "")
+                (if (r.timedOut) "; ${r.line}" else "")
             log(store, "slot ${sim.slot + 1}: $line")
             if (state == InstallState.RESTORE_FAILED) {
                 // CarrierSettings halted changes and installed the last good set (or the build's APN file); a stop event here too.
                 store.update { it.copy(stop = it.stop ?: "the emergency default test set could not be restored").logged(System.currentTimeMillis(), "stop", "the emergency default test set could not be restored: ${view?.str("error") ?: ""}") }
                 OwnerNotifications.notice(context, Notice("Access point names restored by CarrierSettings", "The emergency test's temporary access point names did not come back as they were, so CarrierSettings installed the last good set again. Tests and changes are paused until you tap Resume.", failed = true))
             }
-            return line
-        }
-
-        private suspend fun poll(job: String, final: Set<String>, maxMs: Long): io.github.open_carrier_data.check.owner.core.DataAnswer? {
-            var waited = 0L
-            var a: io.github.open_carrier_data.check.owner.core.DataAnswer? = null
-            while (waited <= maxMs) {
-                a = client.installStatus(job)
-                if (!a.ok && a.str("state") == null) return a
-                if (a.str("state") in final) return a
-                delay(2_000)
-                waited += 2_000
-            }
-            return a
+            return r.copy(line = line)
         }
     }
 
