@@ -1,0 +1,235 @@
+// Open Carrier Data carrier settings for the owner's S20 build, in place of LineageOS
+// CarrierSettings (hardware/lineage/generic-ims/carriersettings) and its copy of Google's
+// files (S20_Project/reports/OCD carrier settings in the ROM.md).
+//
+// The app is LineageOS's CarrierSettings, same package and same code, with one line changed:
+// PbConfigLoader reads /system_ext/etc/OcdCarrierSettings instead of
+// /system_ext/etc/CarrierSettings. Two modules cannot install the same file, so OCD's
+// files need their own folder, and so the loader needs that one line.
+// check_upstream.sh proves the rest is unchanged.
+//
+// Installed only when product.mk sets OCD_CARRIER_SETTINGS to true. Then `overrides` drops
+// LineageOS CarrierSettings together with what only it requires: Google's files
+// (prebuilt_carrier_settings), its Telephony overlay and its privapp permissions. This
+// directory brings its own copy of each.
+
+android_app {
+    name: "OcdCarrierSettings",
+    srcs: ["src/**/*.kt"],
+    platform_apis: true,
+    certificate: "platform",
+    system_ext_specific: true,
+    privileged: true,
+    static_libs: [
+        "androidx.preference_preference",
+        "ocd_carriersettings_proto",
+    ],
+    overrides: ["CarrierSettings"],
+    required: [
+        "OcdCarrierSettingsTelephonyOverlay",
+        "ocd_carrier_settings",
+        "ocd_carrier_settings_record",
+        "privapp_permissions_ocd_carriersettings",
+    ],
+}
+
+// OCD's dataset in place of Google's carrier data (OCD rules rounds 30 and 31; ocd/). Each SIM's
+// bundle comes from OCD's dataset alone, matched by OCD's own rules: the build's baked dataset
+// (dataset/, written by S20_Project scripts/ocd-pin-main.py), or a newer one the OCD app hands
+// over through a provider pinned to that app's certificate (a build parameter, below). The APN
+// part goes through Android's UPDATE_APN_DB. No Google .pb file and no INTERNET permission. The
+// sources are OCD's own (ocd/src) and do not use LineageOS's src/: the loader,
+// BootCompletedReceiver and ExtendedCarrierIdentifier are not in this module. LineageOS's
+// resources (res/: the device override XML and its CarrierSettingsConfig overlayable) and the
+// lines of LineageOS's service that apply LineageOS's fixed key and the device override last
+// stay for good (round 31, SM3: device quirks belong to the device tree, applied last);
+// check_upstream.sh proves what still comes from LineageOS.
+//
+// Installed in place of OcdCarrierSettings only when product.mk sets OCD_CARRIER_DATASET
+// (which needs OCD_CARRIER_SETTINGS, OCD_OWNER_APP and a baked dataset); with the switch off
+// the image holds the module above, unchanged.
+android_app {
+    name: "OcdCarrierSettingsDataset",
+    srcs: ["ocd/src/**/*.kt"],
+    manifest: "ocd/AndroidManifest.xml",
+    // ocd/res adds OCD's resources and the writer's defaults; the zips below overlay the writer
+    // with the build parameter. Every resource dir after the first is an overlay to aapt2.
+    aaptflags: ["--auto-add-overlay"],
+    resource_dirs: [
+        "res",
+        "ocd/res",
+    ],
+    resource_zips: [
+        ":ocd_writer_cert_res",
+        ":ocd_writer_package_res",
+    ],
+    platform_apis: true,
+    certificate: "platform",
+    system_ext_specific: true,
+    privileged: true,
+    overrides: [
+        "CarrierSettings",
+        "OcdCarrierSettings",
+    ],
+    required: [
+        "OcdCarrierSettingsTelephonyOverlay",
+        "default_permissions_ocd_carriersettings_dataset",
+        "ocd_carrier_dataset",
+        "ocd_carrier_build",
+        "ocd_carrier_settings_record",
+        "privapp_permissions_ocd_carriersettings_dataset",
+    ],
+}
+
+// The dataset provider's one writer is a build parameter (OCD rule round 31, SM5): the SHA-256
+// of the certificate and the package of this ROM's own build of the OCD app, set in
+// vendor/extra/BoardConfigExtra.mk (OCD_WRITER_CERT, OCD_WRITER_PACKAGE) and passed through
+// Soong config namespace "ocd". Each genrule writes one resource (ocd_owner_certs, which the
+// writer permission's knownCerts and the caller check read; ocd_writer_package) into a zip that
+// overlays ocd/res's defaults, the owner build's. A value of the wrong form fails the build.
+// (A value variable allows a single % in the command, so the commands use echo.)
+soong_config_module_type {
+    name: "ocd_writer_cert_genrule",
+    module_type: "genrule",
+    config_namespace: "ocd",
+    value_variables: ["writer_cert"],
+    properties: ["cmd"],
+}
+
+soong_config_module_type {
+    name: "ocd_writer_package_genrule",
+    module_type: "genrule",
+    config_namespace: "ocd",
+    value_variables: ["writer_package"],
+    properties: ["cmd"],
+}
+
+ocd_writer_cert_genrule {
+    name: "ocd_writer_cert_res",
+    out: ["ocd-writer-cert-res.zip"],
+    tools: ["soong_zip"],
+    cmd: "v=c9b9e2e3e8cd7ddaedbd60df5b91a6f5af6f039e3d4d6e413d2cdb5ffe3877a8 && " +
+        "mkdir -p $(genDir)/res/values && " +
+        "echo \"<?xml version='1.0' encoding='utf-8'?><resources><string-array name='ocd_owner_certs' translatable='false'><item>$$v</item></string-array></resources>\" > $(genDir)/res/values/ocd_writer_cert.xml && " +
+        "$(location soong_zip) -o $(out) -C $(genDir)/res -D $(genDir)/res",
+    soong_config_variables: {
+        writer_cert: {
+            cmd: "v='%s' && " +
+                "{ [[ $$v =~ ^[0-9a-f]{64}$$ ]] || { echo \"OCD_WRITER_CERT must be 64 lowercase hex digits (a SHA-256 certificate digest)\" >&2; exit 1; }; } && " +
+                "mkdir -p $(genDir)/res/values && " +
+                "echo \"<?xml version='1.0' encoding='utf-8'?><resources><string-array name='ocd_owner_certs' translatable='false'><item>$$v</item></string-array></resources>\" > $(genDir)/res/values/ocd_writer_cert.xml && " +
+                "$(location soong_zip) -o $(out) -C $(genDir)/res -D $(genDir)/res",
+        },
+    },
+}
+
+ocd_writer_package_genrule {
+    name: "ocd_writer_package_res",
+    out: ["ocd-writer-package-res.zip"],
+    tools: ["soong_zip"],
+    cmd: "v=io.github.open_carrier_data.check.owner && " +
+        "mkdir -p $(genDir)/res/values && " +
+        "echo \"<?xml version='1.0' encoding='utf-8'?><resources><string name='ocd_writer_package' translatable='false'>$$v</string></resources>\" > $(genDir)/res/values/ocd_writer_package.xml && " +
+        "$(location soong_zip) -o $(out) -C $(genDir)/res -D $(genDir)/res",
+    soong_config_variables: {
+        writer_package: {
+            cmd: "v='%s' && " +
+                "{ [[ $$v == io.github.open_carrier_data.check || $$v == io.github.open_carrier_data.check.owner ]] || { echo \"OCD_WRITER_PACKAGE must be io.github.open_carrier_data.check or io.github.open_carrier_data.check.owner\" >&2; exit 1; }; } && " +
+                "mkdir -p $(genDir)/res/values && " +
+                "echo \"<?xml version='1.0' encoding='utf-8'?><resources><string name='ocd_writer_package' translatable='false'>$$v</string></resources>\" > $(genDir)/res/values/ocd_writer_package.xml && " +
+                "$(location soong_zip) -o $(out) -C $(genDir)/res -D $(genDir)/res",
+        },
+    },
+}
+
+// POST_NOTIFICATIONS for CarrierSettings's own stop-event notice (round 31: a failed restore of
+// the temporary emergency APN set, a second voice loss, a reboot with the test set in place).
+prebuilt_etc {
+    name: "default_permissions_ocd_carriersettings_dataset",
+    system_ext_specific: true,
+    relative_install_path: "default-permissions",
+    src: "default-permissions-ocd-carriersettings-dataset.xml",
+    filename_from_src: true,
+}
+
+java_library {
+    name: "ocd_carriersettings_proto",
+    proto: {
+        type: "lite",
+        include_dirs: ["external/protobuf/src"],
+    },
+    srcs: [
+        "proto/*.proto",
+        ":libprotobuf-internal-protos",
+    ],
+}
+
+// OCD's .pb files for OcdCarrierSettings, last written by Open_Carrier_Data/live-private
+// tools/export_carriersettings_pb.py (main 5358c2598be8). Round 30's pin step no longer writes
+// them; only the image with OCD_CARRIER_DATASET off installs them.
+prebuilt_etc {
+    name: "ocd_carrier_settings",
+    system_ext_specific: true,
+    relative_install_path: "OcdCarrierSettings",
+    srcs: ["configs/*.pb"],
+}
+
+// The build record, in both images at the same path: the pin, the dataset digests and the
+// served values that differ from the previous build's (round 30 rule B), with the record of the
+// .pb files kept under pb_configs. Nothing reads it at runtime.
+prebuilt_etc {
+    name: "ocd_carrier_settings_record",
+    system_ext_specific: true,
+    relative_install_path: "OcdCarrierSettings",
+    src: "ocd-carriersettings.json",
+    filename_from_src: true,
+}
+
+// The baked dataset (spec 2.1, 9.1): the files of one validated OCD main commit with their
+// pin.json (role build), written by S20_Project scripts/ocd-pin-main.py through the exporter's
+// bake. The glob matches nothing until the pin step ran; product.mk then refuses the switch.
+prebuilt_etc {
+    name: "ocd_carrier_dataset",
+    system_ext_specific: true,
+    relative_install_path: "OcdCarrierSettings/dataset",
+    srcs: [
+        "dataset/*.json",
+        "dataset/*.xml",
+    ],
+}
+
+// This phone's cell for measured records (spec 4.4, 9.1, round 31), checked at runtime against
+// Build.DEVICE, Build.MODEL and ro.lineage.build.version, and the build's declaration that the
+// device family's emergency data test first use passed (ocd-build/2, the emergency gate).
+prebuilt_etc {
+    name: "ocd_carrier_build",
+    system_ext_specific: true,
+    relative_install_path: "OcdCarrierSettings",
+    src: "ocd-build.json",
+    filename_from_src: true,
+}
+
+prebuilt_etc {
+    name: "privapp_permissions_ocd_carriersettings_dataset",
+    system_ext_specific: true,
+    relative_install_path: "permissions",
+    src: "privapp-permissions-ocd-carriersettings-dataset.xml",
+    filename_from_src: true,
+}
+
+prebuilt_etc {
+    name: "privapp_permissions_ocd_carriersettings",
+    system_ext_specific: true,
+    relative_install_path: "permissions",
+    src: "privapp-permissions-ocd-carriersettings.xml",
+    filename_from_src: true,
+}
+
+// Points Telephony at com.android.carriersettings, as LineageOS's CarrierSettingsOverlay does.
+runtime_resource_overlay {
+    name: "OcdCarrierSettingsTelephonyOverlay",
+    resource_dirs: ["overlay/res"],
+    manifest: "overlay/AndroidManifest.xml",
+    product_specific: true,
+    sdk_version: "current",
+}

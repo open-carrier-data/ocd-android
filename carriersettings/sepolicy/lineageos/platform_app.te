@@ -1,0 +1,5 @@
+# OcdCarrierSettingsDataset (com.android.carriersettings, platform_app) keys the per-device
+# records by ROM line and reads it from ro.lineage.build.version, which LineageOS labels
+# custom_version_prop and lets only a few system domains read. Seen on 2026-10-25 as avc
+# denials { read } for platform_app; without it no S20 device record matches.
+get_prop(platform_app, custom_version_prop)

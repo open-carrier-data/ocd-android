@@ -1,0 +1,15 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<!--
+    SPDX-FileCopyrightText: Open Carrier Data
+    SPDX-License-Identifier: Apache-2.0
+
+    OcdCarrierSettingsDataset (OCD rule round 31): CarrierSettings posts one notification of its
+    own, for a stop event it raises itself (a failed restore of the temporary emergency APN set, a
+    reboot with that set in place, a second voice loss under the same values). Status carries the
+    same notice for the OCD app.
+-->
+<exceptions>
+    <exception package="com.android.carriersettings">
+        <permission name="android.permission.POST_NOTIFICATIONS" fixed="false"/>
+    </exception>
+</exceptions>

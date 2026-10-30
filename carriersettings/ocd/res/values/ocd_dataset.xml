@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: Open Carrier Data
+    SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <!--
+        The dataset provider's writer (OCD rule round 31, SM5): defaults for the owner build. The
+        build parameter (OCD_WRITER_CERT and OCD_WRITER_PACKAGE in vendor/extra/BoardConfigExtra.mk)
+        overlays both through the resource zips of Android.bp.
+
+        ocd_owner_certs: the writer's certificate as `apksigner verify -print-certs` prints its
+        SHA-256 digest, here the OCD owner certificate (CN=OCD Check owner build, O=Open Carrier
+        Data owner) of ocd/OcdCheckOwner.apk: round 29's ocd_layer_owner_certs, renamed, same
+        digest. Used by the writer permission's knownCerts and by the provider's caller check. A
+        digest is public; the key never leaves its owner's machine.
+    -->
+    <string-array name="ocd_owner_certs" translatable="false">
+        <item>c9b9e2e3e8cd7ddaedbd60df5b91a6f5af6f039e3d4d6e413d2cdb5ffe3877a8</item>
+    </string-array>
+    <string name="ocd_writer_package" translatable="false">io.github.open_carrier_data.check.owner</string>
+</resources>

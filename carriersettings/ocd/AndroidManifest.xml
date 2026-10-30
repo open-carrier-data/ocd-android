@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- OCD dataset: begin -->
+<!--
+    LineageOS CarrierSettings's manifest with OCD's dataset (OCD rules rounds 30 and 31;
+    vendor/extra carriersettings/ocd). Only OcdCarrierSettingsDataset uses it, when product.mk sets
+    OCD_CARRIER_DATASET. Outside the marked blocks it is LineageOS's manifest byte for byte,
+    without LineageOS's BootCompletedReceiver: that receiver reloads when Google's .pb files
+    change, and this module has neither the class nor the files; OCD's boot check replaces it
+    (check_upstream.sh). Still no INTERNET: the config source never does network I/O.
+-->
+<!-- OCD dataset: end -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+     android:versionCode="3"
+     android:versionName="1.2.0"
+     package="com.android.carriersettings">
+
+    <uses-permission android:name="android.permission.MODIFY_PHONE_STATE"/>
+    <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- OCD dataset: begin -->
+
+    <!-- UPDATE_APN_DB to system_server's ApnDbInstallReceiver (spec 7.2). -->
+    <uses-permission android:name="android.permission.UPDATE_CONFIG"/>
+    <!-- Reading content://telephony/carriers to confirm the APN install (spec 7.2, 7.5), and
+         setting each SIM's preferred APN again after it (round 31). -->
+    <uses-permission android:name="android.permission.WRITE_APN_SETTINGS"/>
+    <!-- Whether mobile data is validated after the default emergency APN test's restore (round 31). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- The stop-event notice CarrierSettings raises itself (round 31); granted by its default-permissions file. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <!--
+        The dataset's writer permission (spec 6.1): round 29's, renamed. signature|knownSigner,
+        pinned to the SHA-256 of the writer app's certificate, a build parameter since round 31
+        (SM5; the owner certificate by default): a plain signature permission would admit every
+        platform-signed app and shut out the OCD app, which has its own key. The provider also
+        checks on every call that the caller's UID is the writer package with that certificate.
+    -->
+    <permission
+        android:name="com.android.carriersettings.permission.WRITE_OCD_DATASET"
+        android:protectionLevel="signature|knownSigner"
+        android:knownCerts="@array/ocd_owner_certs" />
+
+    <queries>
+        <!-- The writer app's presence, enabled state and certificate (the caller check, and
+             round 31's way back: the app disabled serves the build's dataset). Both OCD app
+             flavors, since the writer package is a build parameter (SM5). -->
+        <package android:name="io.github.open_carrier_data.check.owner" />
+        <package android:name="io.github.open_carrier_data.check" />
+        <!-- An AOSP device tree's CarrierConfig vendor.xml override, read when the image ships one (SM3). -->
+        <package android:name="com.android.carrierconfig" />
+        <!-- The IMS stack's version for status. -->
+        <intent>
+            <action android:name="android.telephony.ims.ImsService" />
+        </intent>
+    </queries>
+
+    <!-- OCD dataset: end -->
+    <application android:allowBackup="false"
+         android:directBootAware="true">
+        <service android:name=".CarrierConfigService"
+             android:permission="android.permission.BIND_CARRIER_SERVICES"
+             android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.carrier.CarrierService"/>
+            </intent-filter>
+        </service>
+        <!-- OCD dataset: begin -->
+
+        <!--
+            The dataset's writer (spec 6.1). Exported without a provider permission, so adb can
+            read and clear; ContentProvider.call() is not covered by provider permissions anyway,
+            and OcdDataProvider checks every caller itself.
+        -->
+        <provider android:name=".ocd.OcdDataProvider"
+            android:authorities="com.android.carriersettings.ocddata"
+            android:directBootAware="true"
+            android:exported="true" />
+
+        <!-- The composed APN file for system_server's ApnDbInstallReceiver (spec 7.3); not exported. -->
+        <provider android:name=".ocd.OcdApnProvider"
+            android:authorities="com.android.carriersettings.ocdapn"
+            android:directBootAware="true"
+            android:exported="false" />
+
+        <!-- Boot (8.1), call state (8.4) and carrier config changes (8.3); all protected broadcasts. -->
+        <receiver android:name=".ocd.OcdReceiver"
+            android:directBootAware="true"
+            android:exported="true"
+            android:permission="android.permission.READ_PRIVILEGED_PHONE_STATE">
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.PHONE_STATE" />
+                <action android:name="android.telephony.action.CARRIER_CONFIG_CHANGED" />
+            </intent-filter>
+        </receiver>
+        <!-- The daily check, the retry of waiting reloads and installs, and the 15-minute check
+             of the OCD app's on/off (round 31). -->
+        <receiver android:name=".ocd.OcdAlarmReceiver"
+            android:directBootAware="true"
+            android:exported="false" />
+
+        <!-- OCD dataset: end -->
+    </application>
+</manifest>
