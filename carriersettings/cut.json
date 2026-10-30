@@ -42,6 +42,10 @@
       "status": "added",
       "why": "Checks this folder against cut.json."
     },
+    "check_path_independent.sh": {
+      "status": "added",
+      "why": "Proves the provider's code is the same under any ROM path: no internal or @JvmName declaration, and the Kotlin compiled under two Soong module names gives identical class files and classes.dex (round 37, step 3)."
+    },
     "check_upstream.sh": {
       "from": "carriersettings/check_upstream.sh",
       "blob": "840998b4c7879579be241a83d7ff3ec1aa2a4c9f",
