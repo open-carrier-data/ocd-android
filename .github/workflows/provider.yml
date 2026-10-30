@@ -2,8 +2,9 @@ name: Provider
 
 # OcdCarrierSettingsDataset, the second app of this repository (carriersettings/, OCD rule round 37,
 # item 6): its JVM tests and the writer-to-provider contract test (protocol/), the compile check of
-# its Android glue against the SDK's android.jar, its byte record of the move (cut.json), and the
-# layout that keeps Soong away from the Gradle app. The app's half of the contract runs in
+# its Android glue against the SDK's android.jar, the proof that its code does not depend on where
+# a ROM puts it, its byte record of the move (cut.json), and the layout that keeps Soong away from
+# the Gradle app. The app's half of the contract runs in
 # test.yml (testOwnerUnitTest). No Android tree and no ROM build here.
 
 on:
@@ -72,6 +73,13 @@ jobs:
 
       - name: Provider JVM tests, the contract test and the glue compile check
         run: sh carriersettings/ocd/test/run.sh "$ANDROID_HOME/platforms/android-36/android.jar"
+
+      # The dex must not depend on where a ROM puts this folder (round 37, step 3): Soong names the
+      # Kotlin module after its directory, and Kotlin bakes that name into internal members.
+      - name: Same code under any ROM path
+        run: |
+          r8=$(find "$ANDROID_HOME/build-tools" -path '*/lib/d8.jar' | sort -V | tail -n 1)
+          sh carriersettings/check_path_independent.sh "$ANDROID_HOME/platforms/android-36/android.jar" "$r8"
 
       - name: Byte record of the move from vendor/extra
         run: python3 -I carriersettings/check_cut.py

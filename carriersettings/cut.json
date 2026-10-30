@@ -3,8 +3,8 @@
   "cut": {
     "tree": "vendor/extra (the owner's ROM tree for the Galaxy S20)",
     "branch": "main",
-    "commit": "cfa8ee12ca56f7a5ad76bf06529c110e0af2e560",
-    "on_top_of": "131caf9dd934d766af7967b9b22b9afbcad16b6b"
+    "commit": "64c73cbf1698c8eed5b55d057287d308dc32acff",
+    "on_top_of": "cfa8ee12ca56f7a5ad76bf06529c110e0af2e560"
   },
   "left_in_the_rom_tree": [
     "carriersettings/AndroidManifest.xml, src/ and privapp-permissions-ocd-carriersettings.xml (the legacy .pb module OcdCarrierSettings)",
@@ -41,6 +41,10 @@
     "check_cut.py": {
       "status": "added",
       "why": "Checks this folder against cut.json."
+    },
+    "check_path_independent.sh": {
+      "status": "added",
+      "why": "Proves the provider's code is the same under any ROM path: no internal or @JvmName declaration, and the Kotlin compiled under two Soong module names gives identical class files and classes.dex (round 37, step 3)."
     },
     "check_upstream.sh": {
       "from": "carriersettings/check_upstream.sh",
@@ -95,7 +99,7 @@
     },
     "ocd/src/com/android/carriersettings/ocd/Engine.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Engine.kt",
-      "blob": "86249625274cc041b957b696ed4e48ffa332024f",
+      "blob": "3d7e51f9e749885e66b6be5eee93473b194b6336",
       "status": "equal"
     },
     "ocd/src/com/android/carriersettings/ocd/Files.kt": {

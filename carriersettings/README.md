@@ -16,7 +16,7 @@ The app is the dataset's only writer, through `content://com.android.carriersett
 
 ## Where it comes from
 
-This folder moved here in one commit from the owner's ROM tree for the Galaxy S20: **vendor/extra `main` at `cfa8ee12ca56f7a5ad76bf06529c110e0af2e560`** (the cut): round 32's APN candidate trials on top of `131caf9`, the build the S20 runs today. No history came with it.
+This folder moved here in one commit from the owner's ROM tree for the Galaxy S20: **vendor/extra `main` at `64c73cbf1698c8eed5b55d057287d308dc32acff`** (the cut): round 32's APN candidate trials (`cfa8ee1`) on top of `131caf9`, and `Engine.update` no longer `internal` (see [Soong and Gradle](#soong-and-gradle-in-one-repository)). The first cut, `cfa8ee1`, is tag `carriersettings/v1.0.0`. No history came with it.
 
 [`cut.json`](cut.json) lists every file with its git blob at the cut, and `check_cut.py` (run in CI) holds the folder to it: 41 files are byte for byte the cut's. The rest:
 
@@ -27,7 +27,7 @@ This folder moved here in one commit from the owner's ROM tree for the Galaxy S2
 | `check_build.sh`, `check_build_res.py` | read the ROM's data folder and its `device-override.json`; the writer check has no default | the S20's values and paths stay in its tree |
 | `check_upstream.sh` | the legacy module's code is compared only with `LEGACY_DIR` | that module stays in the ROM tree |
 | `ocd/test/run.sh` | runs the contract test | round 37's writer-to-provider contract |
-| added | `ocd/test/src/ProtocolContractTest.kt`, `check_cut.py`, `cut.json`, this README | |
+| added | `ocd/test/src/ProtocolContractTest.kt`, `check_cut.py`, `check_path_independent.sh`, `cut.json`, this README | |
 | moved | `sepolicy/lineageos/platform_app.te` is vendor/extra's `sepolicy/private/platform_app.te` | LineageOS only, added only by a LineageOS build |
 
 The sources (`ocd/src`), the manifest, the resources, the Telephony overlay, the protos and the permission files are unchanged. The provider's code is the code the S20 runs.
@@ -142,6 +142,7 @@ OCD's ship minimum SM1 to SM12 and the on-device checks before a build ships are
 - The Gradle app has no `Android.bp` or `Android.mk`. `app/.find-ignore` makes Soong's file finder skip `app/` entirely (`build/soong/ui/build/finder.go` prunes a directory holding `.find-ignore` or `.out-dir`). Such a marker must never sit in the root or in `carriersettings/`, or the provider disappears from the build.
 - Gradle's own output (`build/`, `.gradle/`) holds no build files Soong or Kati read.
 - CI checks this layout on every pull request.
+- The provider's code must not depend on where a ROM puts this folder. Soong names a module's Kotlin module after its directory (`vendor__extra__carriersettings__android_common__OcdCarrierSettingsDataset` against `packages__apps__OcdCarrierSettings__carriersettings__android_common__OcdCarrierSettingsDataset`), and Kotlin puts that name into the JVM name of every `internal` member. Round 37's step 3 found exactly that: the S20 built from both places differed only in `classes.dex`, through `Engine.update`. So the provider has no `internal`, `@JvmName` or `@JvmMultifileClass` declaration, and `check_path_independent.sh` (CI) compiles `ocd/src` with Soong's Kotlin flags under both module names: the classes have the same members, signatures and bytecode (their class files differ only by the module name their `kotlin.Metadata` records, which the ROM build's R8 drops), and R8 configured as Soong configures it for this app writes a byte-identical `classes.dex`. Nothing else in the module carries a path: resources and the manifest hold none, the writer zips hold only values, and the `.kotlin_module` file never reaches the APK.
 
 The `Android.bp` was checked without a ROM build: `bpfmt` from LineageOS 23.2's prebuilts parses it with no change; blueprint's parser evaluates it; the writer genrules' commands, run as Soong runs them, write the owner's values byte for byte as the cut's did, write an empty list for `none`, and fail for an unset or malformed value; and aapt2 links the resources with each.
 
@@ -152,9 +153,10 @@ The `Android.bp` was checked without a ROM build: `bpfmt` from LineageOS 23.2's 
 - `check_upstream.sh ANDROID_TREE [LEGACY_DIR]`: on a LineageOS tree, what still comes from LineageOS's CarrierSettings is LineageOS's, byte for byte, and no manifest asks for INTERNET.
 - `check_build.sh PRODUCT_OUT ROM_DATA_DIR`: the finished image (step 7 above).
 - `check_cut.py`: this folder against `cut.json`.
+- `check_path_independent.sh ANDROID_JAR [R8_JAR]`: the same code under any ROM path (above).
 
-`.github/workflows/provider.yml` runs `run.sh` with Android 36's `android.jar`, `check_cut.py` and the layout check on every pull request, on GitHub's hosted runners. The app's half of the contract runs in `test.yml` with the owner build's tests.
+`.github/workflows/provider.yml` runs `run.sh` with Android 36's `android.jar`, `check_path_independent.sh` with the SDK's R8, `check_cut.py` and the layout check on every pull request, on GitHub's hosted runners. The app's half of the contract runs in `test.yml` with the owner build's tests.
 
 ## Tags
 
-The provider has its own tags, `carriersettings/vMAJOR.MINOR.PATCH`, separate from OCD Check's versions. A ROM pins a provider tag and a validated dataset commit (SM6), never `main`, so the app's changes never reach a ROM's CarrierSettings unasked. Each tag's message names the provider protocol version and what changed. The first, `carriersettings/v1.0.0`, is the cut (protocol 3).
+The provider has its own tags, `carriersettings/vMAJOR.MINOR.PATCH`, separate from OCD Check's versions. A ROM pins a provider tag and a validated dataset commit (SM6), never `main`, so the app's changes never reach a ROM's CarrierSettings unasked. Each tag's message names the provider protocol version and what changed. `carriersettings/v1.0.0` is the first cut (`cfa8ee1`, protocol 3); `carriersettings/v1.0.1` is the cut `64c73cb`, the same code with `Engine.update` public, so that it builds byte for byte wherever a ROM puts it.
