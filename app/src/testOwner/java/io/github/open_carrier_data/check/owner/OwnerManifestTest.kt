@@ -1,6 +1,8 @@
 package io.github.open_carrier_data.check.owner
 
+import io.github.open_carrier_data.check.BuildConfig
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.w3c.dom.Document
@@ -94,6 +96,15 @@ class OwnerManifestTest {
                 assertTrue("$name unguarded", permission.isNotEmpty())
             }
         }
+    }
+
+    @Test
+    fun `the owner build is not debuggable`() {
+        // 0.4.9: it ships in the ROM as a privileged app; a debuggable one lets anyone with adb `run-as` its uid and
+        // use MODIFY_PHONE_STATE, READ_PRIVILEGED_PHONE_STATE and USE_ICC_AUTH (a SIM authentication oracle).
+        val application = elements("application").single()
+        assertFalse("android:debuggable=\"true\" in the packaged manifest", application.getAttributeNS(android, "debuggable").toBoolean())
+        assertFalse("BuildConfig.DEBUG", BuildConfig.DEBUG)
     }
 
     @Test

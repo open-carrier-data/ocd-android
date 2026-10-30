@@ -25,8 +25,8 @@ android {
         // Every build that goes onto a phone raises it (OlderAppTest): Android drops an adb-installed update of a
         // system app only for a system copy with a higher versionCode, so a ROM's newer copy of the same code
         // stays shadowed by the older update (the S20 on 2026-10-28: round 30's e5240ec ran instead of round 31's 64e559c).
-        versionCode = 12
-        versionName = "0.4.8"
+        versionCode = 13
+        versionName = "0.4.9"
         // True only in the owner build type; debug and release stay read-only.
         buildConfigField("boolean", "OWNER", "false")
         // Round 31: which tester build this is: "" (read-only), "owner", or "rom" (the build other ROMs ship).
@@ -52,9 +52,15 @@ android {
         // The owner's own build (round 25 B, the owner direction of 2026-10-19): it tests and
         // applies carrier settings on the owner's S20 through Shizuku as root. Its code is in
         // src/owner only; debug and release get the no-op hook from src/readonly. Never a
-        // release asset, a CI artifact or a store build; installed by adb only.
+        // release asset, a CI artifact or a store build. Since round 31 it ships in the owner's
+        // own ROM as a privileged system app (vendor/extra ocd/OcdCheckOwner.apk, in
+        // /system_ext/priv-app); a newer build can still go over it with adb install -r.
         create("owner") {
             initWith(getByName("debug"))
+            // 0.4.9: not debuggable, everything else as debug. A debuggable privileged app lets
+            // anyone with adb `run-as` its uid and use its privileged permissions (MODIFY_PHONE_STATE,
+            // READ_PRIVILEGED_PHONE_STATE, USE_ICC_AUTH's SIM authentication), and ART runs it slower.
+            isDebuggable = false
             applicationIdSuffix = ".owner"
             versionNameSuffix = "-owner"
             buildConfigField("boolean", "OWNER", "true")
