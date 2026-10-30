@@ -148,6 +148,48 @@ class ImsRegistrationWatch private constructor(private val mmtel: ImsMmTelManage
 }
 
 /**
+ * OCD round 42, item 3: reads this subscription's IMS registration reason once. When IMS is not
+ * registered, Android delivers the current unregistered state with its ImsReasonInfo, and, on a
+ * stack that fills SipDetails (after the ImsStack fork), the SIP response code. It keeps only the
+ * ImsReasonInfo code and the SIP response code, never the Call-ID, a URI or a phrase.
+ */
+@RequiresApi(Build.VERSION_CODES.TIRAMISU)
+object ImsReasonReader {
+    private const val TIMEOUT_MS = 4_000L
+    private val direct = Executor { it.run() }
+
+    /** registered: true/false/null (unreadable); imsReasonCode and sipResponseCode when the stack gave them. */
+    data class ImsReason(val registered: Boolean?, val imsReasonCode: Int?, val sipResponseCode: Int?)
+
+    @SuppressLint("MissingPermission")
+    suspend fun read(context: Context, subId: Int): ImsReason {
+        val mmtel = runCatching { context.getSystemService(ImsManager::class.java)?.getImsMmTelManager(subId) }.getOrNull()
+            ?: return ImsReason(null, null, null)
+        val done = CompletableDeferred<ImsReason>()
+        val callback = object : android.telephony.ims.RegistrationManager.RegistrationCallback() {
+            override fun onRegistered(attributes: android.telephony.ims.ImsRegistrationAttributes) {
+                done.complete(ImsReason(true, null, null))
+            }
+
+            override fun onUnregistered(info: android.telephony.ims.ImsReasonInfo) {
+                done.complete(ImsReason(false, info.code, null))
+            }
+
+            // The @SystemApi overload the ImsStack fork fills (round 42); it carries the SIP response code.
+            fun onUnregistered(info: android.telephony.ims.ImsReasonInfo, details: android.telephony.ims.SipDetails) {
+                done.complete(ImsReason(false, info.code, details.responseCode.takeIf { it > 0 }))
+            }
+        }
+        if (runCatching { mmtel.registerImsRegistrationCallback(direct, callback) }.isFailure) return ImsReason(null, null, null)
+        return try {
+            withTimeoutOrNull(TIMEOUT_MS) { done.await() } ?: ImsReason(null, null, null)
+        } finally {
+            runCatching { mmtel.unregisterImsRegistrationCallback(callback) }
+        }
+    }
+}
+
+/**
  * Why video calling cannot work on this build, from static checks (the
  * report of 2026-10-20): PHH IMS has no video (it masks the capability out,
  * has no video call provider and offers audio only), and Android's video gate
