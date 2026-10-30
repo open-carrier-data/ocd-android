@@ -6,7 +6,6 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.net.TelephonyNetworkSpecifier
 import android.os.Build
 import android.telephony.ims.ImsManager
 import androidx.annotation.RequiresApi
@@ -74,7 +73,7 @@ object OwnerProbe {
         val request = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .setNetworkSpecifier(TelephonyNetworkSpecifier.Builder().setSubscriptionId(sim.subId).build())
+            .forSubscription(sim.subId)
             .build()
         val available = CompletableDeferred<Network?>()
         val callback = object : ConnectivityManager.NetworkCallback() {

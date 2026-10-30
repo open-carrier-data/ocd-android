@@ -29,13 +29,17 @@ import java.util.concurrent.Executor
  * that network, not the default one), whether a VPN or Data Saver is on, and the reason mobile data
  * is off. Never an address, an APN credential, a Private DNS hostname or an identifier. It sends
  * no traffic.
+ *
+ * The read itself needs Android 12 (API 31: TelephonyCallback, isDataEnabledForReason) and is
+ * marked so; [privateDnsBroken] needs no particular version, so the probe ladder reads the bit on
+ * any Android it runs on.
  */
-@RequiresApi(Build.VERSION_CODES.S)
 object OwnerPassiveRead {
     private const val TIMEOUT_MS = 3_000L
     private val direct = Executor { it.run() }
 
     /** Reads the fail causes and the user-plane state for [subId]. Guarded: a missing read is a null, never a throw. */
+    @RequiresApi(Build.VERSION_CODES.S)
     @SuppressLint("MissingPermission")
     suspend fun read(context: Context, subId: Int, roaming: Boolean, account: AccountState = AccountState.UNKNOWN, balance: String? = null, mmsEnded: Boolean = false): DiagnosisInputs {
         val tm = runCatching { context.getSystemService(TelephonyManager::class.java)?.createForSubscriptionId(subId) }.getOrNull()
@@ -70,6 +74,7 @@ object OwnerPassiveRead {
      * Android delivers the current precise state of each connection on registration; a short window
      * collects them.
      */
+    @RequiresApi(Build.VERSION_CODES.S)
     @SuppressLint("MissingPermission")
     private suspend fun preciseCauses(tm: TelephonyManager): Causes {
         val seen = java.util.concurrent.ConcurrentHashMap<String, Int>()
@@ -95,6 +100,7 @@ object OwnerPassiveRead {
         return Causes(seen["default"], seen["ims"], seen["mms"], seen["iwlan"])
     }
 
+    @RequiresApi(Build.VERSION_CODES.R)
     @SuppressLint("MissingPermission")
     private fun rejectCause(tm: TelephonyManager): Int? = runCatching {
         val ss: ServiceState = tm.serviceState ?: return null
@@ -115,6 +121,7 @@ object OwnerPassiveRead {
      * single cellular internet network. Null when none is up (mobile data off, no service) or when it
      * cannot be told which SIM a network belongs to.
      */
+    @RequiresApi(Build.VERSION_CODES.R)
     fun cellularNetwork(context: Context, subId: Int): Pair<Network, NetworkCapabilities>? = runCatching {
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
         @Suppress("DEPRECATION")
@@ -142,13 +149,15 @@ object OwnerPassiveRead {
      * NetworkCapabilities.isPrivateDnsBroken() of the given (cellular) network's capabilities. It is
      * @SystemApi; the app is on the hidden-API allowlist, so read it by reflection. NetworkMonitor
      * sets it only once the HTTP probes passed, so on a silently blocked network it stays false; the
-     * ladder's D2c asks the Private DNS server itself.
+     * ladder's D2c asks the Private DNS server itself. Reflection needs no API level: where the
+     * method is missing it reads false, and D2c's own query still decides.
      */
     fun privateDnsBroken(caps: NetworkCapabilities): Boolean = runCatching {
         NetworkCapabilities::class.java.getMethod("isPrivateDnsBroken").invoke(caps) as? Boolean ?: false
     }.getOrDefault(false)
 
     /** The first data-off reason (user/policy/carrier/thermal), or null when mobile data is on for all reasons. */
+    @RequiresApi(Build.VERSION_CODES.S)
     @SuppressLint("MissingPermission")
     private fun dataOffReason(tm: TelephonyManager?): String? {
         tm ?: return null

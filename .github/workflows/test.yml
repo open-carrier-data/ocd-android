@@ -42,13 +42,20 @@ jobs:
             yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "${missing[@]}" > /dev/null
           fi
 
-      - name: Unit tests, lint and the debug APK
-        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+      - name: Unit tests and the debug APK
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
 
       # The release build's read-only proof (ReadOnlyBuildTest), the owner build's JVM tests and
       # the ROM build's (round 31). The owner APK itself is never built or uploaded here (round 25 OB1).
       - name: Release, owner and ROM unit tests
         run: ./gradlew --no-daemon testReleaseUnitTest testOwnerUnitTest testRomUnitTest
+
+      # Every build type that ships: debug and release (the read-only app), owner (the owner's ROM)
+      # and rom (other ROMs, Android 10 to 15 on minSdk 29). The owner code's newer API calls are
+      # seen only by lintOwner and lintRom. Lint packages and signs nothing, so it needs no owner key
+      # and passes the round 25 OB1 block.
+      - name: Lint of debug, release, owner and rom
+        run: ./gradlew --no-daemon lintDebug lintRelease lintOwner lintRom
 
       - name: Bundle script tests
         run: python3 -m unittest discover -s tools -p 'test_*.py'

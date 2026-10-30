@@ -2,6 +2,8 @@ package io.github.open_carrier_data.check.owner
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.net.NetworkRequest
+import android.net.TelephonyNetworkSpecifier
 import android.os.Build
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
@@ -148,12 +150,32 @@ class ImsRegistrationWatch private constructor(private val mmtel: ImsMmTelManage
 }
 
 /**
+ * Pins a cellular network request to the SIM [subId], so the probe ladder ([OwnerProbe]) and the MMS
+ * check ([OwnerMms]) reach that SIM's network, never the default data SIM's. Android 11 (API 30) and
+ * newer name the SIM with a TelephonyNetworkSpecifier. Android 10 takes the subscription ID as a
+ * string specifier, which its telephony stack matches by that ID (AOSP's own MmsService on Android
+ * 10 asks for its MMS network this way). Call it after the cellular transport is added: a specifier
+ * needs exactly one transport.
+ */
+@Suppress("DEPRECATION") // setNetworkSpecifier(String) is Android 10's way to name a SIM; deprecated only from Android 11.
+fun NetworkRequest.Builder.forSubscription(subId: Int): NetworkRequest.Builder =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        setNetworkSpecifier(TelephonyNetworkSpecifier.Builder().setSubscriptionId(subId).build())
+    } else {
+        setNetworkSpecifier(subId.toString())
+    }
+
+/**
  * OCD round 42, item 3: reads this subscription's IMS registration reason once. When IMS is not
  * registered, Android delivers the current unregistered state with its ImsReasonInfo, and, on a
  * stack that fills SipDetails (after the ImsStack fork), the SIP response code. It keeps only the
  * ImsReasonInfo code and the SIP response code, never the Call-ID, a URI or a phrase.
+ *
+ * It needs Android 12 (API 31): the registered state arrives through
+ * onRegistered(ImsRegistrationAttributes), new in 31; the rest is API 30. Its one caller, the
+ * verdict (OwnerWork.diagnoseCauses), runs from Android 12 on.
  */
-@RequiresApi(Build.VERSION_CODES.TIRAMISU)
+@RequiresApi(Build.VERSION_CODES.S)
 object ImsReasonReader {
     private const val TIMEOUT_MS = 4_000L
     private val direct = Executor { it.run() }
@@ -176,6 +198,8 @@ object ImsReasonReader {
             }
 
             // The @SystemApi overload the ImsStack fork fills (round 42); it carries the SIP response code.
+            // Android adds it, and SipDetails, in 14 (API 34), and only the framework calls it, so it never runs earlier.
+            @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
             fun onUnregistered(info: android.telephony.ims.ImsReasonInfo, details: android.telephony.ims.SipDetails) {
                 done.complete(ImsReason(false, info.code, details.responseCode.takeIf { it > 0 }))
             }
