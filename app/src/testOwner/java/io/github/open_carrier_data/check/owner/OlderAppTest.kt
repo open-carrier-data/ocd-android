@@ -39,6 +39,7 @@ class OlderAppTest {
         "e5240ec (#32, round 30, protocol 2; the update on the S20 since 2026-10-26)" to 4,
         "64e559c (#33, round 31, protocol 3; in ROM 20261028)" to 4,
         "c66a75c (#34, 0.4.1; vendor/extra main and the update on the S20 since 2026-10-28)" to 5,
+        "5576087 (#35, 0.4.2; vendor/extra r37-provider-from-ocd-android, in build B 24.0-20261030)" to 6,
     )
 
     @Test
