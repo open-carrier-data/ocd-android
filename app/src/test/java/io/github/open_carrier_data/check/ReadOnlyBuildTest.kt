@@ -59,7 +59,8 @@ class ReadOnlyBuildTest {
             assertFalse("${file.name} imports owner code", Regex("import io\\.github\\.open_carrier_data\\.check\\.owner\\.").containsMatchIn(text))
         }
         val main = File("src/main/AndroidManifest.xml").readText()
-        assertFalse("android.permission.INTERNET" in main)
+        // Round 32 U1: INTERNET only for the data pull (AllowlistTest checks who may open a connection).
+        assertTrue("android.permission.INTERNET" in main)
         assertFalse(".owner." in main)
     }
 }

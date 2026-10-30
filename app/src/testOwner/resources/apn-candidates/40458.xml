@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<apns version="8">
+  <apn apn="bsnlnet" authtype="1" carrier="bsnlnet" mcc="404" mnc="58" protocol="IPV4V6" roaming_protocol="IPV4V6" type="default,supl" />
+  <apn apn="bsnlnet" carrier="bsnlnet" carrier_id="1549" mcc="404" mnc="58" protocol="IPV4V6" roaming_protocol="IPV4V6" type="default,ia,supl" />
+  <apn apn="bsnlnet" carrier="BSNL" mcc="404" mnc="58" password="MSISDN" type="default,supl" user="MSISDN" />
+  <apn apn="bsnllive" carrier="bsnllive" carrier_id="1549" mcc="404" mnc="58" port="8080" protocol="IPV4V6" proxy="10.220.67.131" roaming_protocol="IPV4V6" type="default,ia,supl" />
+  <apn apn="bsnllive" carrier="bsnllive" mcc="404" mnc="58" port="8080" protocol="IPV4V6" proxy="10.220.67.131" type="default,supl" />
+  <apn apn="WAPSOUTH.CELLONE.IN" carrier="BSNL WAP" mcc="404" mnc="58" password="PPP123" port="9401" proxy="10.31.54.2" type="default,supl" user="PPP" />
+  <apn apn="bsnlmms" carrier="bsnlmms" carrier_id="1549" mcc="404" mmsc="http://bsnlmmsc.in:8514" mmsport="8080" mmsproxy="10.210.10.11" mnc="58" protocol="IPV4V6" roaming_protocol="IPV4V6" type="mms" />
+  <apn apn="bsnlmms" carrier="bsnlmms" mcc="404" mmsc="http://bsnlmmsc.in:8514" mmsport="8080" mmsproxy="10.210.10.11" mnc="58" protocol="IPV4V6" type="mms" />
+  <apn apn="bsnlmms" carrier="CelloneWest_mms" mcc="404" mmsc="http://bsnlmmsc.in" mmsport="8080" mmsproxy="10.210.10.11" mnc="58" protocol="IPV4V6" roaming_protocol="IPV4V6" type="mms" />
+  <apn apn="bsnlmms" carrier="BSNL-mms" mcc="404" mmsc="http://bsnlmmsc.in:8514" mmsport="8080" mmsproxy="10.210.10.11" mnc="58" port="8080" proxy="10.210.10.11" type="mms" />
+  <apn apn="mmssouth.cellone.in" carrier="BSNL MMS" mcc="404" mmsc="http://10.7.236.11:8514" mmsport="8080" mmsproxy="10.7.236.11" mnc="58" password="mmsc" type="mms" user="MSISDN" />
+  <apn apn="ims" carrier="IMS" mcc="404" mnc="58" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" />
+  <apn apn="ims" bearer_bitmask="14|20" carrier="IMS" mcc="404" mnc="58" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" user_visible="false" />
+</apns>

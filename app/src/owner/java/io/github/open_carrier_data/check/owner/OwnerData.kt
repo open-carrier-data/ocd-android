@@ -26,6 +26,9 @@ import io.github.open_carrier_data.check.owner.core.ObservedReports
 import io.github.open_carrier_data.check.owner.core.ObservedSource
 import io.github.open_carrier_data.check.owner.core.ObservedStore
 import io.github.open_carrier_data.check.owner.core.OcdApnRow
+import io.github.open_carrier_data.check.owner.core.OperatorsData
+import io.github.open_carrier_data.check.owner.core.OperatorsPull
+import io.github.open_carrier_data.check.core.OperatorFiles
 import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.DataException
@@ -143,6 +146,12 @@ class OwnerData(private val context: Context, private val store: StateStore) {
         runCatching { GZIPInputStream(File(dir, "bundle.json.gz").inputStream()).use { OcdBundle.parse(it.readBytes().decodeToString()) } }.getOrNull()
     } ?: bundled()
 
+    /** Round 32: the operator statements and the identity table of the pinned commit; null before the first pull with them. */
+    fun operators(): OperatorsData? {
+        val pin = store.read().pin ?: return null
+        return OperatorsPull.read(currentDir(), pin.commit)
+    }
+
     /** OCD's APN rows for the SIM's network code, from the pinned commit's apns-conf.xml. */
     fun apnRows(sim: OwnerSim): List<OcdApnRow> {
         val dir = currentDir() ?: return emptyList()
@@ -224,7 +233,9 @@ class OwnerData(private val context: Context, private val store: StateStore) {
         val line = when (result) {
             is MainPull.Current -> {
                 partial.deleteRecursively()
-                "up to date: ${current?.label ?: result.commit.take(12)}" + passedOver(result.passedOver)
+                // A pin taken before the app read the operator files gets them now, at the same commit.
+                val operators = currentDir()?.takeIf { operators() == null }?.let { dir -> pullOperators(current?.commit ?: result.commit, dir) }
+                "up to date: ${current?.label ?: result.commit.take(12)}" + passedOver(result.passedOver) + (operators?.let { "; $it" } ?: "")
             }
             is MainPull.Kept -> {
                 partial.deleteRecursively()
@@ -238,12 +249,15 @@ class OwnerData(private val context: Context, private val store: StateStore) {
                 // The big JSON files are folded into the bundle; apns-conf.xml and metadata.json stay.
                 File(partial, "lookup.json").delete()
                 File(partial, "carrier-variants.json").delete()
+                // Round 32: the operator statements and the identity table of the same commit; their own refusal keeps the pin.
+                val operators = pullOperators(pin.commit, partial)
                 val final = File(root, pin.commit)
                 final.deleteRecursively()
                 if (!partial.renameTo(final)) throw IOException("could not move the pinned data into place")
                 val text = "pinned ${pin.label}: ${Validation.PASSED.plain} (check run ${pin.checkRun}); " +
                     "${pin.sha256.size} files read at the commit, data digest ${pin.dataDigest.take(19)} the same in metadata.json, carrier-variants.json and apns-conf.xml, " +
-                    "schema_version known; ${pin.profiles} profiles" + (pin.previous?.let { "; previous pin ${it.take(12)}" } ?: "") + passedOver(result.passedOver)
+                    "schema_version known; ${pin.profiles} profiles" + (pin.previous?.let { "; previous pin ${it.take(12)}" } ?: "") + passedOver(result.passedOver) +
+                    (operators?.let { "; $it" } ?: "")
                 store.update { s -> s.copy(pin = pin).logged(now, "pull", text) }
                 root.listFiles()?.filter { it.name != pin.commit }?.forEach { it.deleteRecursively() }
                 // The tagged release of the builds before round 29 is no longer read.
@@ -255,7 +269,21 @@ class OwnerData(private val context: Context, private val store: StateStore) {
         return line
     }
 
+    /**
+     * The operator files of [commit] into [dir] (round 32): the line for the log, or null when the commit has none.
+     * A refusal keeps the main pin; the statements are missing then and the bundled MMS-ended list stands alone.
+     */
+    private fun pullOperators(commit: String, dir: File): String? = try {
+        OperatorsPull.pull({ url, max -> get(url, maxBytes = max) }, commit, dir)?.let { OperatorsPull.line(it) }
+    } catch (e: Exception) {
+        for (name in OperatorFiles.FILES.keys) File(dir, name).delete()
+        "operator statements refused or failed: ${e.javaClass.simpleName}: ${e.message?.take(160)}"
+    }
+
     private fun passedOver(commits: List<String>): String = if (commits.isEmpty()) "" else "; newer commits passed over: ${commits.joinToString()}"
+
+    /** The pull's GET (GitHub's hosts only, no identifier), for the APN candidates' reads of the installed commit. */
+    fun fetch(): io.github.open_carrier_data.check.owner.core.Fetch = io.github.open_carrier_data.check.owner.core.Fetch { url, max -> get(url, max) }
 
     private fun get(url: String, maxBytes: Long): ByteArray {
         var target = URL(url)

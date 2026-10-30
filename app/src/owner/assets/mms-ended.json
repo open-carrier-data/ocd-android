@@ -1,33 +1,11 @@
 {
-  "description": "Networks recorded with MMS ended at high confidence: the owner build never tests MMS there and says \"MMS: not checked, the network no longer offers MMS\" (round 26 rule change 6). Everywhere else MMS stays a test target, checked only by a silent MMSC reachability probe, never by sending an MMS.",
-  "source": "OCD private repository, research/rule-decisions-20261006/mms-operator-ends-20261009.json (researched 2026-10-09), the rows with mms_status ended and confidence high",
+  "description": "The shrink-only fallback of OCD's published MMS-ended list (rule round 32, MMS override rule 6): the networks whose MMS end OCD recorded on 2026-10-09 and that generated/operators/statements.json does not cover yet, because no operator page of theirs could be admitted. The owner build reads the published mms_ended_networks of its pinned commit first and this file only for networks the published list does not name; it never tests MMS on either (round 26 rule change 6). A network leaves this file once the published list covers it, and the file goes once it is empty. Everywhere else MMS stays a test target, checked only by a silent MMSC reachability probe, never by sending an MMS.",
+  "source": "OCD private repository, research/rule-decisions-20261006/mms-operator-ends-20261009.json (researched 2026-10-09), the rows with mms_status ended and confidence high, shrunk on 2026-10-29 by the networks the published list covers (26202, 26203, 26207, 26223, 22802, 22803, 27001; private #230)",
   "networks": [
-    {
-      "operator": "Vodafone Germany",
-      "mccmnc": [
-        "26202"
-      ],
-      "ended": "2023-01-17"
-    },
     {
       "operator": "Telekom Deutschland",
       "mccmnc": [
         "26201"
-      ],
-      "ended": "2026-06-30"
-    },
-    {
-      "operator": "Telefonica Germany / O2",
-      "mccmnc": [
-        "26203",
-        "26207"
-      ],
-      "ended": "2026-06-30"
-    },
-    {
-      "operator": "1&1 Mobilfunk",
-      "mccmnc": [
-        "26223"
       ],
       "ended": "2026-06-30"
     },
@@ -37,27 +15,6 @@
         "22801"
       ],
       "ended": "2023-01-10"
-    },
-    {
-      "operator": "Salt",
-      "mccmnc": [
-        "22803"
-      ],
-      "ended": "2023-01-10"
-    },
-    {
-      "operator": "Sunrise",
-      "mccmnc": [
-        "22802"
-      ],
-      "ended": "2024-03-17"
-    },
-    {
-      "operator": "POST Luxembourg",
-      "mccmnc": [
-        "27001"
-      ],
-      "ended": "2024-09-29"
     }
   ]
 }

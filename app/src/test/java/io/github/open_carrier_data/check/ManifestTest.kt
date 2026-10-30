@@ -13,8 +13,10 @@ import java.util.Properties
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
- * The app asks for exactly two Android permissions and no INTERNET, in its
- * own manifest and in the merged manifest the build packages. The merged
+ * The app asks for exactly three Android permissions, in its own manifest and
+ * in the merged manifest the build packages. INTERNET came with OCD's round 32
+ * (U1): only the data pull the person taps uses it, to GitHub's hosts for
+ * OCD's public repository ([PublicData.allowed], AllowlistTest). The merged
  * manifest also holds Shizuku's own API_V23 permission from its provider
  * library: the Shizuku server finds client apps by that requested
  * permission and sends them its binder, so without it the deep check never
@@ -28,7 +30,7 @@ class ManifestTest {
 
     private val android = "http://schemas.android.com/apk/res/android"
     private val tools = "http://schemas.android.com/tools"
-    private val allowed = setOf("android.permission.READ_PHONE_STATE", "android.permission.ACCESS_NETWORK_STATE")
+    private val allowed = setOf("android.permission.READ_PHONE_STATE", "android.permission.ACCESS_NETWORK_STATE", "android.permission.INTERNET")
 
     private fun parse(file: File): Document =
         DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder().parse(file)
@@ -53,10 +55,12 @@ class ManifestTest {
     }
 
     @Test
-    fun `only READ_PHONE_STATE and ACCESS_NETWORK_STATE, never INTERNET`() {
+    fun `only READ_PHONE_STATE, ACCESS_NETWORK_STATE and INTERNET for the data pull`() {
         val requested = requested(parse(File("src/main/AndroidManifest.xml")))
         assertEquals(allowed, requested)
-        assertFalse("android.permission.INTERNET" in requested)
+        for (never in listOf("android.permission.ACCESS_FINE_LOCATION", "android.permission.READ_SMS", "android.permission.CALL_PHONE", "android.permission.QUERY_ALL_PACKAGES")) {
+            assertFalse(never in requested)
+        }
     }
 
     @Test
@@ -64,7 +68,6 @@ class ManifestTest {
         val document = parse(merged)
         val requested = requested(document)
         assertEquals(allowed + "moe.shizuku.manager.permission.API_V23", requested)
-        assertFalse("android.permission.INTERNET" in requested)
         assertEquals(emptyList<Element>(), document.elements("permission"))
     }
 

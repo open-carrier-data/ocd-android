@@ -21,6 +21,8 @@ import android.telephony.SubscriptionManager
 import io.github.open_carrier_data.check.core.ImsService
 import io.github.open_carrier_data.check.owner.core.InboundSms
 import io.github.open_carrier_data.check.owner.core.MmsCheck
+import io.github.open_carrier_data.check.core.MmsEndedEntry
+import io.github.open_carrier_data.check.core.MmsEndedList
 import io.github.open_carrier_data.check.owner.core.MmsEndedFile
 import io.github.open_carrier_data.check.owner.core.MmsProbe
 import io.github.open_carrier_data.check.owner.core.MmsRequest
@@ -48,9 +50,17 @@ import java.time.ZoneId
  * an SMS). Neither runs in the read-only builds.
  */
 object OwnerMms {
-    fun ended(context: Context): MmsEndedFile? = runCatching {
+    /** The bundled mms-ended.json: only the networks OCD's published list does not cover yet (round 32, it only shrinks). */
+    fun bundled(context: Context): MmsEndedFile? = runCatching {
         context.assets.open(MmsProbe.ASSET_NAME).use { MmsProbe.parse(it.readBytes().decodeToString()) }
     }.getOrNull()
+
+    /**
+     * The MMS-ended networks (X6, round 32 MMS override rule 6): OCD's published list at the pinned commit
+     * (generated/operators/statements.json), then the bundled file's networks it does not cover yet.
+     */
+    fun ended(context: Context): List<MmsEndedEntry> =
+        MmsEndedList.of(OwnerData(context, FileStateStore(context)).operators()?.statements, MmsProbe.bundled(bundled(context)))
 
     /** The phone's own MMS APN row for the SIM: its MMSC, MMS proxy and port. Read here only, never stored. */
     private fun mmsRow(context: Context, sim: OwnerSim): Triple<String?, String?, Int?>? = runCatching {
@@ -78,7 +88,7 @@ object OwnerMms {
     @SuppressLint("MissingPermission")
     suspend fun check(context: Context, phone: OwnerPhone, sim: OwnerSim): MmsCheck {
         val now = System.currentTimeMillis()
-        MmsProbe.ended(ended(context), sim.identity.mccmnc)?.let { return MmsCheck(sim.key, now, "ended", operator = it.operator, ended = it.ended) }
+        MmsProbe.ended(ended(context), sim.identity.mccmnc)?.let { return MmsCheck(sim.key, now, "ended", operator = it.operator, ended = it.lastDay ?: it.firstDayWithout) }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return MmsCheck(sim.key, now, "refused_android_too_old")
         if (QuietReader.roaming(context) != false) return MmsCheck(sim.key, now, "refused_roaming")
         if (phone.mobileData(sim.subId).enabled != true) return MmsCheck(sim.key, now, "refused_mobile_data_off")

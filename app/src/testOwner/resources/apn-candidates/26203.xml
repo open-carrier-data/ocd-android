@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<apns version="8">
+  <apn apn="internet" carrier="O2 DE Internet" carrier_id="1456" mcc="262" mmsc="http://10.81.0.7:8002" mmsport="8080" mmsproxy="82.113.100.5" mnc="03" protocol="IPV4V6" roaming_protocol="IPV4V6" type="default,mms,supl" />
+  <apn apn="internet" authtype="1" carrier="internet" mcc="262" mmsc="http://10.81.0.7:8002" mmsport="8080" mmsproxy="82.113.100.5" mnc="03" protocol="IPV4V6" roaming_protocol="IPV4V6" type="default,mms,supl,xcap" />
+  <apn apn="internet" carrier="internet" mcc="262" mmsc="http://10.81.0.7:8002" mmsport="8080" mmsproxy="82.113.100.5" mnc="03" protocol="IPV4V6" roaming_protocol="IPV4V6" type="default,mms,supl" />
+  <apn apn="internet" carrier="internet" mcc="262" mmsc="http://10.81.0.7:8002" mmsport="8080" mmsproxy="82.113.100.5" mnc="03" type="default,mms,supl" />
+  <apn apn="internet" authtype="1" carrier="O2 Internet" mcc="262" mmsc="http://10.81.0.7:8002" mmsport="8080" mmsproxy="82.113.100.5" mnc="03" protocol="IP" roaming_protocol="IP" type="default,mms,supl" />
+  <apn apn="internet" authtype="1" carrier="o2 Internet" carrier_enabled="true" mcc="262" mnc="03" protocol="IPV4V6" roaming_protocol="IPV4V6" type="default,supl" />
+  <apn apn="internet" carrier="internet" mcc="262" mnc="03" protocol="IPV4V6" roaming_protocol="IPV4V6" type="default,dun" />
+  <apn apn="internet" carrier="o2 Internet" mcc="262" mnc="03" type="default" />
+  <apn apn="internet.eplus.de" authtype="1" carrier="E-Plus Internet" carrier_id="1453" mcc="262" mnc="03" password="internet" type="default,supl" user="eplus" />
+  <apn apn="internet.eplus.de" authtype="1" carrier="internet.eplus.de" mcc="262" mnc="03" password="internet" type="default,supl" user="eplus" />
+  <apn apn="mms.eplus.de" authtype="1" carrier="E-Plus MMS" carrier_id="1453" mcc="262" mmsc="http://mms/eplus/" mmsport="5080" mmsproxy="212.23.97.153" mnc="03" password="eplus" type="mms" user="mms" />
+  <apn apn="mms.eplus.de" authtype="1" carrier="mms.eplus.de" mcc="262" mmsc="http://mms/eplus/" mmsport="5080" mmsproxy="212.23.97.153" mnc="03" password="eplus" type="mms" user="mms" />
+  <apn apn="ims" carrier="o2 IMS" mcc="262" mnc="03" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" />
+  <apn apn="ims" authtype="1" carrier="o2 IMS" carrier_enabled="true" mcc="262" mnc="03" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" />
+  <apn apn="ims" carrier="o2 IMS" mcc="262" mnc="03" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" user_visible="false" />
+  <apn apn="ims" bearer_bitmask="14|18|20" carrier="ims" mcc="262" mnc="03" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" user_visible="false" />
+  <apn apn="ims" carrier="O2 DE IMS" carrier_id="1456" mcc="262" mnc="03" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" user_visible="false" />
+  <apn apn="ims" carrier="o2 IMS" mcc="262" mnc="03" protocol="IPV4V6" type="ims" />
+  <apn apn="ims" carrier="O2 DE IMS" mcc="262" mnc="03" protocol="IP" roaming_protocol="IP" type="ims" />
+  <apn apn="ims" carrier="o2-de" mcc="262" mnc="03" protocol="IPV6" type="ims" />
+  <apn apn="internet" carrier="o2 Internet" mcc="262" mnc="03" mvno_match_data="010301" mvno_type="gid" protocol="IPV4V6" roaming_protocol="IPV4V6" type="default,xcap" />
+  <apn apn="internet" carrier="o2 MMS" mcc="262" mmsc="http://10.81.0.7:8002" mmsport="8080" mmsproxy="82.113.100.5" mnc="03" mvno_match_data="010301" mvno_type="gid" protocol="IPV4V6" roaming_protocol="IPV4V6" type="mms" />
+  <apn apn="ims" carrier="o2 IMS" mcc="262" mnc="03" mvno_match_data="010301" mvno_type="gid" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" />
+  <apn apn="internet" carrier="o2 Internet" mcc="262" mnc="03" mvno_match_data="010901" mvno_type="gid" protocol="IPV4V6" roaming_protocol="IPV4V6" type="default,xcap" />
+  <apn apn="internet" carrier="o2 MMS" mcc="262" mmsc="http://10.81.0.7:8002" mmsport="8080" mmsproxy="82.113.100.5" mnc="03" mvno_match_data="010901" mvno_type="gid" protocol="IPV4V6" roaming_protocol="IPV4V6" type="mms" />
+  <apn apn="ims" carrier="o2 IMS" mcc="262" mnc="03" mvno_match_data="010901" mvno_type="gid" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" />
+  <apn apn="internet" carrier="1and1 Internet" carrier_id="2536" mcc="262" mmsc="http://10.81.0.7:8002" mmsport="8080" mmsproxy="82.113.100.5" mnc="03" mvno_match_data="26203293" mvno_type="imsi" type="default,ia,mms,supl" />
+  <apn apn="ims" carrier="1and1 IMS" carrier_id="2536" mcc="262" mnc="03" mvno_match_data="26203293" mvno_type="imsi" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" user_visible="false" />
+  <apn apn="internet" carrier="1and1 Internet" carrier_id="2536" mcc="262" mmsc="http://10.81.0.7:8002" mmsport="8080" mmsproxy="82.113.100.5" mnc="03" mvno_match_data="26203330" mvno_type="imsi" type="default,ia,mms,supl" />
+  <apn apn="ims" carrier="1and1 IMS" carrier_id="2536" mcc="262" mnc="03" mvno_match_data="26203330" mvno_type="imsi" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" user_visible="false" />
+  <apn apn="internet.mvno.mobi" authtype="1" carrier="Enreach DE" mcc="262" mnc="03" mvno_match_data="26203482" mvno_type="imsi" type="default,dun,supl" />
+  <apn apn="ims" bearer_bitmask="14|20" carrier="IMS" mcc="262" mnc="03" mvno_match_data="26203482" mvno_type="imsi" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" user_visible="false" />
+  <apn apn="internet.mvno.mobi" authtype="1" carrier="MVNO DE" mcc="262" mnc="03" mvno_match_data="26203483" mvno_type="imsi" password="mvno" type="default,supl" user="mvno" />
+  <apn apn="internet.mvno.mobi" authtype="1" carrier="Enreach DE" mcc="262" mnc="03" mvno_match_data="26203483" mvno_type="imsi" type="default,dun,supl" />
+  <apn apn="internet.mvno.mobi" authtype="1" carrier="MVNO DE" carrier_id="2461" mcc="262" mnc="03" mvno_match_data="26203483" mvno_type="imsi" password="mvno" type="default,ia,supl" user="mvno" />
+  <apn apn="ims" bearer_bitmask="14|20" carrier="IMS" mcc="262" mnc="03" mvno_match_data="26203483" mvno_type="imsi" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" user_visible="false" />
+</apns>

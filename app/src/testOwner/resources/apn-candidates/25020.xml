@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<apns version="8">
+  <apn apn="internet.tele2.ru" authtype="1" carrier="internet.tele2.ru" mcc="250" mnc="20" protocol="IPV4V6" roaming_protocol="IPV4V6" type="default" />
+  <apn apn="internet.tele2.ru" carrier="TELE2 Internet" carrier_id="1028" mcc="250" mnc="20" type="default,ia,supl" />
+  <apn apn="internet" carrier="T2 Internet" mcc="250" mnc="20" protocol="IPV4V6" roaming_protocol="IPV4V6" type="default" />
+  <apn apn="mms.tele2.ru" authtype="1" carrier="mms.tele2.ru" mcc="250" mmsc="http://mmsc.tele2.ru" mmsport="8080" mmsproxy="193.12.40.65" mnc="20" type="mms" />
+  <apn apn="mms.tele2.ru" carrier="TELE2 MMS" carrier_id="1028" mcc="250" mmsc="http://mmsc.tele2.ru" mmsport="8080" mmsproxy="193.12.40.65" mnc="20" type="mms" />
+  <apn apn="mms" carrier="T2 MMS" mcc="250" mmsc="http://mms" mmsport="8080" mmsproxy="193.12.40.65" mnc="20" type="mms" />
+  <apn apn="IMS" carrier="T2 IMS" mcc="250" mnc="20" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" />
+  <apn apn="ims" carrier="ims" mcc="250" mnc="20" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" />
+  <apn apn="ims.tele2.ru" carrier="TELE2 IMS" mcc="250" mnc="20" protocol="IPV4V6" type="ims" />
+  <apn apn="internet.tele2.ru" carrier="Tele2" mcc="250" mnc="20" type="dun" />
+  <apn apn="internet.tele2.ru" authtype="1" carrier="internet.tele2.ru" mcc="250" mnc="20" type="supl" />
+  <apn apn="HOS" carrier="T2 XCAP" mcc="250" mnc="20" protocol="IPV4V6" roaming_protocol="IPV4V6" type="xcap" />
+  <apn apn="hos" carrier="hos" mcc="250" mnc="20" protocol="IPV4V6" roaming_protocol="IPV4V6" type="xcap" />
+  <apn apn="internet.sberbank-tele.com" carrier="Sberbank" mcc="250" mnc="20" mvno_match_data="FA3207" mvno_type="gid" type="default,dun" />
+  <apn apn="sberbank" carrier="SberMobile Internet" mcc="250" mnc="20" mvno_match_data="FA3207FFFFFFFFFFFFFF" mvno_type="gid" type="default" />
+  <apn apn="internet.sberbank-tele.com" carrier="internet.sberbank-tele.com" mcc="250" mnc="20" mvno_match_data="FA3207FFFFFFFFFFFFFF" mvno_type="gid" type="default" />
+  <apn apn="mms.sberbank-tele.com" carrier="mms.sberbank-tele.com" mcc="250" mmsc="http://mmsc" mmsport="8080" mmsproxy="10.77.36.100" mnc="20" mvno_match_data="FA3207FFFFFFFFFFFFFF" mvno_type="gid" type="mms" />
+  <apn apn="ims" carrier="ims" mcc="250" mnc="20" mvno_match_data="FA3207FFFFFFFFFFFFFF" mvno_type="gid" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" />
+  <apn apn="internet.rtk.ru" carrier="Rostelecom Internet" mcc="250" mnc="20" mvno_match_data="ROSTELECOM" mvno_type="spn" protocol="IPV4V6" type="default" />
+  <apn apn="mms.rtk.ru" carrier="Rostelecom MMS" mcc="250" mmsc="http://mmsc.rtk.ru" mmsport="8080" mmsproxy="193.12.40.65" mnc="20" mvno_match_data="ROSTELECOM" mvno_type="spn" type="mms" />
+  <apn apn="ims" carrier="ims" mcc="250" mnc="20" mvno_match_data="ROSTELECOM" mvno_type="spn" protocol="IPV4V6" roaming_protocol="IPV4V6" type="ims" />
+  <apn apn="ims.tele2.ru" carrier="Rostelecom IMS" mcc="250" mnc="20" mvno_match_data="ROSTELECOM" mvno_type="spn" protocol="IPV4V6" type="ims" />
+  <apn apn="hos" carrier="hos" mcc="250" mnc="20" mvno_match_data="ROSTELECOM" mvno_type="spn" protocol="IPV4V6" roaming_protocol="IPV4V6" type="xcap" />
+  <apn apn="internet.rtk.ru" carrier="Rostelecom Internet" mcc="250" mnc="20" mvno_match_data="ROSTELECOM" mvno_type="spn" type="xcap" />
+</apns>

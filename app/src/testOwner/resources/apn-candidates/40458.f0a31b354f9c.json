@@ -1,0 +1,216 @@
+{
+  "addons": {
+    "emergency_calling": {
+      "e911_routing_policy": "auto",
+      "emergency_dial_call_style": "EndPreviousCall"
+    },
+    "ims": {
+      "support_ims_clir_overriding": true
+    },
+    "network_policy": {
+      "display_antenna_limited": true,
+      "gcf_sor": true,
+      "mobile_network_setting_menu_tokens": [],
+      "network_type_capability": "EUR-EUR-GSM-EUR",
+      "voice_network_setting_style": "StopNetworkSearchingOnPause,GetPreferredNTModeForLteOnly"
+    },
+    "operator_display": {
+      "five_g_icon_configuration": [
+        "connected_mmwave:5G",
+        "connected:5G",
+        "not_restricted_rrc_idle:5G",
+        "not_restricted_rrc_con:5G"
+      ],
+      "indicator_icon_branding": "INU_4G",
+      "refer_eons_without_lac": true
+    }
+  },
+  "android_apns": [
+    {
+      "apn": "WAPSOUTH.CELLONE.IN",
+      "name": "BSNL WAP",
+      "password": "PPP123",
+      "port": 9401,
+      "proxy": "10.31.54.2",
+      "types": [
+        "default",
+        "supl"
+      ],
+      "user": "PPP"
+    },
+    {
+      "apn": "bsnllive",
+      "carrier_id": 1549,
+      "name": "bsnllive",
+      "port": 8080,
+      "protocol": "IPV4V6",
+      "proxy": "10.220.67.131",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "default",
+        "ia",
+        "supl"
+      ]
+    },
+    {
+      "apn": "bsnllive",
+      "name": "bsnllive",
+      "port": 8080,
+      "protocol": "IPV4V6",
+      "proxy": "10.220.67.131",
+      "types": [
+        "default",
+        "supl"
+      ]
+    },
+    {
+      "apn": "bsnlmms",
+      "mmsc": "http://bsnlmmsc.in:8514",
+      "mmsport": 8080,
+      "mmsproxy": "10.210.10.11",
+      "name": "BSNL-mms",
+      "port": 8080,
+      "proxy": "10.210.10.11",
+      "types": [
+        "mms"
+      ]
+    },
+    {
+      "apn": "bsnlmms",
+      "mmsc": "http://bsnlmmsc.in",
+      "mmsport": 8080,
+      "mmsproxy": "10.210.10.11",
+      "name": "CelloneWest_mms",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "mms"
+      ]
+    },
+    {
+      "apn": "bsnlmms",
+      "carrier_id": 1549,
+      "mmsc": "http://bsnlmmsc.in:8514",
+      "mmsport": 8080,
+      "mmsproxy": "10.210.10.11",
+      "name": "bsnlmms",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "mms"
+      ]
+    },
+    {
+      "apn": "bsnlmms",
+      "mmsc": "http://bsnlmmsc.in:8514",
+      "mmsport": 8080,
+      "mmsproxy": "10.210.10.11",
+      "name": "bsnlmms",
+      "protocol": "IPV4V6",
+      "types": [
+        "mms"
+      ]
+    },
+    {
+      "apn": "bsnlnet",
+      "carrier_id": 1549,
+      "name": "bsnlnet",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "default",
+        "ia",
+        "supl"
+      ]
+    },
+    {
+      "apn": "bsnlnet",
+      "name": "BSNL",
+      "password": "MSISDN",
+      "types": [
+        "default",
+        "supl"
+      ],
+      "user": "MSISDN"
+    },
+    {
+      "apn": "bsnlnet",
+      "authtype": 1,
+      "name": "bsnlnet",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "default",
+        "supl"
+      ]
+    },
+    {
+      "apn": "bsnlnet",
+      "name": "BSNL IMS",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "ims"
+      ]
+    },
+    {
+      "apn": "ims",
+      "bearer_bitmask": "14|20",
+      "name": "IMS",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "ims"
+      ],
+      "user_visible": false
+    },
+    {
+      "apn": "ims",
+      "name": "IMS",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "ims"
+      ]
+    },
+    {
+      "apn": "mmssouth.cellone.in",
+      "mmsc": "http://10.7.236.11:8514",
+      "mmsport": 8080,
+      "mmsproxy": "10.7.236.11",
+      "name": "BSNL MMS",
+      "password": "mmsc",
+      "types": [
+        "mms"
+      ],
+      "user": "MSISDN"
+    }
+  ],
+  "android_carrier_config": {
+    "allow_hold_call_during_emergency_bool": false,
+    "carrier_volte_available_bool": true,
+    "carrier_vt_available_bool": true,
+    "carrier_wfc_ims_available_bool": true,
+    "imssms.sms_over_ims_supported_bool": true
+  },
+  "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "supported",
+    "rcs": "unknown",
+    "sms_over_ims": "supported",
+    "video_calling": "supported",
+    "volte": "supported",
+    "vonr": "unknown",
+    "vowifi": "supported",
+    "wifi_calling_roaming": "unknown"
+  },
+  "display_name": "BSNL",
+  "match": {
+    "mccmnc": [
+      "40458"
+    ]
+  },
+  "profile_id": "open.40458.f0a31b354f9c",
+  "schema_version": 1
+}

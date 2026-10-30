@@ -65,6 +65,15 @@ object OcdDataProtocol {
     const val EMERGENCY_DEFAULT_SET = "emergency_default_set"
     const val EMERGENCY_DEFAULT_RESTORE = "emergency_default_restore"
 
+    /**
+     * Round 32 (D8 and D7 rule 4; the restore candidates of rounds 33, 34 and 36): a temporary APN
+     * candidate set for one SIM through round 31 item 6's path, and its restore ([ApnCandidateProtocol]).
+     * A provider without them answers `unknown_method`, and no candidate runs.
+     */
+    const val APN_CANDIDATE_SET = "apn_candidate_set"
+    const val APN_CANDIDATE_RESTORE = "apn_candidate_restore"
+    const val CANDIDATE = "candidate"
+
     const val OK = "ok"
     const val ERROR = "error"
     const val REASON = "reason"
@@ -229,6 +238,8 @@ data class DatasetStatus(
     val voiceLoss: VoiceLossState = VoiceLossState(),
     /** Round 31 (R31.9): the temporary emergency-less APN set is in place ("emergency default test set"). */
     val apnTestSet: Boolean = false,
+    /** Which temporary set: "emergency default test set", or round 32's "APN candidate test set". */
+    val apnTestSetKind: String? = null,
     /**
      * The provider answers with a protocol newer than every one in [OcdDataProtocol.PROTOCOLS]: CarrierSettings has
      * an installer, and this app is older than it ([OlderApp]). Null for every other unavailable provider.
@@ -309,6 +320,11 @@ data class DatasetStatus(
                     is JsonPrimitive -> t.booleanOrNull ?: t.contentOrNull?.let { it.isNotEmpty() && it != "false" } ?: false
                     is JsonObject -> bool(t, "in_place") ?: true
                     else -> true
+                },
+                apnTestSetKind = when (val t = a.element("apn_test_set")) {
+                    is JsonPrimitive -> t.contentOrNull?.takeIf { t.isString && it.isNotEmpty() }
+                    is JsonObject -> s(t, "status") ?: s(t, "kind")
+                    else -> null
                 },
             )
         }
@@ -594,6 +610,14 @@ interface DatasetClient {
     fun emergencyDefaultSet(subId: Int): DataAnswer
     fun emergencyDefaultRestore(keep: Boolean): DataAnswer
 
+    /**
+     * Round 32 (D8 and D7 rule 4, rounds 33 to 36): the temporary candidate set for one SIM ([candidate]: an
+     * [ApnSetCandidate] as JSON), and its restore; both answer a `job_id` polled with [installStatus]. A
+     * provider that does not know them answers `unknown_method`.
+     */
+    fun apnCandidateSet(subId: Int, candidate: String): DataAnswer = ApnCandidateProtocol.unknown(OcdDataProtocol.APN_CANDIDATE_SET)
+    fun apnCandidateRestore(): DataAnswer = ApnCandidateProtocol.unknown(OcdDataProtocol.APN_CANDIDATE_RESTORE)
+
     object Absent : DatasetClient {
         private val no = DataAnswer.absent("Open Carrier Data's dataset installer is not on this ROM build")
         override fun status() = no
@@ -614,6 +638,8 @@ interface DatasetClient {
         override fun voiceLossRelease(outcome: String, reason: String) = no
         override fun emergencyDefaultSet(subId: Int) = no
         override fun emergencyDefaultRestore(keep: Boolean) = no
+        override fun apnCandidateSet(subId: Int, candidate: String) = no
+        override fun apnCandidateRestore() = no
     }
 }
 
@@ -633,7 +659,7 @@ object InstallRefusal {
         "state_unreadable" -> "the call or emergency state cannot be read"
         "roaming" -> "the phone is roaming"
         "apn_trial_in_place" -> "an APN test row is in place"
-        "apn_test_set_in_place" -> "the emergency default test set is in place"
+        "apn_test_set_in_place" -> "a temporary APN test set is in place"
         "emergency_call_60min" -> "an emergency call ended less than 60 minutes ago"
         null, "" -> "not now"
         else -> what.replace('_', ' ')
@@ -701,7 +727,8 @@ object DatasetWords {
                 else -> " (${status.servingReason.replace('_', ' ')})"
             }
         }
-        if (status.apnTestSet) lines += "For a moment, the access point names leave out this SIM's emergency entry to test Android's own; they come back at once"
+        if (status.apnTestSet) lines += if (status.apnTestSetKind?.contains("candidate") == true) "For a moment, the access point names try another set after a measured failure; they come back at once"
+            else "For a moment, the access point names leave out this SIM's emergency entry to test Android's own; they come back at once"
         state.datasetLine?.let { lines += it }
         state.pulled?.takeIf { it.datasetDigest != installed?.datasetDigest }?.let { lines += "Downloaded, waiting for the phone to be idle: main ${it.commit.take(7)}" }
         state.campaigns.firstOrNull { !it.done }?.let { lines += "Testing the changed values (${it.trials} test${if (it.trials == 1) "" else "s"} so far); it goes on when the phone is idle" }

@@ -107,7 +107,7 @@ fun CheckScreen(viewModel: CheckViewModel, toCallTest: Boolean = false) {
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Header(state, viewModel::refresh)
+            Header(state, viewModel::refresh, viewModel::pullData)
             // Nothing in debug and release; the owner build's entry card.
             OwnerHook.Entry()
             state.bundleError?.let {
@@ -138,6 +138,7 @@ fun CheckScreen(viewModel: CheckViewModel, toCallTest: Boolean = false) {
                     SwitchSection(state, viewModel)
                     Column(Modifier.onGloballyPositioned { callTestY = it.positionInParent().y.toInt() }) { CallTestSection(state, viewModel) }
                     OcdSection(state, bundle)
+                    StatementsSection(state)
                 }
             }
             if (state.findings.isNotEmpty()) {
@@ -157,21 +158,20 @@ fun CheckScreen(viewModel: CheckViewModel, toCallTest: Boolean = false) {
 }
 
 @Composable
-private fun Header(state: UiState, onRefresh: () -> Unit) {
+private fun Header(state: UiState, onRefresh: () -> Unit, onPull: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("OCD Check", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
         Text(
             "Compares this phone's SIM, network and carrier settings with Open Carrier Data (OCD). " +
-                "It only reads: it changes nothing on the phone. It has no internet permission, so it " +
-                "cannot send anything; a report leaves the phone only if you copy or share it.",
+                "It only reads: it changes nothing on the phone. $PRIVACY",
             style = MaterialTheme.typography.bodyMedium,
         )
         state.bundle?.let { bundle ->
             val source = bundle.source
             Note(
                 "OCD data: ${bundle.profiles.size} profiles from commit ${source.commit.take(7)} " +
-                    "(${source.commitDate}). Oldest source check ${source.checksThrough}; " +
-                    "stale after ${source.staleAfter}.",
+                    "(${source.commitDate}), ${if (state.pulled != null) "downloaded from OCD's validated main" else "shipped with this app"}. " +
+                    "Oldest source check ${source.checksThrough}; stale after ${source.staleAfter}.",
             )
             state.readings?.let { readings ->
                 if (bundle.isStale(readings.checkedOn)) {
@@ -185,8 +185,37 @@ private fun Header(state: UiState, onRefresh: () -> Unit) {
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = onRefresh, enabled = !state.loading) { Text("Check again") }
-            if (state.loading) CircularProgressIndicator(modifier = Modifier.padding(4.dp))
+            // Round 32 U1: the read-only builds pull OCD's newest validated data only on this tap.
+            if (state.canPull) OutlinedButton(onClick = onPull, enabled = !state.pulling && state.bundle != null) { Text("Get newest data") }
+            if (state.loading || state.pulling) CircularProgressIndicator(modifier = Modifier.padding(4.dp))
         }
+        if (state.canPull) state.pullLine?.let { Note(it) }
+    }
+}
+
+/** Round 32 U1: the read-only builds' privacy sentence (round 9's "cannot send anything" no longer holds). */
+private const val PRIVACY =
+    "It sends nothing but requests for OCD's public data, and only when you tap Get newest data: " +
+        "to GitHub, which hosts OCD, with no identifier of the phone or the SIM. " +
+        "A report leaves the phone only if you copy or share it."
+
+/** Round 32 part A: what the SIM's operator states on its own pages; shown, never used as a value. */
+@Composable
+private fun StatementsSection(state: UiState) {
+    val display = state.statements
+    if (display == null || display.empty) {
+        if (state.canPull && state.pulled?.statements == null) {
+            Section("What the operator states") {
+                Note("Operator statements come with OCD's newest data: tap Get newest data.")
+            }
+        }
+        return
+    }
+    Section("What the operator states") {
+        display.about?.let { Label(it) }
+        display.lines.forEach { Bullet(it) }
+        if (display.brandsOnNetwork.isNotEmpty()) Note("Brands on this network: ${display.brandsOnNetwork.joinToString()}. A phone can't tell their SIMs apart from the network's own.")
+        Note(io.github.open_carrier_data.check.core.StatementDisplay.NOTE)
     }
 }
 
