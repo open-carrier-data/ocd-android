@@ -1,0 +1,4 @@
+Soong's file finder (build/soong/ui/build/finder.go) skips every directory that holds a file
+named .find-ignore. This is OCD Check's Gradle app: when this repository is a project of an
+Android tree (packages/apps/OcdCarrierSettings), Soong and Kati never walk it. Soong reads only
+carriersettings/Android.bp. Never put this file in the repository root or in carriersettings/.

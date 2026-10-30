@@ -1,0 +1,101 @@
+{
+  "_about": "A protocol 3 status answer as the app reads it (the provider's Bundle as JSON; nested maps travel as JSON strings and read the same): the S20 serving an installed dataset. Every key the provider's status() writes is here; a null member is one the Bundle leaves out.",
+  "ok": true,
+  "protocol": 3,
+  "build": {
+    "incremental": "eng.ocd.20261029.000000",
+    "device": "x1s",
+    "model": "SM-G981B",
+    "rom_family": "lineageos",
+    "rom_line": "24.0",
+    "ims_stack_id": "aosp_imsstack",
+    "ims_stack_fork": "ocd",
+    "ims_stack_version": 36,
+    "cell_matches": true
+  },
+  "build_pin": {
+    "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "data_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "dataset_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "generated_at": "2026-10-20T00:00:00Z"
+  },
+  "installed": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "dataset_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "generated_at": "2026-10-25T09:57:41Z",
+    "installed_at": "2026-10-25T12:00:00Z",
+    "google_lane_source": "public_main"
+  },
+  "serving": "installed",
+  "serving_reason": "installed_newer",
+  "app": {
+    "package": "io.github.open_carrier_data.check.owner",
+    "state": "enabled"
+  },
+  "tester": {
+    "active": true,
+    "declared": true,
+    "since": "2026-10-25T12:00:00Z",
+    "reason": "owner build"
+  },
+  "sm7": false,
+  "voice_loss": {
+    "hold": null,
+    "stop": null,
+    "blocked": []
+  },
+  "changes_halted": {
+    "on": false,
+    "since": null,
+    "reason": null
+  },
+  "crash_guard": null,
+  "pull_again": false,
+  "staged": null,
+  "pending_subs": [],
+  "waiting_for": null,
+  "emergency_gate": "narrow",
+  "emergency_gate_source": "build",
+  "device_override": {
+    "readable": true,
+    "keys": [
+      "gps.longterm_psds_server_1",
+      "imsvoice.audio_evs_support_bool",
+      "imsvoice.voice_on_default_bearer_in_roaming_without_qos_bool",
+      "imsvoice.voice_on_default_bearer_supported_bool"
+    ],
+    "values": {
+      "imsvoice.audio_evs_support_bool": {
+        "value": false,
+        "source": "device_override"
+      },
+      "imsvoice.voice_on_default_bearer_supported_bool": {
+        "value": true,
+        "source": "device_override"
+      },
+      "imsvoice.voice_on_default_bearer_in_roaming_without_qos_bool": {
+        "value": true,
+        "source": "device_override"
+      },
+      "gps.longterm_psds_server_1": {
+        "value": "",
+        "source": "device_override"
+      }
+    }
+  },
+  "apn_test_set": null,
+  "notice": null,
+  "apn": {
+    "version": 8,
+    "sha512_prefix": "0123456789ab",
+    "confirmed_at": "2026-10-25T12:00:05Z",
+    "rows": 25086,
+    "raw_rows": 25090,
+    "error": null
+  },
+  "last_check": {
+    "at": "2026-10-25T12:00:00Z",
+    "result": "ok"
+  }
+}

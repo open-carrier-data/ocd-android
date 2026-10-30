@@ -1,11 +1,14 @@
 #!/bin/sh
-# Compare OCD's CarrierSettings with LineageOS's in an Android tree.
+# Compare OCD's CarrierSettings with LineageOS's in a LineageOS tree (LineageOS only: it needs
+# hardware/lineage/generic-ims/carriersettings).
 #
-#   vendor/extra/carriersettings/check_upstream.sh ANDROID_TREE
+#   carriersettings/check_upstream.sh ANDROID_TREE [LEGACY_DIR]
 #
-# Exit 0 when:
-# - module OcdCarrierSettings (the image with OCD_CARRIER_DATASET off): the code, manifest,
-#   resources and protos equal LineageOS's, apart from the one PbConfigLoader line that reads
+# LEGACY_DIR is the ROM tree's folder of the legacy .pb module OcdCarrierSettings (src/,
+# AndroidManifest.xml, configs/), for the S20 vendor/extra/carriersettings; without it those
+# parts are skipped. Exit 0 when:
+# - the resources and protos here equal LineageOS's, and with LEGACY_DIR, module
+#   OcdCarrierSettings's code and manifest too, apart from the one PbConfigLoader line that reads
 #   OcdCarrierSettings;
 # - module OcdCarrierSettingsDataset (OCD rules rounds 30 and 31, ocd/): ocd/ holds exactly the
 #   files listed below; what still comes from LineageOS is LineageOS's, byte for byte: the
@@ -15,8 +18,8 @@
 #   SM3); the resources it shares (res/, with the CarrierSettingsConfig overlayable the device
 #   override targets) are covered by the first point;
 # - no manifest asks for INTERNET.
-# It prints the dataset manifest's diff against LineageOS's, and says how many of the .pb files
-# are byte-identical to LineageOS's copy of Google's.
+# It prints the dataset manifest's diff against LineageOS's, and with LEGACY_DIR says how many of
+# the .pb files are byte-identical to LineageOS's copy of Google's.
 # After LineageOS changes its app, copy its files here, reapply the one PbConfigLoader line,
 # carry any change of the service's two blocks or of the manifest into ocd/, and rerun.
 set -eu
@@ -24,6 +27,7 @@ set -eu
 tree=${1:?usage: check_upstream.sh ANDROID_TREE}
 upstream="$tree/hardware/lineage/generic-ims/carriersettings"
 here=$(cd "$(dirname "$0")" && pwd)
+legacy=${2:+$(cd "$2" && pwd)}
 [ -d "$upstream/src" ] || { echo "no LineageOS CarrierSettings in $upstream" >&2; exit 2; }
 
 scratch=$(mktemp -d)
@@ -39,13 +43,20 @@ grep -q '"OcdCarrierSettings"' "$scratch/src/com/android/carriersettings/PbConfi
 }
 
 status=0
-for part in src res AndroidManifest.xml proto; do
-    if ! diff -r "$scratch/$part" "$here/$part"; then
+for part in res proto ${legacy:+src AndroidManifest.xml}; do
+    case $part in res | proto) dir=$here ;; *) dir=$legacy ;; esac
+    if ! diff -r "$scratch/$part" "$dir/$part"; then
         echo "differs from LineageOS: $part" >&2
         status=1
     fi
 done
-[ "$status" -eq 0 ] && echo "OcdCarrierSettings: equal to LineageOS apart from the OcdCarrierSettings folder"
+if [ "$status" -eq 0 ]; then
+    if [ -n "$legacy" ]; then
+        echo "OcdCarrierSettings: equal to LineageOS apart from the OcdCarrierSettings folder"
+    else
+        echo "res and proto: equal to LineageOS's (no LEGACY_DIR, so the legacy module's code is not compared)"
+    fi
+fi
 
 # --- OcdCarrierSettingsDataset: the checked list of files -----------------------------------
 # Every file of ocd/. ocd/test is never built into the app (Android.bp takes ocd/src/**/*.kt
@@ -79,6 +90,7 @@ ocd/test/src/BundleTest.kt
 ocd/test/src/CandidateTest.kt
 ocd/test/src/EngineTest.kt
 ocd/test/src/Fixture.kt
+ocd/test/src/ProtocolContractTest.kt
 ocd/test/src/ReaderTest.kt
 ocd/test/src/VectorsTest.kt
 ocd/test/stubs/Stubs.kt
@@ -148,18 +160,20 @@ else
     status=1
 fi
 diff -u "$upstream/AndroidManifest.xml" "$manifest" | sed 's/^/  /' || true
-if grep -q 'android.permission.INTERNET' "$manifest" "$here/AndroidManifest.xml"; then
+if grep -q 'android.permission.INTERNET' "$manifest" ${legacy:+"$legacy/AndroidManifest.xml"}; then
     echo "a CarrierSettings manifest asks for INTERNET; the config source never does network I/O" >&2
     status=1
 fi
 
-total=0
-same=0
-for file in "$here"/configs/*.pb; do
-    total=$((total + 1))
-    if cmp -s "$file" "$upstream/configs/$(basename "$file")"; then
-        same=$((same + 1))
-    fi
-done
-echo "data (OcdCarrierSettings only): $same of $total .pb files byte-identical to LineageOS's ($(ls "$upstream"/configs/*.pb | wc -l) there)"
+if [ -n "$legacy" ]; then
+    total=0
+    same=0
+    for file in "$legacy"/configs/*.pb; do
+        total=$((total + 1))
+        if cmp -s "$file" "$upstream/configs/$(basename "$file")"; then
+            same=$((same + 1))
+        fi
+    done
+    echo "data (OcdCarrierSettings only): $same of $total .pb files byte-identical to LineageOS's ($(ls "$upstream"/configs/*.pb | wc -l) there)"
+fi
 exit "$status"

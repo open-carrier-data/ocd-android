@@ -1,0 +1,131 @@
+{
+  "_about": "The same with every optional part present: a voice-loss hold and stop, changes halted, a crash guard, a staged job, the temporary APN test set, the app disabled.",
+  "ok": true,
+  "protocol": 3,
+  "build": {
+    "incremental": "eng.ocd.20261029.000000",
+    "device": "x1s",
+    "model": "SM-G981B",
+    "rom_family": "lineageos",
+    "rom_line": "24.0",
+    "ims_stack_id": "aosp_imsstack",
+    "ims_stack_fork": "ocd",
+    "ims_stack_version": 36,
+    "cell_matches": true
+  },
+  "build_pin": {
+    "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "data_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "dataset_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "generated_at": "2026-10-20T00:00:00Z"
+  },
+  "installed": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "dataset_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "generated_at": "2026-10-25T09:57:41Z",
+    "installed_at": "2026-10-25T12:00:00Z",
+    "google_lane_source": "public_main"
+  },
+  "serving": "build",
+  "serving_reason": "voice_loss_hold",
+  "app": {
+    "package": "io.github.open_carrier_data.check.owner",
+    "state": "disabled"
+  },
+  "tester": {
+    "active": false,
+    "declared": true,
+    "since": "2026-10-25T12:00:00Z",
+    "reason": "owner build"
+  },
+  "sm7": true,
+  "voice_loss": {
+    "hold": {
+      "since": "2026-10-26T08:00:00Z",
+      "reason": "IMS voice lost after the install",
+      "dataset_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "values_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "stop": {
+      "since": "2026-10-27T08:00:00Z",
+      "reason": "voice lost twice under the same values",
+      "dataset_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "blocked": [
+      "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    ]
+  },
+  "changes_halted": {
+    "on": true,
+    "since": "2026-10-27T08:00:00Z",
+    "reason": "stop event"
+  },
+  "crash_guard": {
+    "dataset_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "since": "2026-10-27T09:00:00Z",
+    "crash_guard_build": false
+  },
+  "pull_again": true,
+  "staged": {
+    "install_id": "0123456789abcdef",
+    "state": "refused",
+    "error": "changes_halted"
+  },
+  "pending_subs": [
+    1
+  ],
+  "waiting_for": "idle",
+  "emergency_gate": "full",
+  "emergency_gate_source": "none",
+  "device_override": {
+    "readable": true,
+    "keys": [
+      "gps.longterm_psds_server_1",
+      "imsvoice.audio_evs_support_bool",
+      "imsvoice.voice_on_default_bearer_in_roaming_without_qos_bool",
+      "imsvoice.voice_on_default_bearer_supported_bool"
+    ],
+    "values": {
+      "imsvoice.audio_evs_support_bool": {
+        "value": false,
+        "source": "device_override"
+      },
+      "imsvoice.voice_on_default_bearer_supported_bool": {
+        "value": true,
+        "source": "device_override"
+      },
+      "imsvoice.voice_on_default_bearer_in_roaming_without_qos_bool": {
+        "value": true,
+        "source": "device_override"
+      },
+      "gps.longterm_psds_server_1": {
+        "value": "",
+        "source": "device_override"
+      }
+    }
+  },
+  "apn_test_set": {
+    "status": "emergency default test set",
+    "kind": "emergency_default",
+    "state": "in_place",
+    "sub_id": 1,
+    "since": "2026-10-27T10:00:00Z",
+    "removed_rows": 1,
+    "rows": 25085,
+    "preferred_apn_recorded": true
+  },
+  "notice": "CarrierSettings stopped changes after a second voice loss",
+  "apn": {
+    "version": 8,
+    "sha512_prefix": "0123456789ab",
+    "confirmed_at": "2026-10-25T12:00:05Z",
+    "rows": 25086,
+    "raw_rows": 25090,
+    "error": null
+  },
+  "last_check": {
+    "at": "2026-10-27T10:00:00Z",
+    "result": "refused: changes are halted"
+  }
+}

@@ -1,0 +1,277 @@
+{
+  "about": "OCD rule round 37, item 6: OcdCarrierSettingsDataset moved here from the owner's ROM tree in one commit. Each file with its git blob at the cut; check_cut.py holds the folder to it.",
+  "cut": {
+    "tree": "vendor/extra (the owner's ROM tree for the Galaxy S20)",
+    "branch": "main",
+    "commit": "cfa8ee12ca56f7a5ad76bf06529c110e0af2e560",
+    "on_top_of": "131caf9dd934d766af7967b9b22b9afbcad16b6b"
+  },
+  "left_in_the_rom_tree": [
+    "carriersettings/AndroidManifest.xml, src/ and privapp-permissions-ocd-carriersettings.xml (the legacy .pb module OcdCarrierSettings)",
+    "carriersettings/configs/ (Google's .pb files)",
+    "carriersettings/dataset/ (the baked dataset)",
+    "carriersettings/ocd-build.json (the S20's cell and its emergency data test first use)",
+    "carriersettings/ocd-carriersettings.json (the build record)",
+    "carriersettings/__pycache__/ (a stray compiled file)",
+    "sepolicy/private/platform_app.te (the S20 keeps its own copy; sepolicy/lineageos here is the same line for other LineageOS builds)"
+  ],
+  "files": {
+    "Android.bp": {
+      "from": "carriersettings/Android.bp",
+      "blob": "7ea3e4f8f589e274a91240e7e7ebc216ac2481f7",
+      "status": "changed",
+      "why": "The ruling's conditions: no default writer (the writer genrules fail unless OCD_WRITER_CERT and OCD_WRITER_PACKAGE are set, and accept none); the legacy .pb module OcdCarrierSettings, Google's .pb files, the baked dataset, ocd-build.json and the build record stay in the ROM tree, so their module definitions (OcdCarrierSettings, ocd_carrier_settings, ocd_carrier_dataset, ocd_carrier_build, ocd_carrier_settings_record, privapp_permissions_ocd_carriersettings) are gone from here and the ROM defines the three the provider requires; comments name the new home. OcdCarrierSettingsDataset itself (sources, manifest, resources, flags, overrides, required) is unchanged."
+    },
+    "README.md": {
+      "status": "added",
+      "why": "The module's home, the cut, the differences, how a ROM includes it, the writer, the tags and CI."
+    },
+    "check_build.sh": {
+      "from": "carriersettings/check_build.sh",
+      "blob": "53194c7325eddcfb0461168495c3d22d62ebb900",
+      "status": "changed",
+      "why": "Takes the ROM tree's data folder (ROM_DATA_DIR: dataset/, ocd-build.json, device-override.json, configs/) instead of reading them next to itself; no S20 overlay name; the writer has no default."
+    },
+    "check_build_res.py": {
+      "from": "carriersettings/check_build_res.py",
+      "blob": "66c419926f3004c952053e342fe3e50c8822ea85",
+      "status": "changed",
+      "why": "The device override's expected overlay and values come from the ROM tree's device-override.json instead of the S20's built-in values; the writer check has no owner default and accepts none (SM5, round 37)."
+    },
+    "check_cut.py": {
+      "status": "added",
+      "why": "Checks this folder against cut.json."
+    },
+    "check_upstream.sh": {
+      "from": "carriersettings/check_upstream.sh",
+      "blob": "840998b4c7879579be241a83d7ff3ec1aa2a4c9f",
+      "status": "changed",
+      "why": "The legacy module's code, manifest and .pb files are compared only with LEGACY_DIR (the ROM tree's copy); the checked list of ocd/ adds the contract test."
+    },
+    "cut.json": {
+      "status": "added",
+      "why": "This record."
+    },
+    "default-permissions-ocd-carriersettings-dataset.xml": {
+      "from": "carriersettings/default-permissions-ocd-carriersettings-dataset.xml",
+      "blob": "82dcee453840393573e45f70c2190178058c2ac9",
+      "status": "equal"
+    },
+    "ocd/AndroidManifest.xml": {
+      "from": "carriersettings/ocd/AndroidManifest.xml",
+      "blob": "555e02a147eedcadc27ddc9d6e7daa1cac5c5698",
+      "status": "equal"
+    },
+    "ocd/res/values/ocd_dataset.xml": {
+      "from": "carriersettings/ocd/res/values/ocd_dataset.xml",
+      "blob": "bc29639c08a4bb7c2b6fbfbe6d1588ba3626f68b",
+      "status": "changed",
+      "why": "No default writer: the owner build's certificate and package are gone from the base values (empty list, none). The genrules always overlay both, so a build with the owner's settings has the same resources as before."
+    },
+    "ocd/src/com/android/carriersettings/CarrierConfigService.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/CarrierConfigService.kt",
+      "blob": "cc62ce2277c54cb71bc66a4e1d077cd485b2d54d",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/ApnCandidateSet.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/ApnCandidateSet.kt",
+      "blob": "ae3592f364626a41b2bb32613ea55fd443d5c198",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/ApnLogic.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/ApnLogic.kt",
+      "blob": "303494846e093127db910b695899bec32f65506b",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/ApnXml.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/ApnXml.kt",
+      "blob": "7282f4109c8447eeb41caee9efaa8b1da23c189b",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/DeviceOverride.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/DeviceOverride.kt",
+      "blob": "ae5f75d08682624b0cf9305f5a1ac038b021ce3f",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/Engine.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Engine.kt",
+      "blob": "86249625274cc041b957b696ed4e48ffa332024f",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/Files.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Files.kt",
+      "blob": "9ab18e28417640e1b19aae0367139bb8785d5304",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/Guard.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Guard.kt",
+      "blob": "9e6cc8be03163792eb555c600651607eb2f17287",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/Json.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Json.kt",
+      "blob": "e03af3c9473d51669aa6afe53648f553d4d0f34f",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/Matcher.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Matcher.kt",
+      "blob": "2c4b018e927e41c91f0ebb741cb0e370232ce713",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/Model.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Model.kt",
+      "blob": "bf17da06b34a2cb5f1346dd407c786e7fbd54df5",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/OcdAndroid.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/OcdAndroid.kt",
+      "blob": "c04673edffa9867fb2b7b92c5d1b96292ba529e8",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/OcdDataProvider.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/OcdDataProvider.kt",
+      "blob": "e13055205ea6abd146c85c177b48ef7ea6ecddfa",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/OcdReceiver.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/OcdReceiver.kt",
+      "blob": "e68759d7861163ec747272b6c09ae858d67259ee",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/Protocol.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Protocol.kt",
+      "blob": "c2b53c3e32b77c5ef5501174857d336f2c4b246d",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/Serving.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Serving.kt",
+      "blob": "7a269add4c00cb1a897e647dd8bd9d305bf08ccb",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/ServingIndex.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/ServingIndex.kt",
+      "blob": "557df9f92700edc4b26f5c1752ad219e8245de46",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/State.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/State.kt",
+      "blob": "84efbdbe135c3b4f9e5ef8c5351caf385a634c16",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/Types.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Types.kt",
+      "blob": "a90ab235bd439d4539a0c1f7e87633cc1d049000",
+      "status": "equal"
+    },
+    "ocd/src/com/android/carriersettings/ocd/Verifier.kt": {
+      "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Verifier.kt",
+      "blob": "def3429ae4fabfc77d2613b23c8c70cb66b31d4a",
+      "status": "equal"
+    },
+    "ocd/test/run.sh": {
+      "from": "carriersettings/ocd/test/run.sh",
+      "blob": "07dbaaf1b1eea2778fa26dd6ecf420f2aa5140d2",
+      "status": "changed",
+      "why": "Runs ProtocolContractTest, the writer-to-provider contract, with the repository root as ocd.repo."
+    },
+    "ocd/test/src/ApnTest.kt": {
+      "from": "carriersettings/ocd/test/src/ApnTest.kt",
+      "blob": "4b80ef26f53b84c54d8e3751e0f002d770476f1d",
+      "status": "equal"
+    },
+    "ocd/test/src/BundleTest.kt": {
+      "from": "carriersettings/ocd/test/src/BundleTest.kt",
+      "blob": "f903c0c2b11c0036d8b6ab0a7caa61f99dd04924",
+      "status": "equal"
+    },
+    "ocd/test/src/CandidateTest.kt": {
+      "from": "carriersettings/ocd/test/src/CandidateTest.kt",
+      "blob": "57fe79422166e5b13fd2b67bf760a058149d789e",
+      "status": "equal"
+    },
+    "ocd/test/src/EngineTest.kt": {
+      "from": "carriersettings/ocd/test/src/EngineTest.kt",
+      "blob": "a7e35c1c155225d6e9db0e7639fe0bad786f40ac",
+      "status": "equal"
+    },
+    "ocd/test/src/Fixture.kt": {
+      "from": "carriersettings/ocd/test/src/Fixture.kt",
+      "blob": "9095da2c6c0884ad4bf5441a75ad903da2cfd292",
+      "status": "equal"
+    },
+    "ocd/test/src/ProtocolContractTest.kt": {
+      "status": "added",
+      "why": "The provider's half of the writer-to-provider contract test (round 37): protocol/ocd-provider-protocol.json and its status vectors."
+    },
+    "ocd/test/src/ReaderTest.kt": {
+      "from": "carriersettings/ocd/test/src/ReaderTest.kt",
+      "blob": "b3ed8f3e44289dc756f31762cbb3e0a7822ae9e8",
+      "status": "equal"
+    },
+    "ocd/test/src/VectorsTest.kt": {
+      "from": "carriersettings/ocd/test/src/VectorsTest.kt",
+      "blob": "372ea9c3ff771940da78abf8fe60622ca99a719f",
+      "status": "equal"
+    },
+    "ocd/test/stubs/Stubs.kt": {
+      "from": "carriersettings/ocd/test/stubs/Stubs.kt",
+      "blob": "d16fda80ad5d27f330f3bb91ab254002f86ead10",
+      "status": "equal"
+    },
+    "ocd/test/stubs/StubsPlatform.kt": {
+      "from": "carriersettings/ocd/test/stubs/StubsPlatform.kt",
+      "blob": "e562c7bd1f01a190d1ff3e1e612dcd30a60778a2",
+      "status": "equal"
+    },
+    "ocd/test/tools/VerifyBaked.kt": {
+      "from": "carriersettings/ocd/test/tools/VerifyBaked.kt",
+      "blob": "9254674c58ecfb1e296698fb77ac2e46a081077f",
+      "status": "equal"
+    },
+    "ocd/test/verify-baked.sh": {
+      "from": "carriersettings/ocd/test/verify-baked.sh",
+      "blob": "11c96280f736839d5ec17e993432103544b5d136",
+      "status": "equal"
+    },
+    "overlay/AndroidManifest.xml": {
+      "from": "carriersettings/overlay/AndroidManifest.xml",
+      "blob": "4218305ae1d3641f45b46fa52a7c7dffeed26b39",
+      "status": "equal"
+    },
+    "overlay/res/values/config.xml": {
+      "from": "carriersettings/overlay/res/values/config.xml",
+      "blob": "fb245ac4cf046d0115eb8d66d56a6ae983385f3b",
+      "status": "equal"
+    },
+    "privapp-permissions-ocd-carriersettings-dataset.xml": {
+      "from": "carriersettings/privapp-permissions-ocd-carriersettings-dataset.xml",
+      "blob": "21b786d476ef8a94385230d7a21bfe11e69d5044",
+      "status": "equal"
+    },
+    "proto/carrier_list.proto": {
+      "from": "carriersettings/proto/carrier_list.proto",
+      "blob": "d8fa560084b22c477f1681f9e34e8be5670343a7",
+      "status": "equal"
+    },
+    "proto/carrier_settings.proto": {
+      "from": "carriersettings/proto/carrier_settings.proto",
+      "blob": "eb25bc5eace4e25dec1ec5da480908b2b5774cce",
+      "status": "equal"
+    },
+    "res/values/overlayable.xml": {
+      "from": "carriersettings/res/values/overlayable.xml",
+      "blob": "09c480b384d0ba43d7c2004cbb1530710c36f997",
+      "status": "equal"
+    },
+    "res/xml/carrier_config_override.xml": {
+      "from": "carriersettings/res/xml/carrier_config_override.xml",
+      "blob": "570e44529203b8cf8e6392c4246bc95e009eeccd",
+      "status": "equal"
+    },
+    "sepolicy/lineageos/platform_app.te": {
+      "from": "sepolicy/private/platform_app.te",
+      "blob": "8b180d2024ff4d0ce06f2fb13c53728915c5562c",
+      "status": "equal"
+    }
+  }
+}

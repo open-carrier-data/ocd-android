@@ -6,7 +6,8 @@
 Plain Python, no Android tools: Android's binary XML (AndroidManifest.xml, res/xml/*.xml) and
 resources.arsc, as aapt2 writes them.
 
-  check_build_res.py override PRODUCT_OUT       SM3: the device override present and read
+  check_build_res.py override PRODUCT_OUT [DEVICE_OVERRIDE_JSON]
+                                                SM3: the device override present and read
   check_build_res.py one-source PRODUCT_OUT     SM2: Telephony reads one carrier data source
   check_build_res.py writer PRODUCT_OUT APK     SM5: the writer certificate and package built in
   check_build_res.py withheld RECORD_JSON       SM4: the keys the public lane withholds for privacy
@@ -240,18 +241,11 @@ def overlay_apks(out):
 
 # --- the checks ----------------------------------------------------------------------------------
 
-# The S20's device override (round 31, item "keys"): its four values plus LineageOS's common
-# overlay values, never the bearer-wait skip.
-S20_OVERRIDE = {
-    "ims.support_sdp_precondition_bool": False,
-    "imsvoice.release_call_on_qos_lost_during_setup_bool": False,
-    "imsvoice.voice_qos_precondition_supported_bool": False,
-    "imsvoice.wait_qos_when_local_precondition_not_supported_bool": False,
-    "imsvoice.voice_on_default_bearer_supported_bool": True,
-    "imsvoice.voice_on_default_bearer_in_roaming_without_qos_bool": True,
-    "imsvoice.audio_evs_support_bool": False,
-    "gps.longterm_psds_server_1": "",
-}
+# The device's own override is the ROM tree's (round 37, item 6): DEVICE_OVERRIDE_JSON, for the
+# S20 vendor/extra carriersettings/device-override.json, names the overlay APK and exactly the
+# values it must hold, {"overlay": "CarrierSettingsOverlayOcd", "values": {key: value}}. Without
+# that file only the general checks run: nothing the image does not read, no overlay outranked
+# with values lost, never the bearer-wait skip.
 HELD = "imsemergency.skip_audio_dedicated_bearer_wait_timer_for_emergency_bool"
 # What OcdCarrierSettingsDataset reads of a device tree's override, per target package (SM3).
 READ = {
@@ -260,8 +254,28 @@ READ = {
 }
 
 
-def check_override(out):
+def device_override(path):
+    """DEVICE_OVERRIDE_JSON as (overlay APK name, values), or None when there is no such file."""
+    if not path or not os.path.exists(path):
+        return None
+    spec = json.load(open(path))
+    if set(spec) - {"overlay", "values", "note"} or not isinstance(spec.get("overlay"), str) or not isinstance(spec.get("values"), dict):
+        raise ValueError("%s: expected {\"overlay\": name, \"values\": {key: value}}" % path)
+    return spec["overlay"] + ".apk", spec["values"]
+
+
+def check_override(out, spec_path=None):
     ok = True
+    try:
+        spec = device_override(spec_path)
+    except (OSError, ValueError) as e:
+        print("FAIL: the device override file is unreadable: %s" % e, file=sys.stderr)
+        return False
+    want_apk, want_values = spec if spec else (None, None)
+    if spec:
+        print("device override expected: %s with %d values (%s)" % (want_apk, len(want_values), spec_path))
+    else:
+        print("device override: no device-override.json, so no overlay is required; the general checks run")
     apps = [os.path.join(out, "system_ext/priv-app/%s/%s.apk" % (n, n)) for n in ("OcdCarrierSettingsDataset", "OcdCarrierSettings")]
     for app in [a for a in apps if os.path.exists(a)][:1]:
         _m, (entries, overlayables), _f = apk(app)
@@ -271,7 +285,7 @@ def check_override(out):
         else:
             print("FAIL: CarrierSettings has no overlayable CarrierSettingsConfig with xml/carrier_config_override: a device override would not apply", file=sys.stderr)
             ok = False
-    found_s20 = False
+    found = False
     # Android applies only the highest-priority overlay of carrier_config_override.xml, so every
     # other overlay's values must be in the winner, or they are silently lost.
     competing = []
@@ -311,18 +325,18 @@ def check_override(out):
         if tp == "com.android.carriersettings" and "res/xml/carrier_config_override.xml" in files:
             values = bundle_xml(axml(files["res/xml/carrier_config_override.xml"]))
             competing.append((int(ov.get("android:priority") or 0), rel, values))
-            if os.path.basename(path) == "CarrierSettingsOverlayOcd.apk":
-                found_s20 = True
-                if values == S20_OVERRIDE:
-                    print("device override values: the S20 values (%s)" % ", ".join("%s=%s" % kv for kv in sorted(values.items())))
+            if want_apk and os.path.basename(path) == want_apk:
+                found = True
+                if values == want_values:
+                    print("device override values: the expected values (%s)" % ", ".join("%s=%s" % kv for kv in sorted(values.items())))
                 else:
-                    print("FAIL: CarrierSettingsOverlayOcd holds %s, expected exactly %s" % (json.dumps(values, sort_keys=True), json.dumps(S20_OVERRIDE, sort_keys=True)), file=sys.stderr)
+                    print("FAIL: %s holds %s, expected exactly %s" % (want_apk, json.dumps(values, sort_keys=True), json.dumps(want_values, sort_keys=True)), file=sys.stderr)
                     ok = False
             if HELD in values:
                 print("FAIL: %s sets %s, which the read of 2026-10-25 held (a new second-agent read is needed)" % (rel, HELD), file=sys.stderr)
                 ok = False
-    if not found_s20:
-        print("FAIL: no CarrierSettingsOverlayOcd.apk with carrier_config_override.xml in the image", file=sys.stderr)
+    if want_apk and not found:
+        print("FAIL: no %s with carrier_config_override.xml in the image" % want_apk, file=sys.stderr)
         ok = False
     competing.sort(key=lambda c: c[0], reverse=True)
     if len(competing) > 1:
@@ -330,8 +344,8 @@ def check_override(out):
         if competing[1][0] == top_priority:
             print("FAIL: %s and %s overlay carrier_config_override.xml at the same priority %d: which applies is not defined" % (top_rel, competing[1][1], top_priority), file=sys.stderr)
             ok = False
-        if os.path.basename(top_rel) != "CarrierSettingsOverlayOcd.apk":
-            print("FAIL: %s outranks CarrierSettingsOverlayOcd.apk for carrier_config_override.xml" % top_rel, file=sys.stderr)
+        if want_apk and os.path.basename(top_rel) != want_apk:
+            print("FAIL: %s outranks %s for carrier_config_override.xml" % (top_rel, want_apk), file=sys.stderr)
             ok = False
         for _p, rel, values in competing[1:]:
             lost = sorted(k for k, v in values.items() if top_values.get(k, object()) != v)
@@ -375,15 +389,25 @@ def check_one_source(out):
 
 
 def check_writer(out, apk_rel):
+    """SM5 with no default writer (round 37): the APK's writer is OCD_WRITER_CERT and OCD_WRITER_PACKAGE, both none or both set."""
     _m, (entries, _o), _f = apk(os.path.join(out, apk_rel))
     certs = entries.get(("array", "ocd_owner_certs"), [[]])
     pkg = entries.get(("string", "ocd_writer_package"), [None])
-    want_cert = os.environ.get("OCD_WRITER_CERT", "c9b9e2e3e8cd7ddaedbd60df5b91a6f5af6f039e3d4d6e413d2cdb5ffe3877a8")
-    want_pkg = os.environ.get("OCD_WRITER_PACKAGE", "io.github.open_carrier_data.check.owner")
+    want_cert = os.environ.get("OCD_WRITER_CERT")
+    want_pkg = os.environ.get("OCD_WRITER_PACKAGE")
     print("writer: %s, certificate SHA-256 %s" % (pkg[0], ", ".join(certs[0]) if certs[0] else "none"))
-    ok = len(certs) == 1 and certs[0] == [want_cert] and pkg == [want_pkg]
+    if not want_cert or not want_pkg:
+        print("FAIL: set OCD_WRITER_CERT and OCD_WRITER_PACKAGE to what the build set (none for no writer); there is no default", file=sys.stderr)
+        return False
+    if (want_cert == "none") != (want_pkg == "none"):
+        print("FAIL: OCD_WRITER_CERT and OCD_WRITER_PACKAGE must both be none, or neither", file=sys.stderr)
+        return False
+    expected_certs = [] if want_cert == "none" else [want_cert]
+    ok = len(certs) == 1 and certs[0] == expected_certs and pkg == [want_pkg]
     if not ok:
         print("FAIL: the writer is not the build parameter (OCD_WRITER_CERT %s, OCD_WRITER_PACKAGE %s)" % (want_cert, want_pkg), file=sys.stderr)
+    elif want_cert == "none":
+        print("writer: none, so no app can write the dataset and the provider serves only the baked one")
     return ok
 
 
@@ -403,7 +427,7 @@ def withheld(record):
 
 def main(argv):
     if len(argv) >= 3 and argv[1] == "override":
-        return 0 if check_override(argv[2]) else 1
+        return 0 if check_override(argv[2], argv[3] if len(argv) >= 4 else None) else 1
     if len(argv) >= 3 and argv[1] == "one-source":
         return 0 if check_one_source(argv[2]) else 1
     if len(argv) >= 4 and argv[1] == "writer":

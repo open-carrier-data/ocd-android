@@ -1,0 +1,69 @@
+{
+  "schema": "ocd-provider-protocol/1",
+  "about": "The writer-to-provider protocol between OCD Check (app/, the writer) and OcdCarrierSettingsDataset (carriersettings/, the provider): content://com.android.carriersettings.ocddata, method calls only. Both sides' tests read this file and the vectors (OCD rule round 37, item 6); a change to one side fails until this file and the other side match.",
+  "protocol": 3,
+  "app_reads_protocols": [2, 3],
+  "authority": "com.android.carriersettings.ocddata",
+  "apn_authority": "com.android.carriersettings.ocdapn",
+  "permission": "com.android.carriersettings.permission.WRITE_OCD_DATASET",
+  "writer_packages": {
+    "owner": "io.github.open_carrier_data.check.owner",
+    "plain": "io.github.open_carrier_data.check"
+  },
+  "max_answer_chars": 122880,
+  "methods": [
+    {"name": "status", "since": 2, "owner": true, "adb": true, "app": true, "extras": []},
+    {"name": "stage_dataset", "since": 2, "owner": true, "adb": false, "app": true, "extras": ["pin", "files", "fd.", "f5_read", "first_use"]},
+    {"name": "install_status", "since": 2, "owner": true, "adb": true, "app": true, "extras": ["install_id", "job_id"]},
+    {"name": "activate", "since": 2, "owner": true, "adb": false, "app": true, "extras": ["install_id"]},
+    {"name": "cancel", "since": 2, "owner": true, "adb": false, "app": true, "extras": ["install_id"]},
+    {"name": "explain", "since": 2, "owner": true, "adb": true, "app": true, "extras": ["sub_id", "dataset"]},
+    {"name": "put_record", "since": 2, "owner": true, "adb": false, "app": true, "extras": ["record"]},
+    {"name": "remove_record", "since": 2, "owner": true, "adb": false, "app": true, "extras": ["record_key"]},
+    {"name": "list_records", "since": 2, "owner": true, "adb": true, "app": true, "extras": ["sub_id"]},
+    {"name": "apply_apn_records", "since": 2, "owner": true, "adb": false, "app": true, "extras": []},
+    {"name": "stop", "since": 2, "owner": true, "adb": false, "app": true, "extras": ["reason"]},
+    {"name": "resume", "since": 2, "owner": true, "adb": true, "app": true, "extras": []},
+    {"name": "check", "since": 2, "owner": true, "adb": true, "app": true, "extras": []},
+    {"name": "clear_dataset", "since": 2, "owner": false, "adb": true, "app": false, "extras": []},
+    {"name": "set_tester", "since": 3, "owner": true, "adb": false, "app": true, "extras": ["reason"]},
+    {"name": "voice_loss_hold", "since": 3, "owner": true, "adb": false, "app": true, "extras": ["reason"]},
+    {"name": "voice_loss_release", "since": 3, "owner": true, "adb": false, "app": true, "extras": ["outcome", "reason"]},
+    {"name": "emergency_default_set", "since": 3, "owner": true, "adb": false, "app": true, "extras": ["sub_id"]},
+    {"name": "emergency_default_restore", "since": 3, "owner": true, "adb": false, "app": true, "extras": ["keep"]},
+    {"name": "apn_candidate_set", "since": 3, "owner": true, "adb": false, "app": true, "extras": ["sub_id", "candidate"], "note": "Round 32, added within protocol 3: an older provider answers unknown_method, and the app then runs no candidate."},
+    {"name": "apn_candidate_restore", "since": 3, "owner": true, "adb": false, "app": true, "extras": []}
+  ],
+  "app_legacy_methods": {
+    "set_safe_mode": "Called only after a protocol 2 (round 30) provider answers unknown_method to voice_loss_hold; gone from protocol 3."
+  },
+  "extras": [
+    "ok", "error", "reason", "waiting_for", "protocol",
+    "pin", "files", "fd.", "f5_read", "first_use", "keep", "outcome", "candidate",
+    "install_id", "job_id", "state", "checks", "changes", "apn",
+    "sub_id", "dataset", "record", "record_key", "records", "effect", "by", "serving", "result", "explain"
+  ],
+  "outcomes": ["winners", "no_failing_value"],
+  "errors": [
+    "unknown_method", "forbidden_for_caller", "bad_request", "busy", "storage", "too_large", "parse_error",
+    "not_found", "not_verified", "refused_now", "changes_halted", "voice_loss_hold", "voice_loss_stop",
+    "crash_guard_dataset", "dataset_blocked", "apn_test_set_not_in_place", "user_edited_row", "no_emergency_row",
+    "candidate_invalid", "not_tester", "not_serving_installed",
+    "apn_shrink", "sim_loses_internet", "sim_loses_ims", "apn_coupling_lost",
+    "record_invalid", "record_expired", "record_wrong_cell", "record_unknown_profile", "record_group_a", "record_group_b",
+    "record_device_override", "record_not_candidate", "record_apn_row_unknown", "record_apn_would_remove_internet"
+  ],
+  "pending_errors": {},
+  "app_local_errors": {
+    "absent": "No provider on this ROM build.",
+    "no_answer": "The provider gave no answer or threw.",
+    "forbidden_for_caller": "Also made by the app itself when the provider throws SecurityException.",
+    "bad_request": "Also made by the app itself when a dataset file cannot be opened."
+  },
+  "install_states": [
+    "verifying", "verified", "refused", "activating", "apn_installing", "apn_confirming", "switching", "proving",
+    "installed", "already_installed", "superseded", "cancelled", "apn_not_confirmed", "reload_not_proven", "apn_rollback_failed",
+    "interrupted", "in_place", "restored", "kept", "restore_failed", "waiting"
+  ],
+  "status_vectors": ["vectors/status-3-installed.json", "vectors/status-3-held.json"]
+}
