@@ -251,7 +251,9 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     private suspend fun quiet(store: FileStateStore): Result {
         val context = applicationContext
         var state = store.read()
-        if (!state.scheduleOn || OwnerScheduler.runActive(context)) return Result.success()
+        // The owner's tap ("check now") checks at once; only the background run keeps to "Test automatically".
+        val tap = !periodic
+        if ((!state.scheduleOn && !tap) || OwnerScheduler.runActive(context)) return Result.success()
         val handle = runCatching { OwnerAccess.open(context) }.getOrElse { e ->
             quietLog(store, "quiet", "no access now: ${e.message?.take(120)}")
             return Result.success()
@@ -260,7 +262,12 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             val phone = handle.phone
             val reader = QuietReader(context)
             val look = reader.read(phone, sampleMs = 0)
-            if (QuietWindow.checkBlocker(look) != null) return Result.success()
+            // A background run waits for the screen off and no call; the owner's tap runs at once with the screen on, never in a call.
+            QuietWindow.checkBlocker(look, ownerTap = tap)?.let { block ->
+                if (tap) quietLog(store, "check", "check now not run: ${block.plain}")
+                return Result.success()
+            }
+            val checkOnly = QuietWindow.checkOnly(tap, look, state.scheduleOn)
             val now = System.currentTimeMillis()
             val nowLocal = ZonedDateTime.now()
             val night = QuietWindow.night(look.minuteOfDay)
@@ -313,11 +320,19 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 return Result.success()
             }
             store.update { s -> checks.flatMap { QuietPlan.observedRecords(it, basis.forSim(dataKeys, it.sim.key), now) }.fold(s) { acc, r -> acc.recorded(r) } }
-            if (checks.any { it.missingKeeps.isNotEmpty() }) OwnerScheduler.cleanup(context, policy = ExistingWorkPolicy.KEEP)
-            // Round 26: provisional keeps reverted when the night ended without calls out or 7 days passed without incoming.
-            settleProvisional(context, store.read())
+            if (!checkOnly) {
+                if (checks.any { it.missingKeeps.isNotEmpty() }) OwnerScheduler.cleanup(context, policy = ExistingWorkPolicy.KEEP)
+                // Round 26: provisional keeps reverted when the night ended without calls out or 7 days passed without incoming.
+                settleProvisional(context, store.read())
+            }
             messageChecks(store, phone, sims, look, night)
             diagnoseCauses(store, phone, sims)
+            // The owner's tap with the screen on (or with "Test automatically" off) is the check only: the dataset step, the
+            // emergency data test and the night's tests stay with the background run. lastCheckAtMs stays, so that run is not put off.
+            if (checkOnly) {
+                quietLog(store, "check", "check now: checked at once; ${checks.joinToString { "slot ${it.sim.slot + 1}: ${it.imsLine}" }}")
+                return Result.success()
+            }
             // Round 30: the dataset installer. With it, the dataset serves, the idle moment decides when a newer one goes in,
             // and the tests of the changed values replace the night's trials; without it (the switch off, a round 29 ROM)
             // the app keeps to its checks, its night tests and its reports, and keeps no value.
