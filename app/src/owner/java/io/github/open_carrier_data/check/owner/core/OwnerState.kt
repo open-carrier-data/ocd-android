@@ -322,6 +322,8 @@ data class OwnerState(
     val balanceUssdOn: Boolean = false,
     /** Round 42 (item 4): when a balance USSD was last sent, for the small daily cap. */
     val balanceAskedMs: List<Long> = emptyList(),
+    /** Round 42 (item 4, follow-up fix): a send that read nothing (a menu, a failure, no reply) halts that SIM's sends until the next day. */
+    val balanceHalts: List<BalanceHalt> = emptyList(),
     /** Round 42 (item 5): the person's opt-in for reading the carrier's own plan SMS; off by default, and on rom behind SM9's opt-in. */
     val carrierSmsOn: Boolean = false,
 ) {

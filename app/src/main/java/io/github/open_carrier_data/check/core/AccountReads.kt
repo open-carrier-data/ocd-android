@@ -45,6 +45,17 @@ data class BalanceBrand(
     val codeSource: String,
     /** For a brand without a code: where its balance shows instead. */
     val elsewhere: String? = null,
+    /**
+     * The brand's code answers with a menu first and the balance sits behind one item, so one
+     * sendUssdRequest can never read it (Android's public API answers a reply that asks for input with
+     * onReceiveUssdResponseFailed, without the text, and no menu step is ever automated). Nothing is
+     * sent for such a brand; the owner gets the code and the item's text to pick by hand.
+     */
+    val firstReplyMenu: Boolean = false,
+    /** For [firstReplyMenu]: the text of the menu item that shows the balance, as the measurement read it. */
+    val menuItem: String? = null,
+    /** For [firstReplyMenu]: where the menu was measured. */
+    val menuSource: String? = null,
 )
 
 /** What the balance read does for one SIM: send the brand's code, or send nothing and say why. */
@@ -72,11 +83,22 @@ sealed interface BalanceChoice {
  * No source names an EF_SPN for an o2-network brand (o2, Blau, ALDI TALK, fonic, netzclub), for
  * Kaufland mobil or for otelo, so none of them is identified and none gets a code sent.
  *
- * A reply is classified once ([classify]); a menu reply is never answered.
+ * A reply is classified once ([classify]); a menu reply is never answered. A brand whose first reply
+ * is a menu (LIDL Connect, measured on the S20) gets nothing sent at all, only the code and the menu
+ * item's text for the owner to pick by hand ([BalanceBrand.firstReplyMenu]).
  */
 object BalanceUssd {
     /** The record when no code is sent because no single brand of the table matched the SIM. */
     const val NOT_IDENTIFIED = "balance code not sent: brand not identified"
+
+    /**
+     * The record when a code went out and Android answered onReceiveUssdResponseFailed: a reply that asks
+     * for input (a menu) arrives that way, without its text, and so does a network failure.
+     */
+    const val REPLY_FAILED = "balance not read: the carrier's reply needs a menu step or failed"
+
+    /** The record when a code went out and no reply came within the wait. */
+    const val NO_REPLY = "balance not read: no reply from the carrier"
 
     /** The balance-code table. Small on purpose: a brand joins only with an SPN source and a code source. */
     val BRANDS: List<BalanceBrand> = listOf(
@@ -120,6 +142,9 @@ object BalanceUssd {
             code = "*100#",
             spnSource = "read on the owner's S20 and A50 (OCD rule round 7 notes; OCD Lab README 2026-10-18); OCD Lab call_targets.json by_spn",
             codeSource = "LIDL Connect price lists of 2016 and 2019 (free); teltarif (Apr 2024); GIGA (11.09.2025); sent by hand on the S20 2026-10-30",
+            firstReplyMenu = true,
+            menuItem = "Guthaben & Verbrauch",
+            menuSource = "sent by hand on the S20 2026-10-30: *100# answers \"Wählen Sie bitte aus: 1 Aufladen, 2 Guthaben & Verbrauch, …\" and the balance shows under item 2 (S20_Project research note phone_case_lidl_20261030.md)",
         ),
     )
 
@@ -157,9 +182,18 @@ object BalanceUssd {
         val brand = brands(mccmnc, spn).singleOrNull() ?: return BalanceChoice.NotSent(NOT_IDENTIFIED, hint(mccmnc))
         val code = brand.code
             ?: return BalanceChoice.NotSent("balance code not sent: ${brand.brand} has no balance code", brand.elsewhere ?: hint(mccmnc))
+        // A first reply that is a menu is never read: nothing is sent, the owner gets the code and the item to pick by hand.
+        if (brand.firstReplyMenu) return BalanceChoice.NotSent(menuFirst(brand, code), menuHint(brand, code))
         if (!allowed(mccmnc, spn, code)) return BalanceChoice.NotSent(NOT_IDENTIFIED, hint(mccmnc))
         return BalanceChoice.Send(brand, code)
     }
+
+    /** The record for a brand whose code answers with a menu first. */
+    fun menuFirst(brand: BalanceBrand, code: String): String = "balance code not sent: ${brand.brand} answers $code with a menu"
+
+    /** The manual hint for such a brand: the code and the menu item's text, for the owner to dial and pick by hand. */
+    fun menuHint(brand: BalanceBrand, code: String): String =
+        "dial $code, choose \"${brand.menuItem ?: "the balance item"}\""
 
     /** The only shape a balance code may have: a star, three digits, a hash. */
     private val SHAPE = Regex("^\\*[0-9]{3}#$")
@@ -171,13 +205,16 @@ object BalanceUssd {
     private val DANGEROUS = Regex("^\\*(123|124|133|135)#$")
 
     /**
-     * True when [code] is the exact code of the one brand this SIM is identified as, has the plain
+     * True when [code] is the exact code of the one brand this SIM is identified as, that brand's first
+     * reply is not a menu ([BalanceBrand.firstReplyMenu]), the code has the plain
      * balance-query shape (so no second '*' carrying a top-up, voucher or booking argument, and no
      * '#'-first service code) and is none of the dangerous codes.
      */
     fun allowed(mccmnc: String, spn: String?, code: String): Boolean {
         val brand = brands(mccmnc, spn).singleOrNull() ?: return false
         if (brand.code == null || code != brand.code) return false
+        // A brand whose first reply is a menu gets nothing sent at all.
+        if (brand.firstReplyMenu) return false
         if (!SHAPE.matches(code)) return false
         if (code.count { it == '*' } > 1) return false
         if (DANGEROUS.matches(code)) return false
