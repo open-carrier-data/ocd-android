@@ -26,6 +26,8 @@ import io.github.open_carrier_data.check.core.ReportResult
 import io.github.open_carrier_data.check.core.Resolution
 import io.github.open_carrier_data.check.core.SettingsScreen
 import io.github.open_carrier_data.check.core.SimSlot
+import io.github.open_carrier_data.check.core.StatementDisplay
+import io.github.open_carrier_data.check.core.StatementView
 import io.github.open_carrier_data.check.core.SwitchStep
 import io.github.open_carrier_data.check.core.SwitchSteps
 import io.github.open_carrier_data.check.core.T2
@@ -37,6 +39,8 @@ import io.github.open_carrier_data.check.core.UserToggleRecord
 import io.github.open_carrier_data.check.phone.CallTestPhone
 import io.github.open_carrier_data.check.phone.CallTestStore
 import io.github.open_carrier_data.check.phone.PhoneReader
+import io.github.open_carrier_data.check.phone.PublicDataPhone
+import io.github.open_carrier_data.check.phone.PulledData
 import io.github.open_carrier_data.check.phone.ShizukuAccess
 import io.github.open_carrier_data.check.phone.ShizukuStatus
 import io.github.open_carrier_data.check.phone.SimChoice
@@ -71,7 +75,17 @@ data class UiState(
     val deepProblem: String? = null,
     val call: CallTestUi = CallTestUi(),
     val switches: SwitchUi = SwitchUi(),
+    /** Round 32 U1: the data pulled from OCD's validated main, in use instead of the bundled snapshot; null: the bundled one. */
+    val pulled: PulledData? = null,
+    val pulling: Boolean = false,
+    /** The last pull's plain line. */
+    val pullLine: String? = null,
+    /** Round 32 part A: what the SIM's operator states on its own pages, from the pulled data; null without it. */
+    val statements: StatementDisplay? = null,
 ) {
+    /** The read-only builds pull with a tap (U1); the owner and ROM builds pull through their own tester. */
+    val canPull: Boolean get() = BuildConfig.TESTER.isEmpty()
+
     /** What the deep check would run for: the selected SIM's slot and home network. */
     val deepTarget: DeepCheckTarget?
         get() {
@@ -140,6 +154,8 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
     private val shizuku = ShizukuAccess(application)
     private val callPhone = CallTestPhone(application)
     private val callStore = CallTestStore(application)
+    private val publicData = PublicDataPhone(application)
+    private var bundled: OcdBundle? = null
     private val callTargets by lazy { callPhone.targets() }
     private var callSession: ShizukuAccess.CallWatchSession? = null
     private var callPoll: Job? = null
@@ -231,6 +247,10 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
             readings.sim?.identity()?.let { Matcher.resolve(bundle, it) }
         }
         val findings = Findings.compare(readings, resolution, bundle)
+        val pulled = _state.value.pulled
+        val statements = readings.sim?.homeMccMnc?.let { code ->
+            pulled?.statements?.let { StatementView.forSim(it, pulled.identity, code, resolution?.stack?.map { p -> p.profileId }.orEmpty()) }
+        }
         val mailbox = withContext(Dispatchers.IO) {
             val sim = readings.sim
             callTargets?.takeIf { sim != null }?.let { CallTargets.mailboxFor(it, sim!!.homeMccMnc, sim.spn, callPhone::isEmergency) }
@@ -246,7 +266,24 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
                 readings = readings,
                 resolution = resolution,
                 findings = findings,
+                statements = statements,
             ).withReport().withSwitchSteps()
+        }
+    }
+
+    /**
+     * Round 32 U1: pulls OCD's newest validated main commit on the person's tap (read-only builds
+     * only). On a metered network at most once a day; a failed pull keeps the data in use whole.
+     */
+    fun pullData() {
+        if (!_state.value.canPull || _state.value.pulling) return
+        viewModelScope.launch {
+            val base = bundled ?: return@launch
+            _state.update { it.copy(pulling = true, pullLine = null) }
+            val line = withContext(Dispatchers.IO) { publicData.pull(base) }
+            val pulled = withContext(Dispatchers.IO) { publicData.current() }
+            _state.update { it.copy(pulling = false, pullLine = line, pulled = pulled, bundle = pulled?.bundle ?: base) }
+            reload()
         }
     }
 
@@ -538,9 +575,15 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** The bundled snapshot, and in the read-only builds the last good pull when one is in place (round 32 U1). */
     private suspend fun loadBundle(): OcdBundle? = try {
         withContext(Dispatchers.IO) {
-            getApplication<Application>().assets.open(OcdBundle.ASSET_NAME).use(OcdBundle::readGzip)
+            val base = getApplication<Application>().assets.open(OcdBundle.ASSET_NAME).use(OcdBundle::readGzip)
+            bundled = base
+            val pulled = if (BuildConfig.TESTER.isEmpty()) publicData.current() else null
+            val line = if (BuildConfig.TESTER.isEmpty()) publicData.state().lastLine else null
+            _state.update { it.copy(pulled = pulled, pullLine = line) }
+            pulled?.bundle ?: base
         }.also { bundle -> _state.update { it.copy(bundle = bundle) } }
     } catch (error: Exception) {
         _state.update { it.copy(loading = false, bundleError = error.message ?: error.javaClass.simpleName) }

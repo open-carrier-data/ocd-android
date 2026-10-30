@@ -24,6 +24,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         // No-op in debug and release; the owner build checks for its own leftovers here.
         OwnerHook.onAppStart(applicationContext)
+        // Round 32 U1: only where a ROM set the daily check (off by default); otherwise the pull waits for the person's tap.
+        io.github.open_carrier_data.check.phone.DailyDataCheck.schedule(applicationContext)
         val toCallTest = intent?.getBooleanExtra(EXTRA_CALL_TEST, false) == true
         setContent {
             OcdCheckTheme {

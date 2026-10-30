@@ -197,6 +197,23 @@ class AllowlistTest {
     }
 
     @Test
+    fun `round 32 U1 - only the data pull opens a network connection, and only to OCD's public data on GitHub`() {
+        val network = Regex("openConnection|HttpURLConnection|HttpsURLConnection|Socket\\(|DatagramSocket|URLConnection|WebView|DownloadManager|OkHttp")
+        assertEquals(listOf("PublicDataPhone.kt"), mainSources.filter { network.containsMatchIn(it.readText()) }.map { it.name })
+        val phone = mainSources.single { it.name == "PublicDataPhone.kt" }.readText()
+        // Every request and every redirect is checked before it is sent; redirects are never followed by the platform.
+        assertTrue(phone.contains("if (!PublicData.allowed(target)) throw PullException"))
+        assertTrue(phone.contains("instanceFollowRedirects = false"))
+        // The only headers: a fixed User-Agent and GitHub's API version; nothing that names the phone, the SIM or the person.
+        assertEquals(listOf("User-Agent", "Accept", "X-GitHub-Api-Version"), Regex("setRequestProperty\\(\"([^\"]+)\"").findAll(phone).map { it.groupValues[1] }.toList())
+        assertTrue(phone.contains("setRequestProperty(\"User-Agent\", PublicData.USER_AGENT)"))
+        // The pull starts only from the person's tap (the view model), or from the daily check a ROM may switch on (off by default).
+        val starters = mainSources.filter { Regex("(?i)publicData(Phone\\(this\\))?\\.pull\\(").containsMatchIn(it.readText()) }.map { it.name }.sorted()
+        assertEquals(listOf("CheckViewModel.kt", "DailyDataCheck.kt"), starters)
+        assertTrue(File("src/main/res/values/config.xml").readText().contains("<bool name=\"ocd_daily_data_check\">false</bool>"))
+    }
+
+    @Test
     fun `the call watch takes only mailbox short codes from the app, never other text`() {
         assertEquals(setOf("5500", "333"), DeepCheckProtocol.mailboxCodes(listOf("5500", "333", "5500")))
         for (bad in listOf("12", "1234567", "55 00", "5500;reboot", "+495500", "*100#", "", "５５００")) {

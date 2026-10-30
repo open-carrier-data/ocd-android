@@ -81,6 +81,8 @@ data class OwnerUi(
     val callLines: List<String> = emptyList(),
     /** The MMS line per SIM ("not checked, the network no longer offers MMS", "access point reachable"). */
     val mmsLines: List<String> = emptyList(),
+    /** Round 32 part A: what each SIM's operator states on its own pages, in part A's words; empty without the pinned statements. */
+    val statementLines: List<String> = emptyList(),
     val selfSmsLine: String? = null,
     /** Round 30: CarrierSettings's dataset installer as it last answered (serving, changes halted); null before the first look. */
     val dataset: io.github.open_carrier_data.check.owner.core.DatasetStatus? = null,
@@ -134,6 +136,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
                 if (sims.orEmpty().size > 1) "${sim.name}: $line" else line
             },
             selfSmsLine = SelfSms.line(state.selfSms.lastOrNull(), zone),
+            statementLines = withContext(Dispatchers.IO) { runCatching { statementLines(state, sims) }.getOrDefault(emptyList()) },
             apnCandidates = keys.mapValues { it.value.size },
             reportLines = withContext(Dispatchers.IO) { runCatching { reportLines(state, sims, keys) }.getOrDefault(emptyList()) },
             stepsToGo = OwnerScheduler.pending(run) + testNow,
@@ -182,6 +185,34 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         val keys = sims.orEmpty().mapNotNull { sim -> runCatching { sim.subId to QuietPlan.apnCandidates(data.apnRows(sim), sim).map { it.key }.toSet() }.getOrNull() }.toMap()
         candidateCache = key to keys
         return keys
+    }
+
+    private var statementCache: Pair<String, List<String>>? = null
+
+    /**
+     * Round 32 part A: each SIM's statements ([StatementView.forSim]) from the pinned commit's operator files, the SIM
+     * matched against the pinned bundle; read once per pin and SIM set. Offers carry "whether your tariff includes it is
+     * not checked"; a host-only brand appears only as a brand on the network.
+     */
+    private fun statementLines(state: OwnerState, sims: List<OwnerSim>?): List<String> {
+        if (sims.isNullOrEmpty()) return emptyList()
+        val data = OwnerData(getApplication(), store)
+        val key = (state.pin?.commit ?: "none") + sims.joinToString { "${it.subId}/${it.identity.mccmnc}/${it.identity.spn}" }
+        statementCache?.takeIf { it.first == key }?.let { return it.second }
+        val operators = data.operators()
+        val lines = if (operators == null) emptyList() else {
+            val bundle = data.bundle()
+            sims.flatMap { sim ->
+                val stack = io.github.open_carrier_data.check.core.Matcher.resolve(bundle, sim.identity).stack.map { it.profileId }
+                val display = io.github.open_carrier_data.check.core.StatementView.forSim(operators.statements, operators.identity, sim.identity.mccmnc, stack)
+                val prefix = if (sims.size > 1) "${sim.name}: " else ""
+                val head = display.about?.let { listOf("$prefix$it, on its own pages:") } ?: emptyList()
+                head + display.lines.map { "$prefix$it" } +
+                    (if (display.brandsOnNetwork.isEmpty()) emptyList() else listOf("${prefix}Brands on this network: ${display.brandsOnNetwork.joinToString()}"))
+            }
+        }
+        statementCache = key to lines
+        return lines
     }
 
     private var cellCache: Pair<String, List<Pair<OwnerSim, ObservedCell>>>? = null

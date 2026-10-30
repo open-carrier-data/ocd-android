@@ -2,11 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- The only two permissions. Read-only; no INTERNET: the app cannot send anything.
+    <!-- The only three permissions. Read-only.
          READ_PHONE_STATE (asked at run time): GID1, carrier settings, network type, active SIM list.
-         ACCESS_NETWORK_STATE: the APN name and types of the mobile data connections. -->
+         ACCESS_NETWORK_STATE: the APN name and types of the mobile data connections, and whether the network is metered.
+         INTERNET (OCD's round 32, U1): only for the data pull the person taps, to GitHub's API and raw hosts
+         for OCD's public repository, with no identifier (core/PublicPull.kt, phone/PublicDataPhone.kt). The app
+         sends nothing but requests for OCD's public data. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- androidx.core adds this signature permission for runtime receivers; the app registers none. -->
     <permission
@@ -39,6 +43,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- OCD's round 32 (U1): the daily data check a ROM that bundles this build may switch on
+             (ocd_daily_data_check, off by default). Only the system's job scheduler binds it. -->
+        <service
+            android:name=".phone.DailyDataJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!-- Optional deep check: Shizuku hands its binder to the app through this provider.
              Only callers holding INTERACT_ACROSS_USERS_FULL (the system, Shizuku's server) can call it. -->

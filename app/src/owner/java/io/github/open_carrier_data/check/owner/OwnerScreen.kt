@@ -721,6 +721,19 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         }
     }
 
+    // Round 32 part A: what the operator states on its own pages; shown, never used as a setting (except an MMS end).
+    if (ui.statementLines.isNotEmpty()) {
+        SectionTitle("What the operator states")
+        Group {
+            item {
+                Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    ui.statementLines.forEach { Summary(it) }
+                    Summary(io.github.open_carrier_data.check.core.StatementDisplay.NOTE)
+                }
+            }
+        }
+    }
+
     SectionTitle("Tools")
     Group {
         item { ToolRow("Check without changing anything", onClick = actions.checkNow) }

@@ -121,7 +121,8 @@ class Round31ProtocolTest {
         assertNull(DatasetRetry.dropped(installed, buildServes.copy(voiceLoss = io.github.open_carrier_data.check.owner.core.VoiceLossState(blocked = listOf("sha256:i")))))
         // A refused stage is not handed over again for the same CarrierSettings (no loop).
         assertNull(DatasetRetry.dropped(installed.copy(state = InstallState.REFUSED), buildServes))
-        assertEquals("the emergency default test set is in place", InstallRefusal.waiting("apn_test_set_in_place"))
+        // Round 32: the emergency default set and the APN candidate set both wait under this one value.
+        assertEquals("a temporary APN test set is in place", InstallRefusal.waiting("apn_test_set_in_place"))
         assertEquals("an emergency call ended less than 60 minutes ago", InstallRefusal.waiting("emergency_call_60min"))
         assertTrue("voice_loss_hold" in InstallRefusal.VOICE_LOSS && "voice_loss_stop" in InstallRefusal.VOICE_LOSS)
     }

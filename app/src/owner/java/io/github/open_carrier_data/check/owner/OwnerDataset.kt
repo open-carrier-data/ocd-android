@@ -14,6 +14,9 @@ import io.github.open_carrier_data.check.owner.core.CallEvidence
 import io.github.open_carrier_data.check.owner.core.CallsOutDue
 import io.github.open_carrier_data.check.owner.core.Campaign
 import io.github.open_carrier_data.check.owner.core.CampaignEnd
+import io.github.open_carrier_data.check.owner.core.ApnFailures
+import io.github.open_carrier_data.check.owner.core.MmsProbe
+import io.github.open_carrier_data.check.owner.core.sameCard
 import io.github.open_carrier_data.check.owner.core.CampaignPlanner
 import io.github.open_carrier_data.check.owner.core.Candidate
 import io.github.open_carrier_data.check.owner.core.Candidates
@@ -222,6 +225,16 @@ class ProviderDataset(private val context: Context) : DatasetClient {
     override fun emergencyDefaultSet(subId: Int) = call(OcdDataProtocol.EMERGENCY_DEFAULT_SET, extras = Bundle().apply { putInt(OcdDataProtocol.SUB_ID, subId) })
     override fun emergencyDefaultRestore(keep: Boolean) = call(OcdDataProtocol.EMERGENCY_DEFAULT_RESTORE, extras = Bundle().apply { putBoolean(OcdDataProtocol.KEEP, keep) })
 
+    override fun apnCandidateSet(subId: Int, candidate: String) = call(
+        OcdDataProtocol.APN_CANDIDATE_SET,
+        extras = Bundle().apply {
+            putInt(OcdDataProtocol.SUB_ID, subId)
+            putString(OcdDataProtocol.CANDIDATE, candidate)
+        },
+    )
+
+    override fun apnCandidateRestore() = call(OcdDataProtocol.APN_CANDIDATE_RESTORE)
+
     companion object {
         const val TAG = "OcdCheckDataset"
 
@@ -318,6 +331,8 @@ object OwnerDatasetStep {
         val present = readySims.ifEmpty { sims }
         val deadline = System.currentTimeMillis() + TRIALS_START_WITHIN_MS
         clearLeftoverTrial(context, store, phone, present)?.let { notes += it }
+        // Round 32: a temporary APN candidate set a crash left in place goes back at once.
+        OwnerApnCandidates.clearLeftover(context, store, client, status, present)?.let { notes += it; status = status(context, store) }
         declareTester(context, store, client, status)?.let { notes += it; status = status(context, store) }
         // A second loss under the same values (round 31): CarrierSettings serves the build's dataset and refuses changes until Resume.
         voiceLossStop(context, store, status)?.let { return (notes + it).joinToString("; ") }
@@ -557,8 +572,17 @@ object OwnerDatasetStep {
                 store.update { s -> s.copy(campaigns = s.campaigns.filterNot { it.subId == sim.subId } + c) }
             }
             notes += TrialRunner(context, store, phone, client, sim, ctx, status, if (testNow) TrialRunner.OWNER_INTERRUPTS else TrialRunner.INTERRUPTS, deadline).run(c, basis)
+            // Round 32 (D8 rule 4, rounds 33 and 36): an MMSC probe failure measured on the installed data opens the MMS candidates in this idle moment.
+            mmsFailure(store, sim, now)?.let { notes += OwnerApnCandidates.afterFailure(context, store, phone, client, status, sim, it) }
         }
         return notes
+    }
+
+    /** The SIM's last MMSC probe, when it failed within its 14 days (the free probe; no MMS is ever sent). */
+    private fun mmsFailure(store: StateStore, sim: OwnerSim, nowMs: Long): io.github.open_carrier_data.check.owner.core.LeadFailure? {
+        val last = store.read().mms.lastOrNull { it.sim.sameCard(sim.key) } ?: return null
+        val failed = last.result == "no_answer" || last.result == "refused_no_mms_network"
+        return io.github.open_carrier_data.check.owner.core.LeadFailure.MMSC_PROBE.takeIf { failed && nowMs - last.atMs in 0 until MmsProbe.EVERY_MS }
     }
 
     /**
@@ -1049,6 +1073,8 @@ class TrialRunner(
             val end = CampaignEnd(sim.subId, sim.identity.mccmnc, System.currentTimeMillis(), basis, c.commit, c.note, c.winners.size, c.noValue.size)
             store.update { s -> s.copy(campaigns = s.campaigns.filterNot { it.id == c.id }, campaignEnds = (s.campaignEnds + end).takeLast(CampaignEnd.MAX)) }
             notes += "slot ${sim.slot + 1}: ${c.note}"
+            // Round 32 (D8 and D7 rule 4, rounds 34 and 36): a measured failure no value explained opens the APN candidates.
+            if (!c.held) for (failure in ApnFailures.of(c.lastVerdict)) notes += OwnerApnCandidates.afterFailure(context, store, phone, client, status, sim, failure)
         }
         return notes.joinToString("; ")
     }

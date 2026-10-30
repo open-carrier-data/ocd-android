@@ -308,6 +308,10 @@ data class OwnerState(
     val activeTests: ActiveTestsOptIn = ActiveTestsOptIn(),
     /** Round 31 (R31.5): the last tester declaration sent to CarrierSettings, so the same one goes at most once a day. */
     val testerDeclared: TesterDeclaration? = null,
+    /** Round 32 (D8 and D7 rule 4, rounds 33 to 36): the APN candidate trials after measured failures, each once per commit and SIM. */
+    val apnTrials: List<ApnTrial> = emptyList(),
+    /** The ROM build (its incremental) whose CarrierSettings answered `unknown_method` for the candidate set: no candidate is computed there. */
+    val apnCandidateMissingOn: String? = null,
 ) {
     val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
 

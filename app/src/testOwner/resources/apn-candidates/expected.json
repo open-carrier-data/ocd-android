@@ -1,0 +1,193 @@
+{
+ "open.25020.d93e3f41cc80": {
+  "match": {
+   "mccmnc": [
+    "25020"
+   ]
+  },
+  "records": [
+   "a:377451dc7b27ae19",
+   "a:42aa5307b5a60c90",
+   "a:07c9b8798ed26803",
+   "a:b64968e5c8d7e088",
+   "a:7a30458de7693f2f",
+   "a:902ea9dd6815dcc5",
+   "a:2a09966fdf8b1913",
+   "a:fdc159d2010dbcbc",
+   "a:ca677a9be65f2a6d",
+   "a:d9d5b9d83e5868ad",
+   "a:07cd5ada0164ea7a",
+   "a:3e6d0902d0731110",
+   "a:8da5fd3ebcc2d313",
+   "a:fc49a6cc00789d07"
+  ],
+  "written": [
+   "a:2a09966fdf8b1913",
+   "a:fdc159d2010dbcbc",
+   "a:902ea9dd6815dcc5",
+   "a:fc49a6cc00789d07",
+   "a:8da5fd3ebcc2d313",
+   "a:3e6d0902d0731110",
+   "a:42aa5307b5a60c90",
+   "a:b64968e5c8d7e088",
+   "a:7a30458de7693f2f",
+   "a:ca677a9be65f2a6d",
+   "a:d9d5b9d83e5868ad",
+   "a:377451dc7b27ae19",
+   "a:07c9b8798ed26803"
+  ]
+ },
+ "open.25901.cec477271b1a": {
+  "match": {
+   "mccmnc": [
+    "25901"
+   ]
+  },
+  "records": [
+   "a:f381849cbc879cfe",
+   "a:93f0afeee6f82875",
+   "a:65218d165fa32db4",
+   "a:4d7ee3bc7772ae0c",
+   "a:95763f7dcbda09d1",
+   "a:6da4291e6779a9e9",
+   "a:dcdae7f2cb0733e8",
+   "a:376127abc29750b3",
+   "a:9bc6039fd35c4cb2",
+   "a:81fc667744579f0c",
+   "a:20cfc0f462a5f571",
+   "a:84f9a990d2d287f6",
+   "a:5f2860ed1dae2032"
+  ],
+  "written": [
+   "a:5d37e5f5253510f6",
+   "a:376127abc29750b3",
+   "a:9bc6039fd35c4cb2",
+   "a:81fc667744579f0c",
+   "a:95763f7dcbda09d1",
+   "a:6da4291e6779a9e9",
+   "a:93f0afeee6f82875",
+   "a:4d7ee3bc7772ae0c",
+   "a:65218d165fa32db4",
+   "a:84f9a990d2d287f6",
+   "a:5f2860ed1dae2032"
+  ]
+ },
+ "open.26203.dbb2be7109a6": {
+  "match": {
+   "mccmnc": [
+    "26203"
+   ]
+  },
+  "records": [
+   "a:86e54dff0d3fb91a",
+   "a:4817a55fcd061fd6",
+   "a:ba05097bd5bba244",
+   "a:fec53d6fba8c9233",
+   "a:3ac7175bb73596b9",
+   "a:b26941c47f547866",
+   "a:9726be1e1722e44f",
+   "a:941a4d89ccdf832b",
+   "a:48f11d4e9b5ea8a7",
+   "a:f566c790e285a2d0",
+   "a:884dda218cd45da5",
+   "a:efc4a004075ebcbc",
+   "a:0398359c452a40ae",
+   "a:cb47175e39629795",
+   "a:193cefb1921fa60c",
+   "a:4e47c24e2bb3eb2a",
+   "a:773ae527de3d7d38",
+   "a:fb0d0dce8ab58720",
+   "a:5e10b653e1ab0b21",
+   "a:d607576afe4b2302",
+   "a:f342106b09b88c55",
+   "a:a94e2bfddc2c8165",
+   "a:260a57896ee7351a",
+   "a:30806fe812500642",
+   "a:c5499b8a2eb5f7fe",
+   "a:56074b46065016f8"
+  ],
+  "written": [
+   "a:884dda218cd45da5",
+   "a:2b0fc9481fb82293",
+   "a:0398359c452a40ae",
+   "a:193cefb1921fa60c",
+   "a:efc4a004075ebcbc",
+   "a:4e47c24e2bb3eb2a",
+   "a:f566c790e285a2d0",
+   "a:48f11d4e9b5ea8a7",
+   "a:f563cfa0d0fe3347",
+   "a:5e10b653e1ab0b21",
+   "a:d607576afe4b2302",
+   "a:f342106b09b88c55",
+   "a:3ac7175bb73596b9",
+   "a:fec53d6fba8c9233",
+   "a:9726be1e1722e44f",
+   "a:ba05097bd5bba244",
+   "a:86e54dff0d3fb91a",
+   "a:b26941c47f547866",
+   "a:4817a55fcd061fd6",
+   "a:941a4d89ccdf832b",
+   "a:260a57896ee7351a",
+   "a:a94e2bfddc2c8165",
+   "a:c5499b8a2eb5f7fe",
+   "a:30806fe812500642",
+   "a:56074b46065016f8"
+  ]
+ },
+ "open.26220.40aaf702d9ce": {
+  "match": {
+   "mccmnc": [
+    "26220"
+   ]
+  },
+  "records": [
+   "a:d0b0301200fecc99",
+   "a:9532e663666f5a5a",
+   "a:123de745e3b24bf6",
+   "a:d4ef72a18723ce98"
+  ],
+  "written": [
+   "a:9532e663666f5a5a",
+   "a:d0b0301200fecc99",
+   "a:d4ef72a18723ce98"
+  ]
+ },
+ "open.40458.f0a31b354f9c": {
+  "match": {
+   "mccmnc": [
+    "40458"
+   ]
+  },
+  "records": [
+   "a:417cf25fce3eb89b",
+   "a:e9272dac2ee87969",
+   "a:5ce25dd4ab0118ce",
+   "a:6c9b2f12c3f29110",
+   "a:0d0a3a02ef45a795",
+   "a:ad9fd922f2c9c47f",
+   "a:efebb6969d775f89",
+   "a:1175ef2277537f6a",
+   "a:d1ed6efec7c8d4f6",
+   "a:8d5c6a0fc5d22c2c",
+   "a:cdc42dd58d68f622",
+   "a:3ddcd567a85256bd",
+   "a:e10e7127806f4702",
+   "a:f6a5aa524dded899"
+  ],
+  "written": [
+   "a:8d5c6a0fc5d22c2c",
+   "a:1175ef2277537f6a",
+   "a:d1ed6efec7c8d4f6",
+   "a:e9272dac2ee87969",
+   "a:5ce25dd4ab0118ce",
+   "a:417cf25fce3eb89b",
+   "a:ad9fd922f2c9c47f",
+   "a:efebb6969d775f89",
+   "a:0d0a3a02ef45a795",
+   "a:6c9b2f12c3f29110",
+   "a:f6a5aa524dded899",
+   "a:e10e7127806f4702",
+   "a:3ddcd567a85256bd"
+  ]
+ }
+}

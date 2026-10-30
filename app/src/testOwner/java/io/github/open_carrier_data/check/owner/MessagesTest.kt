@@ -1,5 +1,7 @@
 package io.github.open_carrier_data.check.owner
 
+import io.github.open_carrier_data.check.core.MmsEndedList
+import io.github.open_carrier_data.check.core.OperatorFiles
 import io.github.open_carrier_data.check.owner.core.InboundSms
 import io.github.open_carrier_data.check.owner.core.MmsCheck
 import io.github.open_carrier_data.check.owner.core.MmsProbe
@@ -23,20 +25,41 @@ import java.util.concurrent.TimeUnit
  * default, always on the app's port, never "works".
  */
 class MessagesTest {
-    private val ended = MmsProbe.parse(File("src/owner/assets/mms-ended.json").readText())
+    private val bundled = MmsProbe.bundled(MmsProbe.parse(File("src/owner/assets/mms-ended.json").readText()))
+    private val published = OperatorFiles.statements(File("src/test/resources/operators/statements.json").readText())
+    private val ended = MmsEndedList.of(published, bundled)
     private val sim = OwnerFixtures.SIM.key
 
     @Test
     fun `MMS is not checked where the network ended it, which covers every German network`() {
         for (code in listOf("26201", "26202", "26203", "26207", "26223")) assertTrue(code, MmsProbe.ended(ended, code) != null)
         assertEquals(
-            "MMS: not checked, the network no longer offers MMS (Vodafone Germany ended it 2023-01-17)",
+            "MMS: not checked, the network no longer offers MMS (Vodafone Deutschland states MMS ended on 2023-01-16)",
             MmsProbe.line(null, MmsProbe.ended(ended, "26202"), ZoneOffset.UTC),
         )
         // Only rows with high confidence: medium ones (KPN) and Vodafone's other codes stay test targets.
         assertNull(MmsProbe.ended(ended, "20408"))
         assertNull(MmsProbe.ended(ended, "26204"))
         assertNull(MmsProbe.ended(ended, "23410"))
+    }
+
+    @Test
+    fun `round 32 - X6 reads the published list, and mms-ended json keeps only what it does not cover yet`() {
+        // The published list covers 26202, 26203, 26207, 26223, 22802, 22803 and 27001 (private #230); they left the bundled file.
+        assertEquals(setOf("26201", "22801"), bundled.flatMap { it.mccmnc }.toSet())
+        assertEquals(emptySet<String>(), MmsEndedList.coveredByPublished(published, bundled))
+        // Nothing dropped out of X6: every network of the file before round 32 is still on the list.
+        for (code in listOf("26202", "26201", "26203", "26207", "26223", "22801", "22803", "22802", "27001")) assertTrue(code, MmsProbe.ended(ended, code) != null)
+        // The published entries come first and name the statement; the bundled ones say they are OCD's earlier list.
+        assertTrue(MmsProbe.ended(ended, "26203")!!.published)
+        assertEquals("de.telefonica.mms", MmsProbe.ended(ended, "26203")!!.statement)
+        assertFalse(MmsProbe.ended(ended, "26201")!!.published)
+        assertEquals(
+            "MMS: not checked, the network no longer offers MMS (OCD's earlier list records Telekom Deutschland ending it on 2026-06-30)",
+            MmsProbe.line(null, MmsProbe.ended(ended, "26201"), ZoneOffset.UTC),
+        )
+        // Without the published list (no pin yet, or its files refused) only the bundled networks stand.
+        assertEquals(setOf("26201", "22801"), MmsEndedList.of(null, bundled).map { it.mccmnc }.toSet())
     }
 
     @Test

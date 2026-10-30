@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
     The owner build only (src/owner; round 25 B and the owner direction of 2026-10-19).
-    Debug and release never merge this file: they keep READ_PHONE_STATE and
-    ACCESS_NETWORK_STATE only, without INTERNET (ManifestTest).
+    Debug and release never merge this file: they keep READ_PHONE_STATE,
+    ACCESS_NETWORK_STATE and, since OCD's round 32 (U1), INTERNET for the data pull
+    the person taps (ManifestTest).
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">

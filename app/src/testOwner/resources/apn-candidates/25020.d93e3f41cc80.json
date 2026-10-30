@@ -1,0 +1,191 @@
+{
+  "addons": {
+    "emergency_calling": {
+      "e911_routing_policy": "auto"
+    },
+    "ims": {
+      "support_ims_clir_overriding": true
+    },
+    "network_policy": {
+      "display_antenna_limited": true,
+      "gcf_sor": true,
+      "network_type_capability": "EUR-EUR-GSM-EUR"
+    },
+    "operator_display": {
+      "refer_eons_without_lac": true
+    },
+    "wifi_calling": {
+      "show_vowifi_end_call": true
+    }
+  },
+  "android_apns": [
+    {
+      "apn": "HOS",
+      "name": "T2 XCAP",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "xcap"
+      ]
+    },
+    {
+      "apn": "IMS",
+      "name": "T2 IMS",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "ims"
+      ]
+    },
+    {
+      "apn": "hos",
+      "name": "hos",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "xcap"
+      ]
+    },
+    {
+      "apn": "ims",
+      "name": "ims",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "ims"
+      ]
+    },
+    {
+      "apn": "ims.tele2.ru",
+      "name": "TELE2 IMS",
+      "protocol": "IPV4V6",
+      "types": [
+        "ims"
+      ]
+    },
+    {
+      "apn": "internet",
+      "name": "T2 Internet",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "default"
+      ]
+    },
+    {
+      "apn": "internet.tele2.ru",
+      "authtype": 1,
+      "name": "internet.tele2.ru",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "default"
+      ]
+    },
+    {
+      "apn": "internet.tele2.ru",
+      "carrier_id": 1028,
+      "name": "TELE2 Internet",
+      "types": [
+        "default",
+        "ia",
+        "supl"
+      ]
+    },
+    {
+      "apn": "internet.tele2.ru",
+      "name": "Tele2",
+      "types": [
+        "dun"
+      ]
+    },
+    {
+      "apn": "internet.tele2.ru",
+      "authtype": 1,
+      "name": "internet.tele2.ru",
+      "types": [
+        "supl"
+      ]
+    },
+    {
+      "apn": "internet.tele2.ru",
+      "name": "TELE2 Internet",
+      "protocol": "IPV4V6",
+      "roaming_protocol": "IPV4V6",
+      "types": [
+        "xcap"
+      ]
+    },
+    {
+      "apn": "mms",
+      "mmsc": "http://mms",
+      "mmsport": 8080,
+      "mmsproxy": "193.12.40.65",
+      "name": "T2 MMS",
+      "types": [
+        "mms"
+      ]
+    },
+    {
+      "apn": "mms.tele2.ru",
+      "carrier_id": 1028,
+      "mmsc": "http://mmsc.tele2.ru",
+      "mmsport": 8080,
+      "mmsproxy": "193.12.40.65",
+      "name": "TELE2 MMS",
+      "types": [
+        "mms"
+      ]
+    },
+    {
+      "apn": "mms.tele2.ru",
+      "authtype": 1,
+      "mmsc": "http://mmsc.tele2.ru",
+      "mmsport": 8080,
+      "mmsproxy": "193.12.40.65",
+      "name": "mms.tele2.ru",
+      "types": [
+        "mms"
+      ]
+    }
+  ],
+  "android_carrier_config": {
+    "carrier_default_wfc_ims_enabled_bool": true,
+    "carrier_default_wfc_ims_mode_int": 1,
+    "carrier_default_wfc_ims_roaming_mode_int": 2,
+    "carrier_metered_apn_types_strings": [
+      "default",
+      "dun",
+      "supl"
+    ],
+    "carrier_volte_available_bool": true,
+    "carrier_vt_available_bool": true,
+    "carrier_wfc_ims_available_bool": true,
+    "enabledMMS": true,
+    "imssms.sms_over_ims_supported_bool": true,
+    "maxMessageSize": 1048576,
+    "smsToMmsTextThreshold": 10,
+    "wfc_data_spn_format_idx_int": 1,
+    "wfc_spn_format_idx_int": 1
+  },
+  "capabilities": {
+    "esim": "unknown",
+    "ims_conference": "unknown",
+    "mms": "supported",
+    "rcs": "unknown",
+    "sms_over_ims": "supported",
+    "video_calling": "conditional",
+    "volte": "conditional",
+    "vonr": "unknown",
+    "vowifi": "supported",
+    "wifi_calling_roaming": "unknown"
+  },
+  "display_name": "Tele2",
+  "match": {
+    "mccmnc": [
+      "25020"
+    ]
+  },
+  "profile_id": "open.25020.d93e3f41cc80",
+  "schema_version": 1
+}

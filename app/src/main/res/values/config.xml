@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        OCD's rule round 32, U1: the read-only builds pull OCD's newest validated data only when
+        the person taps "Get newest data". A ROM that bundles a read-only build may overlay this
+        to true instead: the app then checks once a day by itself (at most one download a day on
+        metered data), from its first start after each boot. The pull is the same: GitHub's hosts
+        for OCD's public repository only, no identifier, falling back closed.
+    -->
+    <bool name="ocd_daily_data_check">false</bool>
+</resources>

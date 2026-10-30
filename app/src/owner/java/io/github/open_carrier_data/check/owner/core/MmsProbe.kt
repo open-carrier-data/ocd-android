@@ -1,5 +1,7 @@
 package io.github.open_carrier_data.check.owner.core
 
+import io.github.open_carrier_data.check.core.BundledMmsEnded
+import io.github.open_carrier_data.check.core.MmsEndedEntry
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.time.Instant
@@ -8,9 +10,12 @@ import java.util.concurrent.TimeUnit
 
 /*
  * MMS (round 26 rule change 6 and the coordinator's refinement of
- * 2026-10-20). Where OCD's record says a network ended MMS (high confidence,
- * the bundled assets/mms-ended.json), MMS is never tested: "MMS: not checked,
- * the network no longer offers MMS". Everywhere else MMS stays a test target,
+ * 2026-10-20). Where a network ended MMS, MMS is never tested: "MMS: not
+ * checked, the network no longer offers MMS". Since OCD's round 32 (MMS
+ * override rule 6) the list is OCD's published one (mms_ended_networks of
+ * generated/operators/statements.json at the pinned commit), and the bundled
+ * assets/mms-ended.json keeps only the networks the published list does not
+ * cover yet; it only shrinks ([MmsEndedList]). Everywhere else MMS stays a test target,
  * but the app never sends an MMS (it costs money). It only checks, silently
  * and for free, that the MMS access point answers: it asks Android for the
  * SIM's MMS network, sends one HTTP GET to the MMSC from the phone's MMS APN
@@ -54,8 +59,11 @@ object MmsProbe {
 
     fun parse(text: String): MmsEndedFile = json.decodeFromString(MmsEndedFile.serializer(), text)
 
-    /** The record's entry when [mccmnc] ended MMS (high confidence). */
-    fun ended(file: MmsEndedFile?, mccmnc: String): MmsEnded? = file?.networks?.firstOrNull { mccmnc in it.mccmnc }
+    /** The bundled file's networks, the shrink-only fallback of the published list. */
+    fun bundled(file: MmsEndedFile?): List<BundledMmsEnded> = file?.networks.orEmpty().map { BundledMmsEnded(it.operator, it.mccmnc, it.ended) }
+
+    /** The MMS-ended list's entry when [mccmnc] ended MMS ([io.github.open_carrier_data.check.core.MmsEndedList.of]). */
+    fun ended(list: List<MmsEndedEntry>, mccmnc: String): MmsEndedEntry? = list.firstOrNull { it.mccmnc == mccmnc }
 
     /**
      * The GET for [mmsc] (http only; an https MMSC is not probed), through
@@ -92,8 +100,8 @@ object MmsProbe {
     }
 
     /** The plain line for Details. */
-    fun line(check: MmsCheck?, ended: MmsEnded?, zone: ZoneId): String {
-        if (ended != null) return "MMS: not checked, the network no longer offers MMS (${ended.operator} ended it ${ended.ended})"
+    fun line(check: MmsCheck?, ended: MmsEndedEntry?, zone: ZoneId): String {
+        if (ended != null) return "MMS: not checked, the network no longer offers MMS (${ended.plain})"
         check ?: return "MMS: not checked yet"
         val day = Instant.ofEpochMilli(check.atMs).atZone(zone).toLocalDate()
         return when (check.result) {
