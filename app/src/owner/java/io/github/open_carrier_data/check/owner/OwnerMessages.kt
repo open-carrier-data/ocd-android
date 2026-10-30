@@ -11,7 +11,6 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.net.TelephonyNetworkSpecifier
 import android.net.Uri
 import android.os.Build
 import android.provider.Telephony
@@ -123,7 +122,7 @@ object OwnerMms {
         val networkRequest = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_MMS)
-            .setNetworkSpecifier(TelephonyNetworkSpecifier.Builder().setSubscriptionId(sim.subId).build())
+            .forSubscription(sim.subId)
             .build()
         val available = CompletableDeferred<Network?>()
         val callback = object : ConnectivityManager.NetworkCallback() {

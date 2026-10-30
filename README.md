@@ -684,7 +684,7 @@ echo "sdk.dir=/path/to/android-sdk" > local.properties
 python3 -m unittest discover -s tools -p 'test_*.py'
 ```
 
-The APK is `app/build/outputs/apk/debug/app-debug.apk`. CI (`.github/workflows/test.yml`) runs the unit tests (debug, release and owner), lint, the debug build and the bundle script's tests on every pull request; it never builds the owner APK. `.github/workflows/provider.yml` runs OcdCarrierSettings's tests, the contract test and its layout checks ([carriersettings/README.md](carriersettings/README.md#tests-and-ci)).
+The APK is `app/build/outputs/apk/debug/app-debug.apk`. CI (`.github/workflows/test.yml`) runs the unit tests (debug, release, owner and rom), the debug build, lint of every build type that ships (debug, release, owner and rom) and the bundle script's tests on every pull request; it never builds the owner APK. `.github/workflows/provider.yml` runs OcdCarrierSettings's tests, the contract test and its layout checks ([carriersettings/README.md](carriersettings/README.md#tests-and-ci)).
 
 **Version pins.** The project uses Android Gradle Plugin 8.7.3, the newest line that still builds with build-tools 34.0.0; AGP 8.8 and later need build-tools 35. `gradle.properties` silences AGP 8.7's warning about compileSdk 36, and `android.builder.sdkDownload=false` stops the build from fetching SDK packages on its own. The androidx versions match that AGP:
 - Compose BOM 2025.06.00
