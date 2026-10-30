@@ -328,13 +328,15 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
                         "This checks mobile data over the cellular link. Turn Wi-Fi off, then tap again."
                     else -> {
                         lastProbeMs = now
-                        val privateDnsOn = runCatching {
-                            android.provider.Settings.Global.getString(getApplication<Application>().contentResolver, "private_dns_mode")?.lowercase() in setOf("opportunistic", "hostname")
-                        }.getOrDefault(false)
                         val mccmnc = _state.value.readings?.sim?.homeMccMnc
+                        // The network's own LinkProperties (its DNS servers, asked directly) and its Private DNS mode.
+                        val link = runCatching { cm.getLinkProperties(network) }.getOrNull()
                         // D1-D4, never D5: the read-only builds keep the carrier self-care page out.
-                        val results = ProbeNet.run(network, mccmnc, includeD5 = false, privateDnsOn = privateDnsOn, privateDnsBrokenHint = null)
-                        "The mobile-data path check: " + ProbeLadder.classify(results).plain + ". This check used a few kilobytes of mobile data."
+                        val strict = ProbeNet.privateDnsStrict(getApplication(), network)
+                        val results = ProbeNet.run(network, link, strict, mccmnc, includeD5 = false, privateDnsBrokenHint = null)
+                        // Strict Private DNS that cannot reach its server is named as the phone's, never the carrier's.
+                        val factor = if (ProbeLadder.privateDnsFactor(results)) " Phone-side: ${ProbeLadder.PRIVATE_DNS_FACTOR}." else ""
+                        "The mobile-data path check: " + ProbeLadder.classify(results).plain + "." + factor + " This check used a few kilobytes of mobile data."
                     }
                 }
             }

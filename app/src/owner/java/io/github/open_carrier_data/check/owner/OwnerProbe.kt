@@ -33,7 +33,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * W1, the ePDG name lookup ([epdgIfDue]), asks the SIM's standard ePDG name of the connected Wi-Fi
  * network's resolver (found with a listen callback, never requested or brought up) and of the
- * cellular network's resolver, and keeps each answer as a class only. W2 (IKE) is not built.
+ * cellular network's own DNS servers, directly over UDP 53, and keeps each answer as a class only.
+ * W2 (IKE) is not built.
  *
  * The bounds ([ProbePolicy], [EpdgPolicy]): automatic only after a measured cellular (D1-D5) or
  * Wi-Fi-calling (W1) failure, at most once per SIM per 6 hours, plus the owner's "check now" on demand
@@ -50,12 +51,17 @@ object OwnerProbe {
 
     /**
      * Runs the ladder for [sim] on a freshly requested cellular network and returns each step's
-     * outcome, or null when the network did not come up. [privateDnsBrokenHint] is the passive read's
-     * NetworkCapabilities bit. D5 runs (owner and rom only path).
+     * outcome, or null when the network did not come up. The network's own LinkProperties give its
+     * DNS servers, [ProbeNet.privateDnsStrict] its Private DNS mode and its own capabilities the
+     * Private DNS broken bit; the default network (the Wi-Fi while Wi-Fi is on) is never read for
+     * them. D5 runs (owner and rom only path).
      */
-    suspend fun run(context: Context, sim: OwnerSim, privateDnsOn: Boolean, privateDnsBrokenHint: Boolean?): ProbeResults? =
+    suspend fun run(context: Context, sim: OwnerSim): ProbeResults? =
         onCellular(context, sim) { network ->
-            ProbeNet.run(network, sim.identity.mccmnc, includeD5 = true, privateDnsOn = privateDnsOn, privateDnsBrokenHint = privateDnsBrokenHint)
+            val cm = context.getSystemService(ConnectivityManager::class.java)
+            val link = runCatching { cm?.getLinkProperties(network) }.getOrNull()
+            val broken = runCatching { cm?.getNetworkCapabilities(network) }.getOrNull()?.let { OwnerPassiveRead.privateDnsBroken(it) }
+            ProbeNet.run(network, link, ProbeNet.privateDnsStrict(context, network), sim.identity.mccmnc, includeD5 = true, privateDnsBrokenHint = broken)
         }
 
     /**
@@ -144,14 +150,12 @@ object OwnerProbe {
         checkNow: Boolean,
         roaming: Boolean?,
         dataOff: Boolean,
-        privateDnsOn: Boolean,
-        privateDnsBrokenHint: Boolean?,
         nowMs: Long,
     ): ProbeRunMark? {
         if (ProbePolicy.refusal(roaming, dataOff) != null) return null
         val last = ProbeRunMark.last(store.read().probeRuns, sim.key)
         if (!ProbePolicy.due(measuredFailure, checkNow, last?.atMs, nowMs)) return null
-        val results = run(context, sim, privateDnsOn, privateDnsBrokenHint) ?: return null
+        val results = run(context, sim) ?: return null
         val mark = ProbeRunMark(sim.key, nowMs, ProbeLadder.classify(results), results, checkNow)
         store.updateLocked { it.copy(probeRuns = ProbeRunMark.add(it.probeRuns, mark)) }
         return mark
@@ -198,7 +202,15 @@ object OwnerProbe {
         // The emergency and call refusals, read only once a run is due; one that cannot be read refuses.
         if (!safe()) return null
         val wifiAnswer = if (plan.wifi && wifi != null) ProbeNet.epdgLookup(wifi, home) else null
-        val cellularAnswer = if (plan.cellular) onCellular(context, sim) { ProbeNet.epdgLookup(it, home) } ?: EpdgLookup.FAILS else null
+        // The cellular side asks the network's own DNS servers directly (UDP 53), so a strict Private DNS never reads as the carrier failing.
+        val cellularAnswer = if (plan.cellular) {
+            onCellular(context, sim) { network ->
+                val link = runCatching { context.getSystemService(ConnectivityManager::class.java)?.getLinkProperties(network) }.getOrNull()
+                ProbeNet.epdgLookupDirect(network, ProbeNet.resolvers(link), home)
+            } ?: EpdgLookup.FAILS
+        } else {
+            null
+        }
         val mark = EpdgRunMark(sim.key, nowMs, wifiAnswer, cellularAnswer)
         store.updateLocked { it.copy(epdgRuns = EpdgRunMark.add(it.epdgRuns, mark)) }
         return mark

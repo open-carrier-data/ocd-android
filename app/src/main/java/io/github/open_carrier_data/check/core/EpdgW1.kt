@@ -4,10 +4,14 @@ import kotlinx.serialization.Serializable
 
 /*
  * OCD rule round 42, item 2, W1: the ePDG name lookup, as pure logic. The runner
- * ([ProbeNet.epdgLookup]) looks up the SIM's standard ePDG name
+ * looks up the SIM's standard ePDG name
  * (epdg.epc.mnc<MNC>.mcc<MCC>.pub.3gppnetwork.org, [HomeNetwork.epdgFqdn]) once
- * through the current Wi-Fi network's resolver and once through the cellular
- * network's resolver. Each lookup is kept only as "resolves", "no address" or
+ * through the current Wi-Fi network's resolver ([ProbeNet.epdgLookup]) and once
+ * through the cellular network's own DNS servers, asked directly over UDP 53 so
+ * the phone's Private DNS is not in the path ([ProbeNet.epdgLookupDirect], the
+ * follow-up fix after the S20 test of 0.4.7: a strict Private DNS that cannot
+ * reach its server had read as the mobile network's resolver failing). Each
+ * lookup is kept only as "resolves", "no address" or
  * "fails"; no address is ever kept or shown. W2 (an IKE_SA_INIT to the ePDG) is not
  * built: no IKE packet and no hand-built packet goes to a carrier server.
  *
@@ -37,6 +41,20 @@ enum class EpdgLookup(val wire: String, val plain: String) {
             addresses == null -> FAILS
             addresses > 0 -> RESOLVES
             rcode == 0 || rcode == 3 -> NO_ADDRESS
+            else -> FAILS
+        }
+
+        /** From one direct UDP reply ([DnsWire]); null (no reply in time) fails. */
+        fun of(reply: DnsWire.Reply?): EpdgLookup = if (reply == null) FAILS else of(reply.addresses.size, reply.rcode)
+
+        /**
+         * Several answers for the same name (the network's resolvers, or an A and an AAAA query) as one:
+         * any address resolves; else any answer without an address is "no address"; else (none, or no
+         * resolver at all) it fails.
+         */
+        fun combine(answers: List<EpdgLookup>): EpdgLookup = when {
+            RESOLVES in answers -> RESOLVES
+            NO_ADDRESS in answers -> NO_ADDRESS
             else -> FAILS
         }
     }

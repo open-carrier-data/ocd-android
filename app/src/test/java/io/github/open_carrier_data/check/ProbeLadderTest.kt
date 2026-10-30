@@ -35,7 +35,7 @@ class ProbeLadderTest {
             redirect = RedirectHost.NONE,
         )
         assertEquals(
-            "D1 loopback ok; D2a carrier resolver answered; D2b public resolver (UDP 53) did not answer; D2c Private DNS off; " +
+            "D1 loopback ok; D2a carrier resolver answered; D2b public resolver (UDP 53) did not answer; D2c Private DNS not strict; " +
                 "D3 IPv4 literal fails, IPv6 literal not run, host fails; D4 no 204, no redirect; D5 not run",
             ProbeLadder.steps(r),
         )
@@ -51,9 +51,10 @@ class ProbeLadderTest {
             UserPlaneClass.PORTAL_REDIRECT,
             ProbeLadder.classify(ProbeResults(carrierDnsOk = true, redirect = RedirectHost.CARRIER_PORTAL)),
         )
+        // Strict Private DNS failing while the carrier's resolver answers and the path otherwise works: phone-side.
         assertEquals(
             UserPlaneClass.PRIVATE_DNS_BROKEN,
-            ProbeLadder.classify(ProbeResults(privateDnsOn = true, privateDnsOk = false, carrierDnsOk = true)),
+            ProbeLadder.classify(ProbeResults(privateDnsOn = true, privateDnsOk = false, carrierDnsOk = true, ipv4LiteralOk = true, hostOk = true, http204Clean = true)),
         )
     }
 
