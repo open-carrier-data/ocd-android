@@ -314,6 +314,8 @@ data class OwnerState(
     val apnCandidateMissingOn: String? = null,
     /** Round 42 (item 2): when the mobile-data probe ladder last ran for a SIM, so an automatic run keeps to once per SIM per 6 hours. */
     val probeRuns: List<ProbeRunMark> = emptyList(),
+    /** Round 42 (item 2, W1): when the ePDG name lookup last ran for a SIM and each resolver's class, never an address. */
+    val epdgRuns: List<EpdgRunMark> = emptyList(),
     /** Round 42 (items 4/5): the last account-state read per SIM (a balance USSD reply or a carrier-SMS class), fed into the verdict while fresh. */
     val accountReads: List<AccountReadMark> = emptyList(),
     /** Round 42 (item 4): the owner's opt-in for the balance USSD read; off by default, and on rom also behind the active-tests opt-in (SM9). */

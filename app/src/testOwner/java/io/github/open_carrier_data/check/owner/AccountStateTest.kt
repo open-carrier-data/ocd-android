@@ -3,6 +3,8 @@ package io.github.open_carrier_data.check.owner
 import io.github.open_carrier_data.check.core.AccountState
 import io.github.open_carrier_data.check.owner.core.AccountReadMark
 import io.github.open_carrier_data.check.owner.core.AccountSource
+import io.github.open_carrier_data.check.owner.core.EpdgRunMark
+import io.github.open_carrier_data.check.core.EpdgLookup
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.ProbeRunMark
 import io.github.open_carrier_data.check.owner.core.SimKey
@@ -92,5 +94,18 @@ class AccountStateTest {
         assertEquals(1, marks.size)
         assertEquals(UserPlaneClass.ACCOUNT_BLOCK_SIGNATURE, ProbeRunMark.last(marks, sim)!!.userPlane)
         assertNull(ProbeRunMark.last(marks, other))
+    }
+
+    @Test
+    fun `a W1 run mark is per SIM, keeps the latest, and feeds the verdict for 6 hours`() {
+        val first = EpdgRunMark(sim, now, wifi = EpdgLookup.RESOLVES)
+        val second = EpdgRunMark(sim, now + 1000, wifi = EpdgLookup.NO_ADDRESS, cellular = EpdgLookup.RESOLVES)
+        val marks = EpdgRunMark.add(EpdgRunMark.add(emptyList(), first), second)
+        assertEquals(1, marks.size)
+        assertEquals(EpdgLookup.NO_ADDRESS, EpdgRunMark.last(marks, sim)!!.wifi)
+        assertNull(EpdgRunMark.last(marks, other))
+        assertEquals(second, EpdgRunMark.fresh(marks, sim, now + TimeUnit.HOURS.toMillis(5)))
+        assertNull(EpdgRunMark.fresh(marks, sim, now + 1000 + TimeUnit.HOURS.toMillis(6)))
+        assertNull("a clock that went back", EpdgRunMark.fresh(marks, sim, now - 1000))
     }
 }

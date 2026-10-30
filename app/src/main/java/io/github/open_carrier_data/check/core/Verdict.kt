@@ -54,6 +54,8 @@ data class Refusal(
     val temporaryDefinite: Boolean = false,
     /** The user-plane signature, when the refusal came from the probe ladder rather than a code. */
     val userPlane: UserPlaneClass? = null,
+    /** The W1 ePDG-name comparison's finding, when the Wi-Fi-calling refusal came from it ([EpdgW1]). */
+    val epdg: EpdgClass? = null,
 )
 
 /** The verdict shown and reported: the plain line, the class, and whether two signals agreed. */
@@ -119,7 +121,7 @@ object CauseVerdicts {
         return CauseVerdict(feature, line, refusal.cause, confident)
     }
 
-    private fun phoneSide(refusal: Refusal): String = when (refusal.userPlane) {
+    private fun phoneSide(refusal: Refusal): String = refusal.epdg?.line ?: when (refusal.userPlane) {
         UserPlaneClass.PRIVATE_DNS_BROKEN -> "Phone-side: the Private DNS server can't be reached on mobile data"
         UserPlaneClass.PHONE_RESTRICTION -> "Phone-side: a phone setting (VPN, Data Saver or a data switch) is blocking it"
         else -> "Phone-side: a fault on the phone, not the network"
