@@ -23,6 +23,7 @@ import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.RomFamily
 import io.github.open_carrier_data.check.owner.core.ApnResult
 import io.github.open_carrier_data.check.owner.core.DataBasis
+import io.github.open_carrier_data.check.owner.core.Diagnoses
 import io.github.open_carrier_data.check.owner.core.OcdApnRow
 import io.github.open_carrier_data.check.owner.core.PlanWhy
 import io.github.open_carrier_data.check.owner.core.SchemaRefused
@@ -313,6 +314,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             // Round 26: provisional keeps reverted when the night ended without calls out or 7 days passed without incoming.
             settleProvisional(context, store.read())
             messageChecks(store, phone, sims, look, night)
+            diagnoseCauses(store, phone, sims)
             // Round 30: the dataset installer. With it, the dataset serves, the idle moment decides when a newer one goes in,
             // and the tests of the changed values replace the night's trials; without it (the switch off, a round 29 ROM)
             // the app keeps to its checks, its night tests and its reports, and keeps no value.
@@ -445,6 +447,36 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 val sent = runCatching { OwnerSelfSms.send(context, phone, sim, on = true) }.getOrNull() ?: continue
                 store.update { it.logged(now, "self_sms", "slot ${sim.slot + 1}: ${sent.result}") }
             }
+        }
+    }
+
+    /**
+     * OCD round 42 (items 1/3/7): the passive cause read and the plain verdict. For each SIM it reads
+     * the fail causes and the user-plane state ([OwnerPassiveRead]), the IMS sign-out reason
+     * ([ImsReasonReader]) and whether MMS ended, assembles the verdict ([Diagnoses]) and logs it when
+     * it differs from the last one. Read-only: it sends no traffic, changes no value and starts no
+     * candidate. The account-state read (balance, carrier SMS) is UNKNOWN until those are built.
+     */
+    private suspend fun diagnoseCauses(store: FileStateStore, phone: OwnerPhone, sims: List<OwnerSim>) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val context = applicationContext
+        val ended = runCatching { OwnerMms.ended(context) }.getOrNull().orEmpty()
+        for (sim in sims) {
+            val diagnosis = runCatching {
+                val roaming = QuietReader.roaming(context) == true
+                val reason = ImsReasonReader.read(context, sim.subId)
+                val mmsEnded = MmsProbe.ended(ended, sim.identity.mccmnc) != null
+                val inputs = OwnerPassiveRead.read(context, sim.subId, roaming, mmsEnded = mmsEnded).copy(
+                    imsRegistered = reason.registered,
+                    imsReasonCode = reason.imsReasonCode,
+                    sipResponseCode = reason.sipResponseCode,
+                )
+                Diagnoses.of(inputs)
+            }.getOrNull() ?: continue
+            val line = diagnosis.line ?: continue
+            val tag = "diagnosis:${sim.slot}"
+            if (store.read().log.lastOrNull { it.kind == tag }?.text == line) continue
+            quietLog(store, tag, line)
         }
     }
 
