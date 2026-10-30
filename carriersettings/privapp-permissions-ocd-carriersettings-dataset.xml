@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- OcdCarrierSettingsDataset (OCD rule round 30), the owner's builds only: LineageOS's two
+     grants, plus UPDATE_CONFIG for UPDATE_APN_DB and WRITE_APN_SETTINGS for reading
+     TelephonyProvider to confirm the APN install (spec 7.2, owner decision 2026-10-25). -->
+<permissions>
+    <privapp-permissions package="com.android.carriersettings">
+        <permission name="android.permission.MODIFY_PHONE_STATE" />
+        <permission name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
+        <permission name="android.permission.UPDATE_CONFIG" />
+        <permission name="android.permission.WRITE_APN_SETTINGS" />
+    </privapp-permissions>
+</permissions>

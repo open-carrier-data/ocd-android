@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- Device-wide overrides applied after the protobuf settings, including without a SIM.
+     Use a single, unconditional carrier_config bundle; carrier filters are not supported. -->
+<carrier_config>
+    <!-- Example device overlay entries; choose values appropriate for the device:
+    <boolean name="imsvoice.audio_evs_support_bool" value="false" />
+    <int-array name="iwlan.supported_integrity_algorithms_int_array" num="4">
+        <item value="2" />
+        <item value="12" />
+        <item value="13" />
+        <item value="14" />
+    </int-array>
+    -->
+</carrier_config>

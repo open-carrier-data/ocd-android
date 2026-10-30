@@ -1,0 +1,164 @@
+// Open Carrier Data's CarrierSettings: the dataset provider OcdCarrierSettingsDataset, the second
+// app of this repository (OCD rule round 37, item 6). Soong reads only this directory; the Gradle
+// build of OCD Check (app/) has no Android.bp and is never part of it. The two stay two APKs: this
+// one is package com.android.carriersettings, platform-signed by each ROM builder, privileged,
+// system_ext, directBootAware, with no INTERNET, no UI and no network or checker code.
+//
+// Moved from the owner's ROM tree (vendor/extra main cfa8ee1); README.md lists every difference
+// from that copy. A ROM adds it with one repo project and PRODUCT_PACKAGES +=
+// OcdCarrierSettingsDataset. The ROM tree supplies what belongs to the ROM or the device, and the
+// build fails without it:
+// - the writer, OCD_WRITER_CERT and OCD_WRITER_PACKAGE, or explicitly none (below);
+// - ocd_carrier_dataset: the baked dataset, a prebuilt_etc installed to
+//   /system_ext/etc/OcdCarrierSettings/dataset;
+// - ocd_carrier_build: the device's ocd-build.json, a prebuilt_etc installed to
+//   /system_ext/etc/OcdCarrierSettings. Only a device family whose emergency data test first use
+//   passed (SM10) declares it there; this repository ships no such declaration;
+// - ocd_carrier_settings_record: the build record ocd-carriersettings.json, same folder.
+// The device's override overlay and its ROM family's sepolicy lines stay in the ROM tree too
+// (LineageOS: sepolicy/lineageos here, added only by a LineageOS build).
+
+// OCD's dataset in place of Google's carrier data (OCD rules rounds 30 and 31; ocd/). Each SIM's
+// bundle comes from OCD's dataset alone, matched by OCD's own rules: the build's baked dataset
+// (the ROM's ocd_carrier_dataset), or a newer one the OCD app hands over through a provider pinned
+// to that app's certificate (a build parameter, below). The APN part goes through Android's
+// UPDATE_APN_DB. No Google .pb file and no INTERNET permission. LineageOS's resources (res/: the
+// device override XML and its CarrierSettingsConfig overlayable) and the lines of LineageOS's
+// service that apply LineageOS's fixed key and the device override last stay for good (round 31,
+// SM3: device quirks belong to the device tree, applied last); check_upstream.sh proves what still
+// comes from LineageOS. On a ROM without LineageOS's overlay the resource stays empty, and the
+// service reads an AOSP device tree's CarrierConfig vendor.xml instead.
+android_app {
+    name: "OcdCarrierSettingsDataset",
+    srcs: ["ocd/src/**/*.kt"],
+    manifest: "ocd/AndroidManifest.xml",
+    // ocd/res adds OCD's resources; the zips below set the writer from the build parameter. Every
+    // resource dir after the first is an overlay to aapt2.
+    aaptflags: ["--auto-add-overlay"],
+    resource_dirs: [
+        "res",
+        "ocd/res",
+    ],
+    resource_zips: [
+        ":ocd_writer_cert_res",
+        ":ocd_writer_package_res",
+    ],
+    platform_apis: true,
+    certificate: "platform",
+    system_ext_specific: true,
+    privileged: true,
+    overrides: [
+        "CarrierSettings",
+        "OcdCarrierSettings",
+    ],
+    required: [
+        "OcdCarrierSettingsTelephonyOverlay",
+        "default_permissions_ocd_carriersettings_dataset",
+        "ocd_carrier_dataset",
+        "ocd_carrier_build",
+        "ocd_carrier_settings_record",
+        "privapp_permissions_ocd_carriersettings_dataset",
+    ],
+}
+
+// The dataset provider's one writer is a build parameter (OCD rule round 31, SM5) with no default
+// (round 37): the SHA-256 of the certificate and the package of the ROM's own build of the OCD
+// app, set by the ROM's BoardConfig as OCD_WRITER_CERT and OCD_WRITER_PACKAGE and passed through
+// Soong config namespace "ocd":
+//   $(call soong_config_set,ocd,writer_cert,$(OCD_WRITER_CERT))
+//   $(call soong_config_set,ocd,writer_package,$(OCD_WRITER_PACKAGE))
+// Each genrule writes one resource (ocd_owner_certs, which the writer permission's knownCerts and
+// the caller check read; ocd_writer_package) into a zip that overlays ocd/res's base values. Both
+// set to none: no app can write, and the provider serves only the baked dataset. Unset, or a value
+// of the wrong form, fails the build.
+// (A value variable allows a single % in the command, so the commands use echo.)
+soong_config_module_type {
+    name: "ocd_writer_cert_genrule",
+    module_type: "genrule",
+    config_namespace: "ocd",
+    value_variables: ["writer_cert"],
+    properties: ["cmd"],
+}
+
+soong_config_module_type {
+    name: "ocd_writer_package_genrule",
+    module_type: "genrule",
+    config_namespace: "ocd",
+    value_variables: ["writer_package"],
+    properties: ["cmd"],
+}
+
+ocd_writer_cert_genrule {
+    name: "ocd_writer_cert_res",
+    out: ["ocd-writer-cert-res.zip"],
+    tools: ["soong_zip"],
+    cmd: "echo \"OCD_WRITER_CERT is not set: set it to the SHA-256 of your OCD app's signing certificate, or to none (see carriersettings/README.md in ocd-android)\" >&2 && exit 1",
+    soong_config_variables: {
+        writer_cert: {
+            cmd: "v='%s' && " +
+                "if [[ $$v == none ]]; then items=; " +
+                "elif [[ $$v =~ ^[0-9a-f]{64}$$ ]]; then items=\"<item>$$v</item>\"; " +
+                "else echo \"OCD_WRITER_CERT must be 64 lowercase hex digits (a SHA-256 certificate digest) or none\" >&2; exit 1; fi && " +
+                "mkdir -p $(genDir)/res/values && " +
+                "echo \"<?xml version='1.0' encoding='utf-8'?><resources><string-array name='ocd_owner_certs' translatable='false'>$$items</string-array></resources>\" > $(genDir)/res/values/ocd_writer_cert.xml && " +
+                "$(location soong_zip) -o $(out) -C $(genDir)/res -D $(genDir)/res",
+        },
+    },
+}
+
+ocd_writer_package_genrule {
+    name: "ocd_writer_package_res",
+    out: ["ocd-writer-package-res.zip"],
+    tools: ["soong_zip"],
+    cmd: "echo \"OCD_WRITER_PACKAGE is not set: set it to your OCD app's package (io.github.open_carrier_data.check or io.github.open_carrier_data.check.owner), or to none (see carriersettings/README.md in ocd-android)\" >&2 && exit 1",
+    soong_config_variables: {
+        writer_package: {
+            cmd: "v='%s' && " +
+                "{ [[ $$v == io.github.open_carrier_data.check || $$v == io.github.open_carrier_data.check.owner || $$v == none ]] || { echo \"OCD_WRITER_PACKAGE must be io.github.open_carrier_data.check, io.github.open_carrier_data.check.owner or none\" >&2; exit 1; }; } && " +
+                "mkdir -p $(genDir)/res/values && " +
+                "echo \"<?xml version='1.0' encoding='utf-8'?><resources><string name='ocd_writer_package' translatable='false'>$$v</string></resources>\" > $(genDir)/res/values/ocd_writer_package.xml && " +
+                "$(location soong_zip) -o $(out) -C $(genDir)/res -D $(genDir)/res",
+        },
+    },
+}
+
+// POST_NOTIFICATIONS for CarrierSettings's own stop-event notice (round 31: a failed restore of
+// the temporary emergency APN set, a second voice loss, a reboot with the test set in place).
+prebuilt_etc {
+    name: "default_permissions_ocd_carriersettings_dataset",
+    system_ext_specific: true,
+    relative_install_path: "default-permissions",
+    src: "default-permissions-ocd-carriersettings-dataset.xml",
+    filename_from_src: true,
+}
+
+// The protos of Google's carrier files. The provider does not use them; the ROM tree's legacy .pb
+// module OcdCarrierSettings does until it is retired (round 37 moves the library here with the rest).
+java_library {
+    name: "ocd_carriersettings_proto",
+    proto: {
+        type: "lite",
+        include_dirs: ["external/protobuf/src"],
+    },
+    srcs: [
+        "proto/*.proto",
+        ":libprotobuf-internal-protos",
+    ],
+}
+
+prebuilt_etc {
+    name: "privapp_permissions_ocd_carriersettings_dataset",
+    system_ext_specific: true,
+    relative_install_path: "permissions",
+    src: "privapp-permissions-ocd-carriersettings-dataset.xml",
+    filename_from_src: true,
+}
+
+// Points Telephony at com.android.carriersettings, as LineageOS's CarrierSettingsOverlay does.
+runtime_resource_overlay {
+    name: "OcdCarrierSettingsTelephonyOverlay",
+    resource_dirs: ["overlay/res"],
+    manifest: "overlay/AndroidManifest.xml",
+    product_specific: true,
+    sdk_version: "current",
+}

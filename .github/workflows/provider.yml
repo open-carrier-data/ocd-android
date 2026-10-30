@@ -1,0 +1,98 @@
+name: Provider
+
+# OcdCarrierSettingsDataset, the second app of this repository (carriersettings/, OCD rule round 37,
+# item 6): its JVM tests and the writer-to-provider contract test (protocol/), the compile check of
+# its Android glue against the SDK's android.jar, its byte record of the move (cut.json), and the
+# layout that keeps Soong away from the Gradle app. The app's half of the contract runs in
+# test.yml (testOwnerUnitTest). No Android tree and no ROM build here.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    tags:
+      - "carriersettings/v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  provider:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # run.sh reads the Kotlin compiler and JUnit from Gradle's cache layout under GRADLE_USER_HOME.
+      - name: A clean Gradle cache folder
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-home" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up the JDK
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Exactly the jars run.sh uses, from Maven Central, each pinned by its SHA-256.
+      - name: Kotlin 2.2.21 compiler and JUnit for run.sh
+        run: |
+          set -eu
+          cache="$GRADLE_USER_HOME/caches/modules-2/files-2.1"
+          while read -r group artifact version sha; do
+            dir="$cache/$group/$artifact/$version/ci"
+            mkdir -p "$dir"
+            file="$dir/$artifact-$version.jar"
+            curl -fsSL --retry 3 -o "$file" "https://repo1.maven.org/maven2/$(echo "$group" | tr . /)/$artifact/$version/$artifact-$version.jar"
+            echo "$sha  $file" | sha256sum -c --quiet -
+          done <<'EOF'
+          org.jetbrains.kotlin kotlin-compiler-embeddable 2.2.21 9588fa696ac5507af764fd5660df6894185e12704ec1bc3f5cb772af4987f295
+          org.jetbrains.kotlin kotlin-stdlib 2.2.21 6558a3d233da56a20934b32159f9db5f86ed5816ef098f78a2c223dc6abb79dd
+          org.jetbrains.kotlin kotlin-script-runtime 2.2.21 2b1519b427b514d1536c1b425674b03fe914af637924028e9959c6625442df51
+          org.jetbrains.kotlin kotlin-reflect 1.6.10 3277ac102ae17aad10a55abec75ff5696c8d109790396434b496e75087854203
+          org.jetbrains.kotlin kotlin-daemon-embeddable 2.2.21 91c0673c22e44b054ae0314d323860ebe1f3aff3f0ebc74fff82c4733dde09be
+          org.jetbrains.kotlinx kotlinx-coroutines-core-jvm 1.8.0 9860906a1937490bf5f3b06d2f0e10ef451e65b95b269f22daf68a3d1f5065c5
+          org.jetbrains annotations 13.0 ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478
+          junit junit 4.13.2 8e495b634469d64fb8acfa3495a065cbacc8a0fff55ce1e31007be4c16dc57d3
+          org.hamcrest hamcrest-core 1.3 66fdef91e9739348df7a096aa384a5685f4e875584cce89386a7a47251c4d8e9
+          EOF
+
+      - name: Check the Android SDK
+        run: |
+          [ -f "$ANDROID_HOME/platforms/android-36/android.jar" ] || \
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" > /dev/null
+
+      - name: Provider JVM tests, the contract test and the glue compile check
+        run: sh carriersettings/ocd/test/run.sh "$ANDROID_HOME/platforms/android-36/android.jar"
+
+      - name: Byte record of the move from vendor/extra
+        run: python3 -I carriersettings/check_cut.py
+
+      - name: Layout for an Android tree
+        run: |
+          set -eu
+          # Soong reads Android.bp files and Kati Android.mk files anywhere in a project. Only
+          # carriersettings/ may hold Android.bp; the Gradle app is pruned by app/.find-ignore.
+          bad=$(git ls-files | grep -E '(^|/)(Android\.bp|Android\.mk|CleanSpec\.mk)$' | grep -v '^carriersettings/' || true)
+          [ -z "$bad" ] || { echo "build files outside carriersettings/: $bad" >&2; exit 1; }
+          [ -z "$(git ls-files | grep -E '(^|/)Android\.mk$' || true)" ] || { echo "no Android.mk anywhere" >&2; exit 1; }
+          [ -f app/.find-ignore ] || { echo "app/.find-ignore is missing" >&2; exit 1; }
+          for marker in .find-ignore .out-dir carriersettings/.find-ignore carriersettings/.out-dir; do
+            [ ! -e "$marker" ] || { echo "$marker would hide the provider from Soong" >&2; exit 1; }
+          done
+          # No default writer (round 37): each writer genrule's default command fails the build.
+          [ "$(grep -c '>&2 && exit 1",$' carriersettings/Android.bp)" -eq 2 ] || { echo "a writer genrule has a default" >&2; exit 1; }
+          ! grep -n 'c9b9e2e3e8cd7ddaedbd60df5b91a6f5af6f039e3d4d6e413d2cdb5ffe3877a8' -r carriersettings protocol || { echo "the owner build's certificate is named in the published module" >&2; exit 1; }
+          # No emergency data test first use declared for other phones (round 37): no ocd-build.json here.
+          [ -z "$(git ls-files | grep -E '(^|/)ocd-build\.json$' || true)" ] || { echo "an ocd-build.json is published" >&2; exit 1; }
+          # The provider asks for no INTERNET (two APKs, never one).
+          ! grep -n 'android.permission.INTERNET' carriersettings/ocd/AndroidManifest.xml carriersettings/overlay/AndroidManifest.xml || exit 1
+          echo "layout: Android.bp only in carriersettings/, app/ pruned, no default writer, no ocd-build.json, no INTERNET"

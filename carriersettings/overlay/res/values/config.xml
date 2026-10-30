@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The package name for the platform carrier config app, bundled with system image:
+         OCD's build of com.android.carriersettings (vendor/extra/carriersettings). -->
+    <string name="platform_carrier_config_package" translatable="false">com.android.carriersettings</string>
+</resources>
