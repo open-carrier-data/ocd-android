@@ -38,6 +38,15 @@
         <permission name="android.permission.DUMP" />
         <permission name="android.permission.PACKAGE_USAGE_STATS" />
         <permission name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />
+        <!--
+            Round 42 (entitlement note): USE_ICC_AUTH, Android 16's new SIM-auth permission
+            (signature|privileged, behind com.android.internal.telephony.flags.new_sim_auth_permission),
+            declared next to READ_PRIVILEGED_PHONE_STATE for the EAP-AKA getIccAuthentication path.
+            Nothing uses it yet; it is listed so the app keeps working once Google removes the
+            READ_PRIVILEGED_PHONE_STATE fallback. On a build where the flag is off the permission does
+            not exist and the entry is ignored.
+        -->
+        <permission name="android.permission.USE_ICC_AUTH" />
     </privapp-permissions>
 
     <!--

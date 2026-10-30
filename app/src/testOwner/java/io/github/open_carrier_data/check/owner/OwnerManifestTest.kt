@@ -36,6 +36,8 @@ class OwnerManifestTest {
             // Round 30: the dataset installer's writer permission (signature|knownSigner in CarrierSettings, not privileged),
             // and the emergency data test's restricted network (privileged, in the privapp file).
             "com.android.carriersettings.permission.WRITE_OCD_DATASET", "android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS",
+            // Round 42 (entitlement note): declared for the EAP-AKA getIccAuthentication path, nothing uses it yet.
+            "android.permission.USE_ICC_AUTH",
         ) + ROUND_26_RUNTIME + ROUND_26_NORMAL
         val readOnly = setOf("android.permission.READ_PHONE_STATE", "android.permission.ACCESS_NETWORK_STATE", "moe.shizuku.manager.permission.API_V23")
         // WorkManager's own: wake lock and its foreground service (never started by the owner build).
@@ -137,7 +139,9 @@ class OwnerManifestTest {
         assertTrue(ROUND_26_RUNTIME.none { it in listed } && ROUND_26_NORMAL.none { it in listed })
         // Round 30 added exactly one, for the emergency data test; the XML and the APK go together into vendor/extra.
         assertTrue("android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" in listed && "android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" in requested)
-        assertEquals(7, listed.size)
+        // Round 42 added USE_ICC_AUTH, signature|privileged; the XML and the APK go together into vendor/extra.
+        assertTrue("android.permission.USE_ICC_AUTH" in listed && "android.permission.USE_ICC_AUTH" in requested)
+        assertEquals(8, listed.size)
     }
 
     @Test

@@ -53,6 +53,16 @@
     <uses-permission
         android:name="android.permission.READ_PRIVILEGED_PHONE_STATE"
         tools:ignore="ProtectedPermissions,PermissionImpliesUnsupportedChromeOsHardware" />
+    <!--
+        Round 42 (entitlement note): Android 16's new SIM-auth permission, declared next to
+        READ_PRIVILEGED_PHONE_STATE so the EAP-AKA getIccAuthentication path keeps working once
+        Google removes the READ_PRIVILEGED_PHONE_STATE fallback (signature|privileged, behind
+        com.android.internal.telephony.flags.new_sim_auth_permission). Nothing uses it yet; a TS.43
+        entitlement client is on round 42's do-not-build list.
+    -->
+    <uses-permission
+        android:name="android.permission.USE_ICC_AUTH"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission
         android:name="android.permission.READ_PRECISE_PHONE_STATE"
         tools:ignore="ProtectedPermissions,PermissionImpliesUnsupportedChromeOsHardware" />
