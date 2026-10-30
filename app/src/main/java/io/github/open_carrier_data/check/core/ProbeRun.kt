@@ -90,6 +90,9 @@ object ProbePolicy {
     /** Read-only: a short cooldown between taps, so a burst of HTTP/DNS does not look like scanning. */
     val TAP_COOLDOWN_MS: Long = 2 * 60 * 1000L
 
+    /** Owner and rom: the same short cooldown between two runs the owner starts with "check now". */
+    val CHECK_NOW_COOLDOWN_MS: Long = TAP_COOLDOWN_MS
+
     /** Why a run is refused now, or null when it may run. [roaming] and [dataOff] are the hard stops. */
     fun refusal(roaming: Boolean?, dataOff: Boolean): String? = when {
         roaming == null -> "whether the phone is roaming could not be read"
@@ -104,6 +107,19 @@ object ProbePolicy {
      */
     fun autoDue(measuredFailure: Boolean, lastRunAtMs: Long?, nowMs: Long): Boolean =
         measuredFailure && (lastRunAtMs == null || nowMs - lastRunAtMs >= AUTO_EVERY_MS || nowMs < lastRunAtMs)
+
+    /**
+     * Whether the owner's "check now" may run the ladder: on demand, with no measured failure needed (the
+     * ruling: the owner's "check now" beside the automatic runs), but only once the short cooldown since
+     * the SIM's last run of any kind has passed. The caller applies the same refusals as an automatic run
+     * (roaming, mobile data off, the emergency and call refusals) first.
+     */
+    fun checkNowDue(lastRunAtMs: Long?, nowMs: Long): Boolean =
+        lastRunAtMs == null || nowMs - lastRunAtMs >= CHECK_NOW_COOLDOWN_MS || nowMs < lastRunAtMs
+
+    /** An owner/rom run: "check now" within its cooldown, otherwise the automatic rule ([autoDue]). */
+    fun due(measuredFailure: Boolean, checkNow: Boolean, lastRunAtMs: Long?, nowMs: Long): Boolean =
+        if (checkNow) checkNowDue(lastRunAtMs, nowMs) else autoDue(measuredFailure, lastRunAtMs, nowMs)
 
     /** Whether a read-only tap may run now: the short cooldown since the last tap has passed. */
     fun tapAllowed(lastTapAtMs: Long?, nowMs: Long): Boolean =

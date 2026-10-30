@@ -105,7 +105,7 @@ class FileStateStore(context: Context) : StateStore {
         val last = lastTraced
         // In a new process only what happens from now on.
         val since = last?.first ?: (PROCESS_START - 1)
-        val fresh = state.log.filter { (it.atMs > since || (last != null && it.atMs == last.first && it.text != last.second)) && it.kind in TRACED }
+        val fresh = state.log.filter { (it.atMs > since || (last != null && it.atMs == last.first && it.text != last.second)) && traced(it.kind) }
         for (event in fresh) runCatching { android.util.Log.i(TRACE_TAG, "${event.kind}: ${event.text}") }
         state.log.lastOrNull()?.let { lastTraced = it.atMs to it.text }
     }
@@ -118,6 +118,11 @@ class FileStateStore(context: Context) : StateStore {
         private var cached: Cached? = null
         const val TRACE_TAG = "OcdCheckCalls"
         private val TRACED = setOf("calls_out", "call_watch", "provisional", "self_sms", "mms")
+
+        /** Round 42's per-slot lines (the verdict, the probe ladder, W1): classes and plain words only, no identifier. */
+        private val TRACED_PREFIXES = listOf("diagnosis:", "probe:", "epdg:")
+
+        fun traced(kind: String): Boolean = kind in TRACED || TRACED_PREFIXES.any { kind.startsWith(it) }
 
         @Volatile
         private var lastTraced: Pair<Long, String>? = null
