@@ -41,6 +41,7 @@ class OlderAppTest {
         "c66a75c (#34, 0.4.1; vendor/extra main and the update on the S20 since 2026-10-28)" to 5,
         "5576087 (#35, 0.4.2; vendor/extra r37-provider-from-ocd-android, in build B 24.0-20261030)" to 6,
         "9ef4cec (#38, 0.4.3; vendor/extra r37-provider-from-ocd-android 7864532, the update on the S20 since 2026-10-30)" to 7,
+        "4974c7a (#39, 0.4.4; vendor/extra main a9c7a6f, the update on the S20 since 2026-10-30)" to 8,
     )
 
     @Test
