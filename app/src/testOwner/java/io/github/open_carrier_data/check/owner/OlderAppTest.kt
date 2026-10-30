@@ -44,6 +44,7 @@ class OlderAppTest {
         "4974c7a (#39, 0.4.4; vendor/extra main a9c7a6f, the update on the S20 since 2026-10-30)" to 8,
         "a8cf003 (#44, 0.4.5; vendor/extra main 4351a8a, round 42's classifiers)" to 9,
         "15cc9e2 (#46, 0.4.6; vendor/extra app-0.4.6 5ba975a, round 42's live runners)" to 10,
+        "5f93349 (#49, 0.4.7; vendor/extra main 3077346, the update on the S20 since 2026-10-30)" to 11,
     )
 
     @Test
