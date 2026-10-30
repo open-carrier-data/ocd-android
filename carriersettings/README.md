@@ -18,7 +18,7 @@ The app is the dataset's only writer, through `content://com.android.carriersett
 
 This folder moved here in one commit from the owner's ROM tree for the Galaxy S20: **vendor/extra `main` at `64c73cbf1698c8eed5b55d057287d308dc32acff`** (the cut): round 32's APN candidate trials (`cfa8ee1`) on top of `131caf9`, and `Engine.update` no longer `internal` (see [Soong and Gradle](#soong-and-gradle-in-one-repository)). The first cut, `cfa8ee1`, is tag `carriersettings/v1.0.0`. No history came with it.
 
-[`cut.json`](cut.json) lists every file with its git blob at the cut, and `check_cut.py` (run in CI) holds the folder to it: 41 files are byte for byte the cut's. The rest:
+[`cut.json`](cut.json) lists every file with its git blob at the cut, and `check_cut.py` (run in CI) holds the folder to it: 39 files are byte for byte the cut's. The rest:
 
 | File | Change | Why |
 |---|---|---|
@@ -27,10 +27,11 @@ This folder moved here in one commit from the owner's ROM tree for the Galaxy S2
 | `check_build.sh`, `check_build_res.py` | read the ROM's data folder and its `device-override.json`; the writer check has no default | the S20's values and paths stay in its tree |
 | `check_upstream.sh` | the legacy module's code is compared only with `LEGACY_DIR` | that module stays in the ROM tree |
 | `ocd/test/run.sh` | runs the contract test | round 37's writer-to-provider contract |
+| `ocd/src/.../ocd/ServingIndex.kt`, `ocd/test/src/BundleTest.kt` | the serving index carries each profile's sources (schema `ocd-index/2`); the test that the index, the streamed baked files and the dataset serve the same bundle | `carriersettings/v1.0.2`: without the sources no group A read admitted a profile's own value from the index (see [Tags](#tags)) |
 | added | `ocd/test/src/ProtocolContractTest.kt`, `check_cut.py`, `check_path_independent.sh`, `cut.json`, this README | |
 | moved | `sepolicy/lineageos/platform_app.te` is vendor/extra's `sepolicy/private/platform_app.te` | LineageOS only, added only by a LineageOS build |
 
-The sources (`ocd/src`), the manifest, the resources, the Telephony overlay, the protos and the permission files are unchanged. The provider's code is the code the S20 runs.
+The manifest, the resources, the Telephony overlay, the protos and the permission files are unchanged, and so are the sources (`ocd/src`) apart from `ServingIndex.kt` since `carriersettings/v1.0.2`.
 
 These stay in the ROM tree, because they belong to the ROM or the device:
 - the baked dataset and the build record (`ocd-carriersettings.json`);
@@ -39,7 +40,7 @@ These stay in the ROM tree, because they belong to the ROM or the device:
 - the device's `carrier_config_override` overlay and the ROM family's sepolicy lines;
 - Google's `.pb` files and the legacy `.pb` module `OcdCarrierSettings`, until they are retired.
 
-**Status.** Since round 37's step 3 (2026-10-30) the owner's S20 builds the provider from this folder, pinned to `carriersettings/v1.0.1`, and vendor/extra holds no copy of it any more. Step 3's build from here was checked against the build from vendor/extra's copy before that copy went:
+**Status.** Since round 37's step 3 (2026-10-30) the owner's S20 builds the provider from this folder, pinned to a provider tag (build E of 2026-10-30 ran `carriersettings/v1.0.1`), and vendor/extra holds no copy of it any more. Step 3's build from here was checked against the build from vendor/extra's copy before that copy went:
 - `check_build.sh` passed;
 - the provider APK's classes, manifest and resources are equal apart from the signature, and the dataset files are byte-identical;
 - on the S20 with o2 and with LIDL, Telephony bound `com.android.carriersettings`, config was served, the dataset was installed, IMS registered, and calls over LTE and over Wi-Fi calling stayed up past 15 s.
@@ -57,7 +58,7 @@ This folder is now the only source of the provider, and [rom-builders.md](https:
 ```xml
 <remote name="ocd" fetch="https://github.com/open-carrier-data" />
 <project name="ocd-android" path="packages/apps/OcdCarrierSettings" remote="ocd"
-         revision="refs/tags/carriersettings/v1.0.1" />
+         revision="refs/tags/carriersettings/v1.0.2" />
 ```
 
 The path can be any; the examples below use this one. Module names are global in Soong, so a tree never holds this project and a second copy of the module (such as an older vendor tree's) at the same time.
@@ -164,4 +165,4 @@ The `Android.bp` was checked without a ROM build: `bpfmt` from LineageOS 23.2's 
 
 ## Tags
 
-The provider has its own tags, `carriersettings/vMAJOR.MINOR.PATCH`, separate from OCD Check's versions. A ROM pins a provider tag and a validated dataset commit (SM6), never `main`, so the app's changes never reach a ROM's CarrierSettings unasked. Each tag's message names the provider protocol version and what changed. `carriersettings/v1.0.0` is the first cut (`cfa8ee1`, protocol 3); `carriersettings/v1.0.1` is the cut `64c73cb`, the same code with `Engine.update` public, so that it builds byte for byte wherever a ROM puts it.
+The provider has its own tags, `carriersettings/vMAJOR.MINOR.PATCH`, separate from OCD Check's versions. A ROM pins a provider tag and a validated dataset commit (SM6), never `main`, so the app's changes never reach a ROM's CarrierSettings unasked. Each tag's message names the provider protocol version and what changed. `carriersettings/v1.0.0` is the first cut (`cfa8ee1`, protocol 3); `carriersettings/v1.0.1` is the cut `64c73cb`, the same code with `Engine.update` public, so that it builds byte for byte wherever a ROM puts it. `carriersettings/v1.0.2` (protocol 3, unchanged) makes the serving index serve what the dataset serves: a group A read admits a profile's own value only for one of the value's source families, and the index (`ocd-index/1`) left the families out, so from the index no such read was admitted and the key fell to the Google value or Android's default. The first load after a new build streams the baked files, which kept them, so that load and every later one differed. On the S20 with LIDL (build E) it was `carrier_use_ims_first_for_emergency_bool`: `true` at boot, left out after the first reload. Over OCD main `500525ec` with the S20's cell, the index differed from the dataset for a plain SIM of 231 of 3,139 networks (321 group A keys, each admitted by a read); with `ocd-index/2` none differs. An index of the old schema is never complete, so the phone builds it again.

@@ -414,6 +414,23 @@ class BundleTest {
     }
 
     @Test
+    fun anIndexWithoutTheSourcesIsNeverCompleteNorRead() {
+        val ds = Fixture.dataset()
+        val dir = Fixture.tempDir("bundle-index-schema")
+        ServingIndex.write(ds, dir, "installed", Fixture.CELL, "cell")
+        assertTrue(ServingIndex.complete(dir, ds.datasetDigest, "cell", ds.commit))
+        // An ocd-index/1 index (no sources): its marker names no schema, so it is built again.
+        java.io.File(dir, "complete").writeText("${ds.datasetDigest} ${ds.commit}")
+        assertFalse(ServingIndex.complete(dir, ds.datasetDigest, "cell", ds.commit))
+        assertFalse(ServingIndex.complete(dir, ds.datasetDigest, null, ds.commit))
+        // A load that finds one anyway (the build's index is read without the marker check) fails over.
+        val meta = java.io.File(dir, "meta.json")
+        meta.writeText(meta.readText().replace("\"ocd-index/2\"", "\"ocd-index/1\""))
+        val refused = runCatching { ServingIndex.read(dir) }.exceptionOrNull()
+        assertEquals("storage", (refused as? Refused)?.code)
+    }
+
+    @Test
     fun streamingTheBakedFilesServesTheSame() {
         val files = Fixture.files(lane = Fixture.laneJson(state = "private_lane_at_build_pin"), role = "build")
         val dir = Fixture.write(Fixture.tempDir("bundle-stream"), Fixture.seal(files, role = "build", laneAsExtra = true))
