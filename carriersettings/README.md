@@ -39,7 +39,12 @@ These stay in the ROM tree, because they belong to the ROM or the device:
 - the device's `carrier_config_override` overlay and the ROM family's sepolicy lines;
 - Google's `.pb` files and the legacy `.pb` module `OcdCarrierSettings`, until they are retired.
 
-**Status.** The S20 still builds from vendor/extra's copy. Round 37's step 3 builds it from this folder, checks that the provider APK's classes, manifest and resources equal today's apart from signature and timestamps and that the dataset files are byte-identical, and checks calls with o2 and LIDL on the phone. Only then does vendor/extra's copy go, and `rom-builders.md` points here. Until then a change here must also reach vendor/extra, or the two drift; `cut.json` shows which files still match.
+**Status.** Since round 37's step 3 (2026-10-30) the owner's S20 builds the provider from this folder, pinned to `carriersettings/v1.0.1`, and vendor/extra holds no copy of it any more. Step 3's build from here was checked against the build from vendor/extra's copy before that copy went:
+- `check_build.sh` passed;
+- the provider APK's classes, manifest and resources are equal apart from the signature, and the dataset files are byte-identical;
+- on the S20 with o2 and with LIDL, Telephony bound `com.android.carriersettings`, config was served, the dataset was installed, IMS registered, and calls over LTE and over Wi-Fi calling stayed up past 15 s.
+
+This folder is now the only source of the provider, and [rom-builders.md](https://github.com/open-carrier-data/open-carrier-data/blob/main/docs/rom-builders.md) points here.
 
 **Known limits of the code as moved** (a code change needs its own reviewed pull request, so none rode in with the move):
 - The service applies LineageOS's fixed key (`imsvoice.audio_evs_support_bool` false) on every ROM, as LineageOS's CarrierService does.
@@ -52,7 +57,7 @@ These stay in the ROM tree, because they belong to the ROM or the device:
 ```xml
 <remote name="ocd" fetch="https://github.com/open-carrier-data" />
 <project name="ocd-android" path="packages/apps/OcdCarrierSettings" remote="ocd"
-         revision="refs/tags/carriersettings/v1.0.0" />
+         revision="refs/tags/carriersettings/v1.0.1" />
 ```
 
 The path can be any; the examples below use this one. Module names are global in Soong, so a tree never holds this project and a second copy of the module (such as an older vendor tree's) at the same time.
