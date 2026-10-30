@@ -57,3 +57,25 @@ data class AccountReadMark(
             Instant.ofEpochMilli(aMs).atZone(zone).toLocalDate() == Instant.ofEpochMilli(bMs).atZone(zone).toLocalDate()
     }
 }
+
+/**
+ * Round 42 follow-up fix (the S20 test of 0.4.7): a balance send that read nothing — a menu reply,
+ * Android's onReceiveUssdResponseFailed (which is how a reply that asks for input arrives, without
+ * its text) or no reply at all — stops further sends for that SIM until the next local day, so an
+ * hourly check never sends the code again and again while the network's menu session waits to time
+ * out. It keeps a time and a short reason, never the reply.
+ */
+@Serializable
+data class BalanceHalt(val sim: SimKey, val atMs: Long, val why: String) {
+    companion object {
+        const val MAX = 8
+
+        fun add(halts: List<BalanceHalt>, halt: BalanceHalt): List<BalanceHalt> =
+            (halts.filterNot { it.sim.sameCard(halt.sim) } + halt).takeLast(MAX)
+
+        /** Whether [sim] is halted now: a halt from the same local day, or from a clock that has since gone back. */
+        fun halted(halts: List<BalanceHalt>, sim: SimKey, nowMs: Long, zone: ZoneId): Boolean = halts.any {
+            it.sim.sameCard(sim) && (nowMs < it.atMs || Instant.ofEpochMilli(it.atMs).atZone(zone).toLocalDate() == Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate())
+        }
+    }
+}

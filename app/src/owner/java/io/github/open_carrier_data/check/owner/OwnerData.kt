@@ -117,7 +117,7 @@ class FileStateStore(context: Context) : StateStore {
         @Volatile
         private var cached: Cached? = null
         const val TRACE_TAG = "OcdCheckCalls"
-        private val TRACED = setOf("calls_out", "call_watch", "provisional", "self_sms", "mms")
+        private val TRACED = setOf("calls_out", "call_watch", "provisional", "self_sms", "mms", "balance")
 
         /** Round 42's per-slot lines (the verdict, the probe ladder, W1): classes and plain words only, no identifier. */
         private val TRACED_PREFIXES = listOf("diagnosis:", "probe:", "epdg:")

@@ -733,10 +733,18 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
             item {
                 SwitchRow(
                     "Read the plan balance",
-                    "After a data failure, send your carrier's own free balance code (like *100#) and read the reply. It never presses a menu digit; a menu reply is left for you to read by hand. Home network only, a few times a day at most.",
+                    "After a data failure, send your carrier's own free balance code (like *100#) and read the reply. It never presses a menu digit: where the code answers with a menu, nothing is sent and the code and the item to pick are shown for you to dial by hand. Home network only, a few times a day at most.",
                     state.balanceUssdOn,
                     actions.setBalanceUssd,
                 )
+            }
+            // The latest balance record of each slot: a masked figure, or why nothing was read and what to dial by hand.
+            val balanceLines = state.log.filter { it.kind == "balance" && it.text.startsWith("slot ") }
+                .groupBy { it.text.substringBefore(':') }.values.map { it.last().text.take(240) }
+            if (state.balanceUssdOn && balanceLines.isNotEmpty()) item {
+                Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    balanceLines.forEach { Summary(it.replaceFirstChar(Char::uppercase)) }
+                }
             }
             item {
                 SwitchRow(

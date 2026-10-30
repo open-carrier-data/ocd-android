@@ -4,6 +4,7 @@ import io.github.open_carrier_data.check.core.BalanceChoice
 import io.github.open_carrier_data.check.core.BalanceUssd
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -21,14 +22,38 @@ class BalanceBrandTest {
 
     @Test
     fun `an identified brand gets its own documented code`() {
-        assertEquals("*100#", sent("26202", "LIDL Connect"))
         assertEquals("*100#", sent("26202", "Vodafone.de"))
         assertEquals("*100#", sent("26202", "Vodafone"))
         assertEquals("*100#", sent("26201", "Telekom.de"))
         assertEquals("*100#", sent("26206", "T-Mobile D"))
         assertEquals("*100#", sent("26201", "congstar"))
         assertEquals("*100#", sent("26201", "congstar.de"))
-        assertEquals("LIDL Connect", (BalanceUssd.choose("26202", "LIDL Connect") as BalanceChoice.Send).brand.brand)
+        assertEquals("Vodafone", (BalanceUssd.choose("26202", "Vodafone") as BalanceChoice.Send).brand.brand)
+    }
+
+    @Test
+    fun `LIDL Connect's first reply is a menu, so nothing is sent and the hint names the code and the item`() {
+        // Measured on the S20 on 2026-10-30: *100# answers with a menu; the balance sits under "2 Guthaben & Verbrauch".
+        val lidl = BalanceUssd.brands("26202", "LIDL Connect").single()
+        assertTrue(lidl.firstReplyMenu)
+        assertEquals("Guthaben & Verbrauch", lidl.menuItem)
+        assertNull(sent("26202", "LIDL Connect"))
+        val choice = notSent("26202", "LIDL Connect")
+        assertEquals("balance code not sent: LIDL Connect answers *100# with a menu", choice.reason)
+        assertEquals("dial *100#, choose \"Guthaben & Verbrauch\"", choice.hint)
+        assertEquals("balance code not sent: LIDL Connect answers *100# with a menu; dial *100#, choose \"Guthaben & Verbrauch\"", choice.line)
+        // Nothing at all: not even the brand's own exact code passes the send check.
+        assertFalse(BalanceUssd.allowed("26202", "LIDL Connect", "*100#"))
+        assertFalse(BalanceUssd.allowed("26202", " LIDL Connect ", "*100#"))
+        // The other brands on the same network keep their one read.
+        assertEquals("*100#", sent("26202", "Vodafone"))
+        assertTrue(BalanceUssd.allowed("26202", "Vodafone", "*100#"))
+    }
+
+    @Test
+    fun `a failed or missing reply has its own record`() {
+        assertEquals("balance not read: the carrier's reply needs a menu step or failed", BalanceUssd.REPLY_FAILED)
+        assertEquals("balance not read: no reply from the carrier", BalanceUssd.NO_REPLY)
     }
 
     @Test
@@ -71,7 +96,8 @@ class BalanceBrandTest {
 
     @Test
     fun `the provider name matches exactly, with only surrounding blanks trimmed`() {
-        assertEquals("*100#", sent("26202", " LIDL Connect "))
+        assertEquals("LIDL Connect", BalanceUssd.brands("26202", " LIDL Connect ").single().brand)
+        assertEquals("*100#", sent("26202", " Vodafone.de "))
         val near = listOf(
             "26202" to "lidl connect", "26202" to "LIDL CONNECT", "26202" to "LIDL", "26202" to "LIDL Connect Plus",
             "26202" to "LIDLConnect", "26202" to "Lidl Connect", "26202" to "VODAFONE.DE", "26202" to "Vodafone DE",
@@ -107,6 +133,7 @@ class BalanceBrandTest {
     fun `the dangerous codes and forms are refused even for an identified brand`() {
         for (code in listOf("*100*1234#", "*123#", "*133#", "*124#", "*135#", "*#123#", "*#100#", "*100", "100#", "*1000#", "**100#", "*101#", "*144#", "")) {
             assertFalse(code, BalanceUssd.allowed("26202", "LIDL Connect", code))
+            assertFalse(code, BalanceUssd.allowed("26202", "Vodafone", code))
             assertFalse(code, BalanceUssd.allowed("26201", "Telekom.de", code))
         }
         // A brand without a code never gets one, not even the network's usual code.
@@ -128,6 +155,11 @@ class BalanceBrandTest {
                 assertTrue(brand.brand, !brand.elsewhere.isNullOrBlank())
             } else {
                 assertTrue(brand.brand, shape.matches(code) && code !in dangerous)
+            }
+            // A menu-first brand names the measured item and where it was measured; the item is never a top-up, a tariff or an offer.
+            if (brand.firstReplyMenu) {
+                assertTrue(brand.brand, !brand.menuItem.isNullOrBlank() && !brand.menuSource.isNullOrBlank())
+                assertFalse(brand.brand, Regex("(?i)aufladen|tarif|option|angebot|buchen").containsMatchIn(brand.menuItem!!))
             }
         }
         // No provider name names two brands on one network.
