@@ -215,6 +215,8 @@ class AllowlistTest {
         assertEquals(listOf("CheckScreen.kt", "CheckViewModel.kt"), mainSources.filter { Regex("runProbes").containsMatchIn(it.readText()) }.map { it.name }.sorted())
         // The read-only probe never fetches the carrier self-care page (D5): includeD5 is false in the view model.
         assertTrue(mainSources.single { it.name == "CheckViewModel.kt" }.readText().contains("includeD5 = false"))
+        // W1, the ePDG name lookup, runs only in the owner and rom builds: no read-only source calls it.
+        assertEquals(listOf("ProbeNet.kt"), mainSources.filter { Regex("epdgLookup\\(").containsMatchIn(it.readText()) }.map { it.name })
         val phone = mainSources.single { it.name == "PublicDataPhone.kt" }.readText()
         // Every request and every redirect is checked before it is sent; redirects are never followed by the platform.
         assertTrue(phone.contains("if (!PublicData.allowed(target)) throw PullException"))

@@ -22,8 +22,9 @@ import java.util.concurrent.Executor
  * It keeps no address: a resolve or a connect is a boolean, a redirect a [RedirectHost] class, a
  * carrier-page fetch only "answered or not". Every target is from [ProbeTargets], fixed in the
  * app, never from a reply. D4 follows no redirect; D5 keeps only the status class of the body it
- * never reads past the first line. It needs an Android [Network], so it has no JVM test; the
- * bounds ([ProbePolicy]) and the classifier do.
+ * never reads past the first line. W1 ([epdgLookup], owner and rom only) asks one resolver for the
+ * SIM's standard ePDG name and keeps only "resolves", "no address" or "fails". It needs an Android
+ * [Network], so it has no JVM test; the bounds ([ProbePolicy], [EpdgPolicy]) and the classifiers do.
  */
 @RequiresApi(Build.VERSION_CODES.Q)
 object ProbeNet {
@@ -75,6 +76,30 @@ object ProbeNet {
             redirect = d4.second,
             carrierPageOk = carrierPageOk,
         )
+    }
+
+    /**
+     * W1 (owner and rom only, from OwnerProbe): [home]'s standard ePDG name, built from the SIM's
+     * MCC and MNC by the fixed 3GPP template ([HomeNetwork.epdgFqdn]), looked up once through
+     * [network]'s own resolvers: Android's per-network resolver, with the Private DNS the phone set,
+     * the path the phone's own IWLAN lookup takes. Only the class is kept ([EpdgLookup]); the
+     * addresses are counted and dropped, never stored or shown.
+     */
+    suspend fun epdgLookup(network: Network, home: HomeNetwork): EpdgLookup = withContext(Dispatchers.IO) {
+        val done = CompletableDeferred<EpdgLookup>()
+        val cb = object : DnsResolver.Callback<List<InetAddress>> {
+            override fun onAnswer(answer: List<InetAddress>, rcode: Int) {
+                if (!done.isCompleted) done.complete(EpdgLookup.of(answer.size, rcode))
+            }
+
+            override fun onError(error: DnsResolver.DnsException) {
+                if (!done.isCompleted) done.complete(EpdgLookup.FAILS)
+            }
+        }
+        runCatching {
+            DnsResolver.getInstance().query(network, home.epdgFqdn, DnsResolver.FLAG_EMPTY, direct, null, cb)
+            withTimeoutOrNull(DNS_MS) { done.await() } ?: EpdgLookup.FAILS
+        }.getOrDefault(EpdgLookup.FAILS)
     }
 
     private fun loopbackOk(): Boolean = runCatching {

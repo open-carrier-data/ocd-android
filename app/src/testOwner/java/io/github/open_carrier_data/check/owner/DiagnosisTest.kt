@@ -2,6 +2,7 @@ package io.github.open_carrier_data.check.owner
 
 import io.github.open_carrier_data.check.core.AccountState
 import io.github.open_carrier_data.check.core.CauseClass
+import io.github.open_carrier_data.check.core.EpdgLookup
 import io.github.open_carrier_data.check.core.UserPlaneClass
 import io.github.open_carrier_data.check.core.VerdictFeature
 import io.github.open_carrier_data.check.owner.core.Diagnoses
@@ -99,5 +100,42 @@ class DiagnosisTest {
         assertTrue(DiagnosisInputs(defaultDataCause = 0, rejectCause = 7).measuredDataFailure)
         // And cause 0 names no verdict.
         assertNull(Diagnoses.of(DiagnosisInputs(defaultDataCause = 0)).line)
+    }
+
+    private val wifiDns = "Wi-Fi side: this Wi-Fi's DNS gives no address for the carrier's Wi-Fi calling server; the mobile network's DNS does"
+
+    @Test
+    fun `W1's comparison names the Wi-Fi side in the Wi-Fi-calling verdict`() {
+        val d = Diagnoses.of(DiagnosisInputs(imsRegistered = false, epdgWifi = EpdgLookup.NO_ADDRESS, epdgCellular = EpdgLookup.RESOLVES))
+        val wfc = d.verdicts.single { it.feature == VerdictFeature.VOWIFI }
+        assertEquals(wifiDns, wfc.line)
+        assertEquals(CauseClass.PHONE_SIDE, wfc.cause)
+        // It is about Wi-Fi calling only: no VoLTE or mobile-data verdict, and it never sets a test aside.
+        assertTrue(d.verdicts.none { it.feature == VerdictFeature.VOLTE || it.feature == VerdictFeature.MOBILE_DATA })
+        assertFalse(d.notCounted())
+    }
+
+    @Test
+    fun `W1 sharpens a phone-side IWLAN code, never displaces a refusal code, and comes before the SIP class`() {
+        // IWLAN_DNS_RESOLUTION_NAME_FAILURE (0x4004) is phone-side; W1 says which side.
+        val dns = Diagnoses.of(DiagnosisInputs(imsRegistered = false, iwlanDataCause = 0x4004, epdgWifi = EpdgLookup.FAILS, epdgCellular = EpdgLookup.RESOLVES))
+        assertEquals(
+            "Wi-Fi side: this Wi-Fi's DNS does not answer for the carrier's Wi-Fi calling server; the mobile network's DNS does",
+            dns.verdicts.single { it.feature == VerdictFeature.VOWIFI }.line,
+        )
+        // A refusal code (9003, barred) stays the cause.
+        val barred = Diagnoses.of(DiagnosisInputs(imsRegistered = false, iwlanDataCause = 9003, epdgWifi = EpdgLookup.NO_ADDRESS, epdgCellular = EpdgLookup.RESOLVES))
+        assertEquals(CauseClass.BARRED, barred.verdicts.single { it.feature == VerdictFeature.VOWIFI }.cause)
+        // A SIP timeout alone would read as temporary; with W1's finding the Wi-Fi side is named.
+        val timeout = Diagnoses.of(DiagnosisInputs(imsRegistered = false, imsTimeout = true, epdgWifi = EpdgLookup.NO_ADDRESS, epdgCellular = EpdgLookup.RESOLVES))
+        assertEquals(wifiDns, timeout.verdicts.single { it.feature == VerdictFeature.VOWIFI }.line)
+    }
+
+    @Test
+    fun `W1 adds nothing without a comparison or while IMS is registered`() {
+        assertTrue(Diagnoses.of(DiagnosisInputs(imsRegistered = false, epdgWifi = EpdgLookup.NO_ADDRESS)).verdicts.none { it.feature == VerdictFeature.VOWIFI })
+        assertTrue(Diagnoses.of(DiagnosisInputs(imsRegistered = false, epdgWifi = EpdgLookup.NO_ADDRESS, epdgCellular = EpdgLookup.NO_ADDRESS)).verdicts.isEmpty())
+        assertTrue(Diagnoses.of(DiagnosisInputs(imsRegistered = true, epdgWifi = EpdgLookup.NO_ADDRESS, epdgCellular = EpdgLookup.RESOLVES)).verdicts.isEmpty())
+        assertTrue(Diagnoses.of(DiagnosisInputs(imsRegistered = false, epdgWifi = EpdgLookup.RESOLVES, epdgCellular = EpdgLookup.RESOLVES)).verdicts.isEmpty())
     }
 }

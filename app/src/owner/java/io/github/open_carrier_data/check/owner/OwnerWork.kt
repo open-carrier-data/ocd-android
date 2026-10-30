@@ -18,12 +18,14 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import io.github.open_carrier_data.check.core.DeviceInfo
+import io.github.open_carrier_data.check.core.EpdgW1
 import io.github.open_carrier_data.check.core.Matcher
 import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.RomFamily
 import io.github.open_carrier_data.check.owner.core.ApnResult
 import io.github.open_carrier_data.check.owner.core.DataBasis
 import io.github.open_carrier_data.check.owner.core.Diagnoses
+import io.github.open_carrier_data.check.owner.core.EpdgRunMark
 import io.github.open_carrier_data.check.owner.core.OcdApnRow
 import io.github.open_carrier_data.check.owner.core.PlanWhy
 import io.github.open_carrier_data.check.owner.core.SchemaRefused
@@ -454,8 +456,9 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
      * OCD round 42 (items 1/3/7): the passive cause read and the plain verdict. For each SIM it reads
      * the fail causes and the user-plane state ([OwnerPassiveRead]), the IMS sign-out reason
      * ([ImsReasonReader]) and whether MMS ended, assembles the verdict ([Diagnoses]) and logs it when
-     * it differs from the last one. Read-only: it sends no traffic, changes no value and starts no
-     * candidate. The account-state read (balance, carrier SMS) is UNKNOWN until those are built.
+     * it differs from the last one. The probe ladder (item 2: D1-D5 and W1) and the balance read (item
+     * 4) send their few requests only within their bounds; nothing here changes a value or starts a
+     * candidate.
      */
     private suspend fun diagnoseCauses(store: FileStateStore, phone: OwnerPhone, sims: List<OwnerSim>) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
@@ -477,7 +480,9 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 // emergency state, an active call, roaming). The balance USSD is also home-network only and capped.
                 // A non-zero cause only: a working connection reports cause 0, which is no failure.
                 val measuredFailure = passive.measuredDataFailure
-                if (measuredFailure && runCatching { OwnerSession(phone, store, sim).safety().refusal }.getOrNull() == null) {
+                // A safety refusal that cannot be read counts as a refusal: nothing is sent then.
+                val safe: suspend () -> Boolean = { runCatching { OwnerSession(phone, store, sim).safety().refusal == null }.getOrDefault(false) }
+                if (measuredFailure && safe()) {
                     // Item 4: the balance USSD (opt-in, capped) runs first, so its class can pair with the refusal.
                     runCatching { OwnerBalance.readIfDue(context, store, sim, measuredFailure = true, roaming = roamingNow, nowMs = now) }
                     // Item 2: the automatic cellular probe ladder, at most once per SIM per 6 hours ([OwnerProbe]).
@@ -492,6 +497,25 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                     )
                     if (userPlane != null) passive = passive.copy(userPlane = userPlane)
                 }
+                // Item 2, W1: the ePDG name lookup after a measured Wi-Fi-calling failure (the Wi-Fi resolver, plus the
+                // cellular one only when cellular data fails or is the default), or on the owner's "check now" (both).
+                // Never roaming, with mobile data off or under a safety refusal; automatic at most once per SIM per 6 hours.
+                val epdg = runCatching {
+                    OwnerProbe.epdgIfDue(
+                        context, store, sim,
+                        checkNow = !periodic,
+                        roaming = roamingNow,
+                        dataOff = passive.dataOffReason != null,
+                        imsRegistered = reason.registered,
+                        iwlanCause = passive.iwlanDataCause,
+                        cellularDataFailing = measuredFailure,
+                        nowMs = now,
+                        safe = safe,
+                    )
+                }.getOrNull()
+                if (epdg != null) quietLog(store, "epdg:${sim.slot}", "slot ${sim.slot + 1}: ePDG name (W1): ${EpdgW1.record(epdg.wifi, epdg.cellular)}")
+                // The latest W1 run of this SIM, while under 6 hours old, goes into the Wi-Fi-calling verdict.
+                EpdgRunMark.fresh(store.read().epdgRuns, sim.key, now)?.let { passive = passive.copy(epdgWifi = it.wifi, epdgCellular = it.cellular) }
                 // Items 4/5: the freshest account-state read for this SIM (balance same day, carrier-SMS class up to 31 days).
                 val (account, balance) = io.github.open_carrier_data.check.owner.core.AccountReadMark
                     .fresh(store.read().accountReads, sim.key, now, zone)

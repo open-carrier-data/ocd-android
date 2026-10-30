@@ -5,6 +5,8 @@ import io.github.open_carrier_data.check.core.CauseClass
 import io.github.open_carrier_data.check.core.CauseVerdict
 import io.github.open_carrier_data.check.core.CauseVerdicts
 import io.github.open_carrier_data.check.core.DataFailCauseClass
+import io.github.open_carrier_data.check.core.EpdgLookup
+import io.github.open_carrier_data.check.core.EpdgW1
 import io.github.open_carrier_data.check.core.Refusal
 import io.github.open_carrier_data.check.core.RejectCauseClass
 import io.github.open_carrier_data.check.core.SipRegClass
@@ -67,6 +69,10 @@ data class DiagnosisInputs(
     val balance: String? = null,
     /** This SIM's network ended MMS (the published statements / mms-ended list). */
     val mmsEnded: Boolean = false,
+    /** W1 (item 2): the standard ePDG name through the Wi-Fi network's resolver, when it was asked within 6 hours. */
+    val epdgWifi: EpdgLookup? = null,
+    /** W1: the same name through the cellular network's resolver. */
+    val epdgCellular: EpdgLookup? = null,
 ) {
     /**
      * A measured mobile-data failure, the gate of the automatic probe ladder and the balance read: a
@@ -121,13 +127,21 @@ object Diagnoses {
         return phoneSide(i)
     }
 
-    /** A Wi-Fi-calling or VoLTE refusal from the IWLAN/IMS data cause or the SIP class, only when IMS is not registered. */
-    private fun imsRefusal(dataCause: Int?, i: DiagnosisInputs): Refusal? {
+    /**
+     * A Wi-Fi-calling or VoLTE refusal from the IWLAN/IMS data cause or the SIP class, only when IMS is
+     * not registered. For Wi-Fi calling, W1's comparison ([epdg]) comes after a code that names the
+     * cause and before the SIP class: it sharpens a phone-side IWLAN code (a DNS failure, for one)
+     * or the lack of a code into the Wi-Fi side's DNS, and never displaces a refusal code.
+     */
+    private fun imsRefusal(dataCause: Int?, i: DiagnosisInputs, epdg: Refusal? = null): Refusal? {
         if (i.imsRegistered == true) return null
-        dataCause?.let { c ->
+        val code = dataCause?.let { c ->
             val cls = DataFailCauseClass.of(c)
-            if (cls != CauseClass.UNKNOWN) return Refusal(cls, code = c, temporaryDefinite = cls == CauseClass.TEMPORARY && c in setOf(26, 34, 38))
+            if (cls != CauseClass.UNKNOWN) Refusal(cls, code = c, temporaryDefinite = cls == CauseClass.TEMPORARY && c in setOf(26, 34, 38)) else null
         }
+        if (code != null && code.cause != CauseClass.PHONE_SIDE) return code
+        epdg?.let { return it }
+        code?.let { return it }
         val sip = SipRegClass.of(i.sipResponseCode, i.imsReasonCode, i.imsTimeout)
         return if (sip.cause != CauseClass.UNKNOWN) Refusal(sip.cause) else null
     }
@@ -136,7 +150,7 @@ object Diagnoses {
         val verdicts = mutableListOf<CauseVerdict>()
         val data = dataRefusal(i)
         CauseVerdicts.of(VerdictFeature.MOBILE_DATA, data, i.account, i.balance)?.let { verdicts += it }
-        CauseVerdicts.of(VerdictFeature.VOWIFI, imsRefusal(i.iwlanDataCause, i), AccountState.UNKNOWN)?.let { verdicts += it }
+        CauseVerdicts.of(VerdictFeature.VOWIFI, imsRefusal(i.iwlanDataCause, i, EpdgW1.refusal(i.epdgWifi, i.epdgCellular)), AccountState.UNKNOWN)?.let { verdicts += it }
         CauseVerdicts.of(VerdictFeature.VOLTE, imsRefusal(i.imsDataCause, i), AccountState.UNKNOWN)?.let { verdicts += it }
         if (i.mmsEnded) CauseVerdicts.of(VerdictFeature.MMS, null, AccountState.UNKNOWN, mmsEnded = true)?.let { verdicts += it }
         else if (i.mmsDataCause != null) {
