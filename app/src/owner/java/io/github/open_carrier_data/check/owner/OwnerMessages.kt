@@ -24,6 +24,7 @@ import io.github.open_carrier_data.check.owner.core.MmsCheck
 import io.github.open_carrier_data.check.core.MmsEndedEntry
 import io.github.open_carrier_data.check.core.MmsEndedList
 import io.github.open_carrier_data.check.owner.core.MmsEndedFile
+import io.github.open_carrier_data.check.owner.core.MmsLadder
 import io.github.open_carrier_data.check.owner.core.MmsProbe
 import io.github.open_carrier_data.check.owner.core.MmsRequest
 import io.github.open_carrier_data.check.owner.core.OwnerPhone
@@ -80,21 +81,45 @@ object OwnerMms {
         }
     }.getOrNull()
 
+    /** The MMS ladder's probe (M1-M4): bring up the MMS network, then one GET of a made-up path. Null status on no answer. */
+    private data class ProbeOutcome(val status: Int?, val stage: String, val result: String)
+
     /**
-     * One MMS access point check of [sim]: never where MMS ended; else the
-     * SIM's MMS network from Android, one GET to the MMSC through the MMS
-     * proxy, and the status line. Any HTTP answer is "reachable".
+     * One MMS access point check of [sim] (round 42, item 6, the M0-M4 ladder). Where MMS ended it is
+     * never flipped: the ladder still runs as corroboration (an answer only flags the operator
+     * statement for a fresh read, never turns MMS back on). Elsewhere the GET status reads the MMSC:
+     * 404 alive, 403 refuses this SIM, 5xx degraded. No MMS is ever sent.
      */
     @SuppressLint("MissingPermission")
     suspend fun check(context: Context, phone: OwnerPhone, sim: OwnerSim): MmsCheck {
         val now = System.currentTimeMillis()
-        MmsProbe.ended(ended(context), sim.identity.mccmnc)?.let { return MmsCheck(sim.key, now, "ended", operator = it.operator, ended = it.lastDay ?: it.firstDayWithout) }
+        val endedEntry = MmsProbe.ended(ended(context), sim.identity.mccmnc)
+        // M0: whether this network ended MMS. The probe below corroborates it but never flips it.
+        val canProbe = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            QuietReader.roaming(context) == false && phone.mobileData(sim.subId).enabled == true
+        if (endedEntry != null) {
+            val base = MmsCheck(sim.key, now, "ended", operator = endedEntry.operator, ended = endedEntry.lastDay ?: endedEntry.firstDayWithout, stage = "m0_ended")
+            if (!canProbe) return base
+            val outcome = probe(context, sim) ?: return base
+            return base.copy(httpStatus = outcome.status, corroboration = MmsLadder.corroboration(outcome.status))
+        }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return MmsCheck(sim.key, now, "refused_android_too_old")
         if (QuietReader.roaming(context) != false) return MmsCheck(sim.key, now, "refused_roaming")
         if (phone.mobileData(sim.subId).enabled != true) return MmsCheck(sim.key, now, "refused_mobile_data_off")
-        val row = mmsRow(context, sim) ?: return MmsCheck(sim.key, now, "no_mms_apn")
-        val request = MmsProbe.request(row.first, row.second, row.third) ?: return MmsCheck(sim.key, now, "mmsc_not_probed")
-        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return MmsCheck(sim.key, now, "refused_no_connectivity")
+        if (mmsRow(context, sim) == null) return MmsCheck(sim.key, now, "no_mms_apn", stage = "m1_apn")
+        if (MmsProbe.request(mmsRow(context, sim)?.first, mmsRow(context, sim)?.second, mmsRow(context, sim)?.third) == null) {
+            return MmsCheck(sim.key, now, "mmsc_not_probed", stage = "m1_apn")
+        }
+        val outcome = probe(context, sim) ?: return MmsCheck(sim.key, now, "refused_no_mms_network", stage = "m1_apn")
+        return MmsCheck(sim.key, now, outcome.result, httpStatus = outcome.status, stage = outcome.stage)
+    }
+
+    /** Brings up the MMS network and runs the GET; returns the status, the stage reached, and the ladder reading. */
+    @SuppressLint("MissingPermission")
+    private suspend fun probe(context: Context, sim: OwnerSim): ProbeOutcome? {
+        val row = mmsRow(context, sim) ?: return null
+        val request = MmsProbe.request(row.first, row.second, row.third) ?: return null
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
         val networkRequest = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_MMS)
@@ -112,9 +137,9 @@ object OwnerMms {
         }
         return try {
             cm.requestNetwork(networkRequest, callback, MmsProbe.TIMEOUT_MS.toInt())
-            val network = withTimeoutOrNull(MmsProbe.TIMEOUT_MS + 2_000) { available.await() } ?: return MmsCheck(sim.key, now, "refused_no_mms_network")
+            val network = withTimeoutOrNull(MmsProbe.TIMEOUT_MS + 2_000) { available.await() } ?: return null
             val status = withContext(Dispatchers.IO) { get(network, request) }
-            MmsCheck(sim.key, now, if (status != null) "reachable" else "no_answer", httpStatus = status)
+            ProbeOutcome(status, "m4_get", MmsLadder.classifyStatus(status))
         } finally {
             runCatching { cm.unregisterNetworkCallback(callback) }
         }

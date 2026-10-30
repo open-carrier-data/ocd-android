@@ -34,13 +34,46 @@ data class MmsEndedFile(val description: String, val source: String, val network
 data class MmsCheck(
     val sim: SimKey,
     val atMs: Long,
-    /** ended, reachable, no_answer, no_mms_apn, mmsc_not_probed or refused_<why>. */
+    /** ended, alive, refuses_subscriber, degraded, reachable, no_answer, no_mms_apn, mmsc_not_probed or refused_<why>. */
     val result: String,
     val httpStatus: Int? = null,
     /** For ended: who ended MMS, and when. */
     val operator: String? = null,
     val ended: String? = null,
+    /**
+     * Round 42, item 6, the ladder's stage: m0_ended, m1_apn, m2_dns, m3_tcp, m4_get, or null.
+     * The farthest step that ran; on a failure it names where the ladder stopped.
+     */
+    val stage: String? = null,
+    /** The MMS APN's last DataFailCause (M1), when the MMS network failed to come up. */
+    val apnCause: Int? = null,
+    /**
+     * Round 42, item 6, corroboration on an MMS-ended network: no_answer_supports_ended, or
+     * answer_flags_for_reread when the MMSC answered. It never flips X6 or enabledMMS; an answer
+     * only flags the operator statement for a fresh hand read.
+     */
+    val corroboration: String? = null,
 )
+
+/**
+ * Round 42, item 6: the MMS ladder M0-M4 classifier. Pure: it turns the GET status into the ladder's
+ * reading (404 the MMSC is alive, 403 it refuses this subscriber, 5xx degraded, any other answer
+ * reachable, none no answer), and it reads a corroboration probe on an MMS-ended network without ever
+ * flipping the value. It never sends an MMS; the runner only ever GETs a made-up message path.
+ */
+object MmsLadder {
+    /** M4: the reading of the GET status of a made-up message path. */
+    fun classifyStatus(status: Int?): String = when {
+        status == null -> "no_answer"
+        status == 404 -> "alive"
+        status == 403 -> "refuses_subscriber"
+        status in 500..599 -> "degraded"
+        else -> "reachable"
+    }
+
+    /** The corroboration an answer or its absence gives on an MMS-ended network. An answer never flips the value. */
+    fun corroboration(status: Int?): String = if (status == null) "no_answer_supports_ended" else "answer_flags_for_reread"
+}
 
 /** One GET to an MMSC, through a proxy or straight to it. */
 data class MmsRequest(val connectHost: String, val connectPort: Int, val requestLine: String, val host: String) {
@@ -106,6 +139,9 @@ object MmsProbe {
         val day = Instant.ofEpochMilli(check.atMs).atZone(zone).toLocalDate()
         return when (check.result) {
             "reachable" -> "MMS access point reachable, checked $day (no MMS was sent)"
+            "alive" -> "MMS access point reachable (the MMSC is alive), checked $day (no MMS was sent)"
+            "refuses_subscriber" -> "MMS access point reachable, but the MMSC refuses this SIM, checked $day (no MMS was sent)"
+            "degraded" -> "MMS access point reachable but degraded (server error), checked $day (no MMS was sent)"
             "no_answer" -> "MMS access point did not answer, checked $day (no MMS was sent)"
             "no_mms_apn" -> "MMS: no MMS access point name on the phone for this SIM"
             "mmsc_not_probed" -> "MMS: the MMS server's address can't be checked without sending"
