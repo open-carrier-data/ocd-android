@@ -26,13 +26,13 @@ import kotlinx.coroutines.withContext
  */
 object ApnCandidateTiming {
     /** Engine.CONFIRM_MS: how long one send waits to show in TelephonyProvider. */
-    const val CONFIRM_MS = 120_000L
+    const val CONFIRM_MS = ProviderTiming.CONFIRM_MS
     /** Engine.CANDIDATE_INSTALL_MS: the longest a candidate set's install takes (two sends with their confirmations, and the rollback's). */
-    const val INSTALL_MS = 3 * CONFIRM_MS
+    const val INSTALL_MS = ProviderTiming.INSTALL_MS
     /** Engine.CANDIDATE_MAX_MS: CarrierSettings restores a set without the app this long after it went in place. */
-    const val MAX_MS = 10 * 60_000L
+    const val MAX_MS = ProviderTiming.CANDIDATE_MAX_MS
     /** Engine.AFTER_MS: how long a restore waits for mobile data and IMS to come back as before. */
-    const val AFTER_MS = 120_000L
+    const val AFTER_MS = ProviderTiming.AFTER_MS
 
     /**
      * CarrierSettings's own timeout for a set that is not in place yet: it stores the trial with
@@ -41,7 +41,7 @@ object ApnCandidateTiming {
     const val PROVIDER_TIMEOUT_MS = INSTALL_MS + MAX_MS
 
     /** What the app keeps back from that timeout, so that its own restore comes first. */
-    const val MARGIN_MS = 60_000L
+    const val MARGIN_MS = ProviderTiming.MARGIN_MS
 
     /**
      * The longest the app follows the set: CarrierSettings's timeout less the margin, counted from
@@ -53,7 +53,7 @@ object ApnCandidateTiming {
     const val RESTORE_WAIT_MS = INSTALL_MS + AFTER_MS + MARGIN_MS
 
     /** How often the app asks `install_status`. */
-    const val POLL_MS = 2_000L
+    const val POLL_MS = ProviderTiming.POLL_MS
 }
 
 /**
@@ -107,43 +107,7 @@ object ProviderReason {
     }
 }
 
-/** The clock and the waits the jobs are followed with: the phone's elapsed clock and its sleep. */
-interface JobClock {
-    fun uptimeMs(): Long
-    suspend fun sleep(ms: Long)
-}
-
-/** A provider's `install_status` lost track of a job (its process restarted in the middle). */
-private const val INTERRUPTED = "interrupted"
-
 object ApnCandidateJobs {
-    /** A job followed until it ended or the wait ran out: the last answer, and how long the app waited. */
-    data class Followed(val answer: DataAnswer?, val timedOut: Boolean, val waitedMs: Long) {
-        val state: String? get() = answer?.str(OcdDataProtocol.STATE)
-
-        /** The job's error (when it says more than its state) with its reason, cleaned ([ProviderReason]). */
-        val why: String? get() = answer?.let { ProviderReason.of(it.error?.takeIf { e -> e != state }, it.str(OcdDataProtocol.REASON)) }
-    }
-
-    /**
-     * Asks `install_status` for [job] every [ApnCandidateTiming.POLL_MS] until its state is in
-     * [final], the provider no longer knows the job (a refusal without a state, or `interrupted`),
-     * or [maxMs] have passed on [clock].
-     */
-    suspend fun follow(client: DatasetClient, job: String, final: Set<String>, maxMs: Long, clock: JobClock): Followed {
-        val start = clock.uptimeMs()
-        var a: DataAnswer? = null
-        while (true) {
-            a = client.installStatus(job)
-            val state = a.str(OcdDataProtocol.STATE)
-            val waited = clock.uptimeMs() - start
-            if (!a.ok && state == null) return Followed(a, false, waited)
-            if (state in final || state == INTERRUPTED) return Followed(a, false, waited)
-            if (waited >= maxMs) return Followed(a, true, waited)
-            clock.sleep(minOf(ApnCandidateTiming.POLL_MS, maxMs - waited))
-        }
-    }
-
     /** What came of `apn_candidate_set`. */
     sealed interface SetEnd {
         /** In place: the failed check runs next, then the restore. */
@@ -185,7 +149,7 @@ object ApnCandidateJobs {
         val job = a.str(OcdDataProtocol.JOB_ID) ?: a.str(OcdDataProtocol.INSTALL_ID) ?: return SetEnd.NotRun("not run: no job ID")
         placed()
         val followed = try {
-            follow(client, job, ApnCandidateProtocol.SET_FINAL, ApnCandidateTiming.SET_WAIT_MS - (clock.uptimeMs() - start), clock)
+            ProviderJobs.follow(client, job, ApnCandidateProtocol.SET_FINAL, ApnCandidateTiming.SET_WAIT_MS - (clock.uptimeMs() - start), clock)
         } catch (e: CancellationException) {
             // The work was stopped while the set was being installed: the restore is asked for now, not at CarrierSettings's time.
             withContext(NonCancellable) { runCatching { restore() } }
@@ -201,7 +165,7 @@ object ApnCandidateJobs {
                         "${ApnCandidateTiming.MARGIN_MS / 1000} s before CarrierSettings's own timeout; the app asked for the restore at once: ${r.said()}",
                 )
             }
-            state == null || state == INTERRUPTED -> {
+            state == null || state == ProviderJobs.INTERRUPTED -> {
                 val r = restore()
                 SetEnd.NotRun("not run: CarrierSettings lost the candidate set's job (${followed.why ?: state ?: "no answer"}); the app asked for the restore at once: ${r.said()}")
             }
@@ -216,7 +180,7 @@ object ApnCandidateJobs {
         if (!a.ok) return RestoreEnd("refused (${ProviderReason.of(a.error ?: "no answer", a.str(OcdDataProtocol.REASON))})", accepted = false)
         accepted()
         val job = a.str(OcdDataProtocol.JOB_ID) ?: a.str(OcdDataProtocol.INSTALL_ID) ?: return RestoreEnd("asked, without a job ID", accepted = true)
-        val f = follow(client, job, ApnCandidateProtocol.RESTORE_FINAL, ApnCandidateTiming.RESTORE_WAIT_MS, clock)
+        val f = ProviderJobs.follow(client, job, ApnCandidateProtocol.RESTORE_FINAL, ApnCandidateTiming.RESTORE_WAIT_MS, clock)
         val state = f.state
         return when {
             state == InstallState.RESTORE_FAILED -> RestoreEnd("restore_failed" + (f.why?.let { " ($it)" } ?: ""), accepted = true, failed = true, why = f.why)
