@@ -150,6 +150,8 @@ data class SetupRefusal(
     val modemValue: Int? = null,
     /** The SIM's subscription (Android's index, not an identifier), for a reader that knows only the slot. */
     val subId: Int? = null,
+    /** Item 2: the dated end of Android's wait before it tries this profile again, epoch ms ([RetryWaits]); null when none was read. */
+    val waitUntilMs: Long? = null,
 ) {
     val hidden: Boolean get() = DataFailCauseClass.hidden(cause)
 
@@ -229,4 +231,144 @@ object HiddenLines {
     /** The line for a hidden refusal, without row naming (the read-only builds never name a row). */
     fun line(r: SetupRefusal): String? =
         CauseVerdicts.of(r.feature, Refusal(CauseClass.HIDDEN), AccountState.UNKNOWN)?.line
+}
+
+/*
+ * OCD rule round 43, item 2: the wait Android holds before it tries a refused profile again. No app
+ * API exposes it (ThrottleStatus goes only to the qualified-networks service); DataRetryManager's
+ * section of the phone service's dump (`dumpsys activity service com.android.phone`) holds it as
+ * "Retry entries" and "Throttling entries". The owner and rom builds read that dump through the
+ * privileged OwnerCommand.PHONE read they already have; the read-only builds only where their deep
+ * check already read it (ShellCommand.AOSP_IMS). The dump prints each time only as a time of day
+ * (HH:mm:ss.SSS) and keeps expired entries, so each one is dated from DataRetryManager's own dated
+ * local log line, or from the failure's dated registry line. Parsed in memory: only the dated instant
+ * is kept, never the dump text, the profile text, the APN name or the request list's package names.
+ */
+object RetryWaits {
+    private const val DATE = "\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,9})?)?"
+    private const val TIME = "(\\d{2}:\\d{2}:\\d{2}\\.\\d{3}|never)"
+    private val SECTION_END = Regex("(?m)^\\s*-{10,}\\s*$")
+    private val RETRY = Regex("\\[DataSetupRetryEntry: delay=(-?\\d+)ms, retry time[:=]\\s*$TIME, (.*)$")
+    private val THROTTLE = Regex("\\[DataThrottlingEntry: dataProfile=(.*), transport=(WWAN|WLAN), expiration time[:=]\\s*$TIME\\]")
+    private val LOG = Regex("^\\s*($DATE) - (Add throttling entry|Scheduled data retry|onEvaluateDataSetupRetry:) (.*)$")
+    private val ENTRY_TRANSPORT = Regex("\\], transport=(WWAN|WLAN)")
+    private val STATE = Regex(", state=([A-Z_]+), timestamp=")
+    private val EVALUATE = Regex("\\], transport=(WWAN|WLAN), cause=.*?, retryDelayMillis=(-?\\d+)ms")
+
+    /** Times printed twice (the list and the log) differ by a millisecond or so: DataUtils works out the offset at each print. */
+    private const val SAME_MS = 2_000L
+
+    /** A time of day earlier than its dating line by more than this is the next day; closer is the print's jitter. */
+    private const val JITTER_S = 60L
+
+    private data class Retry(val rowId: Long?, val wwan: Boolean, val time: java.time.LocalTime?, val delayMs: Long?, val state: String?)
+    private data class Throttle(val rowId: Long?, val wwan: Boolean, val time: java.time.LocalTime?)
+    private data class Dated(val at: LocalDateTime, val kind: String, val rowId: Long?, val wwan: Boolean, val time: java.time.LocalTime?, val delayMs: Long?)
+
+    /**
+     * The dated end of the wait for the refused profile [rowId] on WWAN of [phoneId], as epoch ms, or
+     * null. A throttle counts only when it has not expired and is dated by its "Add throttling entry"
+     * line (a throttle whose delay was "never", Long.MAX_VALUE, does not count); a retry entry only
+     * when it has not started (NOT_RETRIED), dated by its "Scheduled data retry" line or, without one,
+     * by [failureAt], the failure's registry line. A running throttle wins: Android tries nothing
+     * before it ends; else the earliest pending retry. Whether under a minute remains is [RetryWait]'s.
+     */
+    fun untilMs(phoneDump: String?, phoneId: Int, rowId: Long, failureAt: LocalDateTime?, zone: java.time.ZoneId, nowMs: Long): Long? {
+        val section = section(phoneDump, phoneId) ?: return null
+        val retries = mutableListOf<Retry>()
+        val throttles = mutableListOf<Throttle>()
+        val logs = mutableListOf<Dated>()
+        var mode = ""
+        for (line in section.lineSequence()) {
+            val trimmed = line.trim()
+            when {
+                trimmed == "Retry entries:" -> mode = "retry"
+                trimmed == "Throttling entries:" -> mode = "throttle"
+                trimmed == "Local logs:" -> mode = "log"
+                mode == "retry" -> retry(trimmed)?.let { retries += it }
+                mode == "throttle" -> throttle(trimmed)?.let { throttles += it }
+                mode == "log" -> dated(line)?.let { logs += it }
+            }
+        }
+        val throttleEnd = throttles.filter { it.rowId == rowId && it.wwan && it.time != null }.mapNotNull { t ->
+            val add = logs.lastOrNull { it.kind == "Add throttling entry" && it.rowId == rowId && it.wwan && same(it.time, t.time) } ?: return@mapNotNull null
+            val evaluated = logs.lastOrNull { it.kind == "onEvaluateDataSetupRetry:" && it.rowId == rowId && it.wwan && !it.at.isAfter(add.at) }
+            if (evaluated?.delayMs == Long.MAX_VALUE) return@mapNotNull null
+            instant(t.time!!, add.at, zone)
+        }.filter { it > nowMs }.maxOrNull()
+        if (throttleEnd != null) return throttleEnd
+        return retries.filter { it.rowId == rowId && it.wwan && it.state == "NOT_RETRIED" && it.time != null && it.delayMs != null && it.delayMs in 0 until Long.MAX_VALUE }
+            .mapNotNull { r ->
+                val at = logs.lastOrNull { it.kind == "Scheduled data retry" && it.rowId == rowId && it.wwan && same(it.time, r.time) }?.at ?: failureAt ?: return@mapNotNull null
+                instant(r.time!!, at, zone)
+            }.filter { it > nowMs }.minOrNull()
+    }
+
+    /** DataRetryManager-[phoneId]'s section, up to the dashes that end it. */
+    private fun section(text: String?, phoneId: Int): String? {
+        if (text.isNullOrEmpty()) return null
+        val start = Regex("(?m)^\\s*DataRetryManager-$phoneId:\\s*$").find(text) ?: return null
+        val rest = text.substring(start.range.last + 1)
+        val end = listOfNotNull(SECTION_END.find(rest)?.range?.first, Regex("(?m)^\\s*DataRetryManager-\\d+:\\s*$").find(rest)?.range?.first).minOrNull()
+        return if (end != null) rest.substring(0, end) else rest
+    }
+
+    private fun retry(text: String): Retry? {
+        val m = RETRY.find(text) ?: return null
+        val rest = m.groupValues[3]
+        val profiled = rest.startsWith("[DataProfile=")
+        return Retry(
+            rowId = if (profiled) RegistryDataLog.ROW.find(rest)?.groupValues?.get(1)?.toLongOrNull() else null,
+            wwan = ENTRY_TRANSPORT.find(rest)?.groupValues?.get(1) == "WWAN",
+            time = time(m.groupValues[2]),
+            delayMs = m.groupValues[1].toLongOrNull() ?: Long.MAX_VALUE.takeIf { m.groupValues[1].length > 18 },
+            state = STATE.findAll(rest).lastOrNull()?.groupValues?.get(1),
+        )
+    }
+
+    private fun throttle(text: String): Throttle? {
+        val m = THROTTLE.find(text) ?: return null
+        return Throttle(RegistryDataLog.ROW.find(m.groupValues[1])?.groupValues?.get(1)?.toLongOrNull(), m.groupValues[2] == "WWAN", time(m.groupValues[3]))
+    }
+
+    private fun dated(line: String): Dated? {
+        val m = LOG.find(line) ?: return null
+        val at = RegistryDataLog.time(m.groupValues[1]) ?: return null
+        val kind = m.groupValues[2]
+        val rest = m.groupValues[3]
+        return when (kind) {
+            "Add throttling entry" -> throttle(rest)?.let { Dated(at, kind, it.rowId, it.wwan, it.time, null) }
+            "Scheduled data retry" -> retry(rest)?.let { Dated(at, kind, it.rowId, it.wwan, it.time, it.delayMs) }
+            else -> EVALUATE.find(rest)?.let { e ->
+                val delay = e.groupValues[2].toLongOrNull() ?: Long.MAX_VALUE.takeIf { e.groupValues[2].length > 18 }
+                Dated(at, kind, RegistryDataLog.ROW.find(rest)?.groupValues?.get(1)?.toLongOrNull(), e.groupValues[1] == "WWAN", null, delay)
+            }
+        }
+    }
+
+    private fun time(text: String): java.time.LocalTime? = if (text == "never") null else try {
+        java.time.LocalTime.parse(text)
+    } catch (_: DateTimeParseException) {
+        null
+    }
+
+    private fun same(a: java.time.LocalTime?, b: java.time.LocalTime?): Boolean {
+        if (a == null || b == null) return false
+        val d = Math.floorMod(a.toNanoOfDay() / 1_000_000 - b.toNanoOfDay() / 1_000_000, DAY_MS)
+        return minOf(d, DAY_MS - d) <= SAME_MS
+    }
+
+    /**
+     * The time of day [time] dated by the dated line [at]: the line's day, or the next day when the
+     * time of day is earlier than the line (by more than the print's jitter). A time that would fall
+     * almost a whole day after the line is the jitter across midnight, so the line's day before.
+     */
+    fun instant(time: java.time.LocalTime, at: LocalDateTime, zone: java.time.ZoneId): Long {
+        var t = LocalDateTime.of(at.toLocalDate(), time)
+        if (t.isBefore(at.minusSeconds(JITTER_S))) t = t.plusDays(1)
+        else if (t.isAfter(at.plusDays(1).minusSeconds(JITTER_S))) t = t.minusDays(1)
+        return t.atZone(zone).toInstant().toEpochMilli()
+    }
+
+    private const val DAY_MS = 86_400_000L
 }

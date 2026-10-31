@@ -182,7 +182,7 @@ class HiddenVerdictTest {
         val marks = DiagnosisMark.put(emptyList(), 0, 3, d, 1_000)
         assertEquals(line, marks.single().line)
         assertEquals(d.details, marks.single().details)
-        assertEquals(line, marks.single().shown())
+        assertEquals(line, marks.single().shown(1_000))
         val replaced = DiagnosisMark.put(marks, 0, 3, Diagnoses.of(DiagnosisInputs()), 2_000)
         assertTrue(replaced.isEmpty())
         // The state file keeps it as plain words and classes; an old file without it reads as none.

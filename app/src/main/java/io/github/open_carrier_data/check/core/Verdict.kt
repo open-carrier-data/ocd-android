@@ -194,3 +194,29 @@ object TestBlame {
         return accountBlocks && (refusalPointsAtAccount || userPlaneBlock)
     }
 }
+
+/**
+ * OCD rule round 43, item 2: the wait clause after a shown refusal line, ". The phone waits N minutes
+ * before trying again" ("1 minute" when N is 1). N is the time left until the dated end of Android's
+ * wait ([RetryWaits]), worked out again each time the line is shown and rounded up to whole minutes,
+ * so nobody looks again before Android retries. Under one minute, or no wait read: no clause. The
+ * clause changes nothing else: not the cause class, the confident flag, the gate or [TestBlame], and
+ * no cause is inferred from the length of the wait.
+ */
+object RetryWait {
+    private const val MINUTE_MS = 60_000L
+    private val CLAUSE = Regex("\\. The phone waits \\d+ minutes? before trying again")
+
+    fun clause(untilMs: Long?, nowMs: Long): String? {
+        val left = (untilMs ?: return null) - nowMs
+        if (left < MINUTE_MS) return null
+        val n = (left + MINUTE_MS - 1) / MINUTE_MS
+        return ". The phone waits $n ${if (n == 1L) "minute" else "minutes"} before trying again"
+    }
+
+    /** [line] with the clause after it, when there is one. */
+    fun after(line: String, untilMs: Long?, nowMs: Long): String = line + clause(untilMs, nowMs).orEmpty()
+
+    /** A logged line without its clause: the check that decides whether the line changed ignores the minutes. */
+    fun strip(text: String): String = CLAUSE.replace(text, "")
+}
