@@ -10,6 +10,7 @@ import io.github.open_carrier_data.check.core.EpdgW1
 import io.github.open_carrier_data.check.core.ProbeLadder
 import io.github.open_carrier_data.check.core.Refusal
 import io.github.open_carrier_data.check.core.RejectCauseClass
+import io.github.open_carrier_data.check.core.RetryWait
 import io.github.open_carrier_data.check.core.HiddenDetails
 import io.github.open_carrier_data.check.core.SetupRefusal
 import io.github.open_carrier_data.check.core.SipRegClass
@@ -155,12 +156,23 @@ data class Diagnosis(
      * access point: other", and an unknown Wi-Fi calling (IWLAN) value, which gets no line.
      */
     val details: List<String> = emptyList(),
+    /** Round 43, item 2: the dated end of Android's retry wait for each feature whose shown line is a refused setup with a pending entry. */
+    val waits: Map<VerdictFeature, Long> = emptyMap(),
 ) {
-    /** The headline line for the screen and the report: the mobile-data verdict first, else the first feature's. */
-    val line: String? get() = (verdicts.firstOrNull { it.feature == VerdictFeature.MOBILE_DATA } ?: verdicts.firstOrNull())?.line
+    private val headline: CauseVerdict? get() = verdicts.firstOrNull { it.feature == VerdictFeature.MOBILE_DATA } ?: verdicts.firstOrNull()
 
-    /** The headline and the phone-side factors, as the log keeps them; null when there is neither. */
+    /** The headline line for the screen and the report: the mobile-data verdict first, else the first feature's. */
+    val line: String? get() = headline?.line
+
+    /** The headline and the phone-side factors, as the log keeps them, without the wait clause; null when there is neither. */
     val summary: String? get() = (listOfNotNull(line) + factors).joinToString("; ").ifEmpty { null }
+
+    /** Item 2: the dated end of the wait after the headline line, when it has one. */
+    val waitUntilMs: Long? get() = headline?.let { waits[it.feature] }
+
+    /** The headline with the wait clause worked out at [nowMs] after it, then the phone-side factors. */
+    fun shown(nowMs: Long): String? =
+        (listOfNotNull(line?.let { RetryWait.after(it, waitUntilMs, nowMs) }) + factors).joinToString("; ").ifEmpty { null }
 
     /**
      * Item 7, bounded: may a failed data or IMS test be set aside as "not counted, retry" because the
@@ -230,17 +242,30 @@ object Diagnoses {
         CauseVerdicts.of(VerdictFeature.MOBILE_DATA, data, i.account, i.balance)?.let { verdicts += it }
         // Wi-Fi calling never reads the registry log's setups: its causes come from AOSP's IWLAN service, not the modem.
         CauseVerdicts.of(VerdictFeature.VOWIFI, imsRefusal(i.iwlanDataCause, i, EpdgW1.refusal(i.epdgWifi, i.epdgCellular)), AccountState.UNKNOWN)?.let { verdicts += it }
-        CauseVerdicts.of(VerdictFeature.VOLTE, imsRefusal(i.imsDataCause, i, setup = i.imsSetupRefusal), AccountState.UNKNOWN)?.let { verdicts += it }
+        val volte = imsRefusal(i.imsDataCause, i, setup = i.imsSetupRefusal)
+        CauseVerdicts.of(VerdictFeature.VOLTE, volte, AccountState.UNKNOWN)?.let { verdicts += it }
+        val mms = if (i.mmsEnded) null else i.mmsDataCause?.let { coded(it) } ?: i.mmsSetup?.refusal()
         if (i.mmsEnded) CauseVerdicts.of(VerdictFeature.MMS, null, AccountState.UNKNOWN, mmsEnded = true)?.let { verdicts += it }
-        else (i.mmsDataCause?.let { coded(it) } ?: i.mmsSetup?.refusal())?.let { r ->
-            CauseVerdicts.of(VerdictFeature.MMS, r, AccountState.UNKNOWN)?.let { verdicts += it }
-        }
+        else mms?.let { r -> CauseVerdicts.of(VerdictFeature.MMS, r, AccountState.UNKNOWN)?.let { verdicts += it } }
         // Strict Private DNS that cannot reach its server is the phone's, never the carrier's: named beside the
         // verdict, unless it already is the mobile-data verdict ("the Private DNS server can't be reached").
         val factors = listOfNotNull(
             "Phone-side: ${ProbeLadder.PRIVATE_DNS_FACTOR}".takeIf { i.privateDnsUnreachable && data?.userPlane != UserPlaneClass.PRIVATE_DNS_BROKEN },
         )
-        return Diagnosis(verdicts, data, i.account, factors, details(i, verdicts))
+        return Diagnosis(verdicts, data, i.account, factors, details(i, verdicts), waits(i, verdicts, data, volte, mms))
+    }
+
+    /**
+     * Item 2: the wait clause may follow any shown refusal line, hidden or coded, that came from a refused
+     * setup with a pending retry or throttle entry for its profile. It changes nothing else.
+     */
+    private fun waits(i: DiagnosisInputs, verdicts: List<CauseVerdict>, data: Refusal?, volte: Refusal?, mms: Refusal?): Map<VerdictFeature, Long> {
+        val shown = verdicts.map { it.feature }.toSet()
+        return listOfNotNull(
+            i.dataSetupRefusal?.takeIf { data != null && data == it.refusal() }?.waitUntilMs?.let { VerdictFeature.MOBILE_DATA to it },
+            i.imsSetupRefusal?.takeIf { volte != null && volte == it.refusal() }?.waitUntilMs?.let { VerdictFeature.VOLTE to it },
+            i.mmsSetup?.takeIf { !i.mmsEnded && mms != null && mms == it.refusal() }?.waitUntilMs?.let { VerdictFeature.MMS to it },
+        ).filter { it.first in shown }.toMap()
     }
 
     /**
@@ -297,15 +322,17 @@ data class DiagnosisMark(
     val line: String?,
     val factors: List<String> = emptyList(),
     val details: List<String> = emptyList(),
+    /** Item 2: the dated end of Android's retry wait after the line (the instant only, to work out N). */
+    val waitUntilMs: Long? = null,
 ) {
-    /** The line as the screen shows it, the phone-side factors after it. */
-    fun shown(): String? = (listOfNotNull(line) + factors).joinToString("; ").ifEmpty { null }
+    /** The line as the screen shows it at [nowMs]: the wait clause worked out again, then the phone-side factors. */
+    fun shown(nowMs: Long): String? = (listOfNotNull(line?.let { RetryWait.after(it, waitUntilMs, nowMs) }) + factors).joinToString("; ").ifEmpty { null }
 
     companion object {
         /** [marks] with [slot]'s mark replaced by [diagnosis]'s, or dropped when it names nothing. */
         fun put(marks: List<DiagnosisMark>, slot: Int, subId: Int, diagnosis: Diagnosis?, atMs: Long): List<DiagnosisMark> {
             val rest = marks.filter { it.slot != slot }
-            val mark = diagnosis?.takeIf { it.summary != null }?.let { DiagnosisMark(slot, subId, atMs, it.line, it.factors, it.details) }
+            val mark = diagnosis?.takeIf { it.summary != null }?.let { DiagnosisMark(slot, subId, atMs, it.line, it.factors, it.details, it.waitUntilMs) }
             return (rest + listOfNotNull(mark)).sortedBy { it.slot }
         }
     }

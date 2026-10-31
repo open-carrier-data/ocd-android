@@ -425,10 +425,10 @@ class PrivilegedPhone(context: Context) : AppSidePhone(context) {
     override suspend fun registryText() = local(OwnerCommand.REGISTRY)
 
     /**
-     * Not read here: `dumpsys activity service com.android.phone` goes through
-     * ActivityManager, which wants PACKAGE_USAGE_STATS besides DUMP ("Permission
-     * Denial: can't dump ActivityManager", the S20 on 2026-10-19). The
-     * emergency state and IMS come from [emergencyApi] and [imsApi].
+     * Not read for the observe path: the emergency state and IMS come from [emergencyApi] and [imsApi].
+     * The "Permission Denial: can't dump ActivityManager" of 2026-10-19 is stale since PACKAGE_USAGE_STATS
+     * (#12): the same dump is read through [telephonyText] for the emergency data test and, since round 43,
+     * for DataRetryManager's wait after a refused setup.
      */
     override suspend fun phoneText(): String? = null
 
@@ -502,9 +502,10 @@ class PrivilegedPhone(context: Context) : AppSidePhone(context) {
     }
 
     /**
-     * The phone service's dump, read only for the emergency data test (DataConfigManager,
-     * AccessNetworksManager, DataRetryManager): DUMP and PACKAGE_USAGE_STATS, held since the IWLAN
-     * dumps (2026-10-20). The emergency state and IMS still come from the system APIs.
+     * The phone service's dump, read for the emergency data test (DataConfigManager,
+     * AccessNetworksManager, DataRetryManager) and, round 43, after a refused setup for DataRetryManager's
+     * wait: DUMP and PACKAGE_USAGE_STATS, held since the IWLAN dumps (2026-10-20). The emergency state
+     * and IMS still come from the system APIs.
      */
     override suspend fun telephonyText(): String? = local(OwnerCommand.PHONE)?.takeIf { "DataConfigManager-" in it }
 

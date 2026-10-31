@@ -449,6 +449,7 @@ object DeepCheck {
         val registry = registryLines?.let { Optional(RegistryParser.parse(it.asSequence(), target.slot)) }
         val attempts = registryLines?.let { HiddenLines.fromRegistry(RegistryDataLog.parse(it.asSequence()), target.slot.index) }.orEmpty()
         var ims = samsung
+        var phoneDump: String? = null
         var iwlan: IwlanReading? = null
         var volteByUser: Boolean? = null
         val switch = when (samsung.source) {
@@ -456,7 +457,10 @@ object DeepCheck {
                 ?: WifiCallingSwitch.UNREADABLE
             ImsSource.NOT_FOUND -> {
                 // No Samsung IMS: read Android telephony's own IMS state (lab `parse_aosp_ims`).
-                val aosp = runner.run(ShellCommand.AOSP_IMS, target) { lines -> Optional(AospImsParser.parse(lines, target.slot)) }
+                // Round 43, item 2: the same dump, kept in memory for this run only, gives DataRetryManager's wait.
+                val aospLines = runner.run(ShellCommand.AOSP_IMS, target) { lines -> lines.toList() }
+                val aosp = aospLines?.let { Optional(AospImsParser.parse(it.asSequence(), target.slot)) }
+                if (attempts.isNotEmpty()) phoneDump = aospLines?.joinToString("\n")
                 ims = AospImsParser.reading(aosp?.value, registry?.value, dumpRead = aosp != null)
                 iwlan = runner.run(ShellCommand.IWLAN_LOG, target) { IwlanLogParser.parse(it, target.home?.epdgFqdn, now()) }
                 volteByUser = aosp?.value?.volteByUser
@@ -484,7 +488,14 @@ object DeepCheck {
             iwlan = iwlan,
             wifiResolver = resolver,
             volteByUser = volteByUser,
-            refusals = attempts.map { (attempt, feature) -> SetupRefusal(feature, attempt.cause, subId = attempt.subId) },
+            refusals = attempts.map { (attempt, feature) ->
+                SetupRefusal(
+                    feature, attempt.cause,
+                    modemValue = ModemValue.of(phoneDump, attempt.subId, attempt.rowId),
+                    subId = attempt.subId,
+                    waitUntilMs = RetryWaits.untilMs(phoneDump, target.slot.index, attempt.rowId, attempt.at, java.time.ZoneId.systemDefault(), (now() * 1000).toLong()),
+                )
+            },
         )
     }
 
