@@ -92,6 +92,7 @@ class PrivateDnsTest {
         assertTrue(probe.contains("ProbeNet.epdgLookupDirect(network, ProbeNet.resolvers(link), home)"))
         // The global setting is not the cellular network's mode.
         assertFalse(source("OwnerWork.kt").contains("private_dns_mode"))
-        assertTrue(source("OwnerWork.kt").contains("val line = diagnosis.summary ?: continue"))
+        // The logged line carries the phone-side factors (round 43 adds the wait clause after the verdict, before them).
+        assertTrue(source("OwnerWork.kt").contains("val line = diagnosis.shown(now) ?: continue"))
     }
 }

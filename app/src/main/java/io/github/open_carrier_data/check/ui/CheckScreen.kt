@@ -65,6 +65,7 @@ import io.github.open_carrier_data.check.core.CarrierKeys
 import io.github.open_carrier_data.check.core.DeepCheckReading
 import io.github.open_carrier_data.check.core.HiddenDetails
 import io.github.open_carrier_data.check.core.HiddenLines
+import io.github.open_carrier_data.check.core.RetryWait
 import io.github.open_carrier_data.check.core.DeviceInfo
 import io.github.open_carrier_data.check.core.EpdgName
 import io.github.open_carrier_data.check.core.Findings
@@ -510,7 +511,10 @@ private fun DeepResults(deep: DeepCheckReading) {
     }
     // Round 43: a refused setup whose cause this phone's modem software hides; the raw value as the note.
     deep.refusals.forEach { refusal ->
-        HiddenLines.line(refusal)?.let { line -> Field("Refused", line, HiddenDetails.line(refusal.feature, refusal.cause, refusal.modemValue), emphasize = true) }
+        HiddenLines.line(refusal)?.let { line ->
+            // Item 2: the wait, worked out again each time the line is shown.
+            Field("Refused", RetryWait.after(line, refusal.waitUntilMs, System.currentTimeMillis()), HiddenDetails.line(refusal.feature, refusal.cause, refusal.modemValue), emphasize = true)
+        }
     }
     deep.networkOffer?.let { offer ->
         Field(

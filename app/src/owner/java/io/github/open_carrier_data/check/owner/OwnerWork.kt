@@ -22,7 +22,10 @@ import io.github.open_carrier_data.check.core.DeviceInfo
 import io.github.open_carrier_data.check.core.EpdgW1
 import io.github.open_carrier_data.check.core.Matcher
 import io.github.open_carrier_data.check.core.OcdBundle
+import io.github.open_carrier_data.check.core.ModemValue
 import io.github.open_carrier_data.check.core.RegistryDataLog
+import io.github.open_carrier_data.check.core.RetryWait
+import io.github.open_carrier_data.check.core.RetryWaits
 import io.github.open_carrier_data.check.core.RomFamily
 import io.github.open_carrier_data.check.core.SetupAttempts
 import io.github.open_carrier_data.check.core.SetupRefusal
@@ -566,11 +569,14 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             }.getOrNull() ?: continue
             // Round 43: the screen's current verdict and Details for this SIM, replaced at every check.
             store.update { it.copy(diagnoses = DiagnosisMark.put(it.diagnoses, sim.slot, sim.subId, diagnosis, now)) }
-            // The verdict and its phone-side factors (strict Private DNS that cannot reach its server), in one line.
-            val line = diagnosis.summary ?: continue
+            // The verdict and its phone-side factors (strict Private DNS that cannot reach its server), in one line, with
+            // round 43's wait clause after the verdict. Whether the line changed ignores the clause: Android retries at
+            // growing intervals, so the minutes differ at every check.
+            val line = diagnosis.shown(now) ?: continue
             val tag = "diagnosis:${sim.slot}"
-            if (store.read().log.lastOrNull { it.kind == tag }?.text == line) continue
-            quietLog(store, tag, line)
+            val last = store.read().log.lastOrNull { it.kind == tag }?.text
+            if (last != null && RetryWait.strip(last) == RetryWait.strip(line)) continue
+            store.update { it.logged(System.currentTimeMillis(), tag, line) }
         }
     }
 
@@ -583,10 +589,24 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     private suspend fun refusedSetups(passive: DiagnosisInputs, phone: OwnerPhone, sim: OwnerSim, apns: List<io.github.open_carrier_data.check.owner.core.LiveApn>): DiagnosisInputs {
         val lines = RegistryDataLog.parse(runCatching { phone.registryText() }.getOrNull())
         if (lines.isEmpty()) return passive
-        fun refusal(feature: VerdictFeature): SetupRefusal? =
-            SetupAttempts.newest(lines, sim.slot, sim.subId, feature)?.takeIf { DataFailCauseClass.refusal(it.cause) }?.let { a ->
-                SetupRefusal(feature, a.cause, ApnRows.classOf(a.rowId, a.edited, apns, sim.subId), subId = sim.subId)
-            }
+        val attempts = listOf(VerdictFeature.MOBILE_DATA, VerdictFeature.VOLTE, VerdictFeature.MMS).mapNotNull { f ->
+            SetupAttempts.newest(lines, sim.slot, sim.subId, f)?.takeIf { DataFailCauseClass.refusal(it.cause) }?.let { f to it }
+        }.toMap()
+        if (attempts.isEmpty()) return passive
+        // Item 2: the phone service's dump (the privileged OwnerCommand.PHONE read, DUMP and PACKAGE_USAGE_STATS), read
+        // only when a refused setup is in the log: DataRetryManager's entries give the wait, and the refused profile's
+        // data network, when Android still keeps it, the modem value for Details. Parsed in memory, never kept.
+        val dump = runCatching { phone.telephonyText() }.getOrNull()
+        val zone = java.time.ZoneId.systemDefault()
+        val now = System.currentTimeMillis()
+        fun refusal(feature: VerdictFeature): SetupRefusal? = attempts[feature]?.let { a ->
+            SetupRefusal(
+                feature, a.cause, ApnRows.classOf(a.rowId, a.edited, apns, sim.subId),
+                modemValue = ModemValue.of(dump, sim.subId, a.rowId),
+                subId = sim.subId,
+                waitUntilMs = RetryWaits.untilMs(dump, sim.slot, a.rowId, a.at, zone, now),
+            )
+        }
         return passive.copy(
             dataSetup = refusal(VerdictFeature.MOBILE_DATA),
             imsSetup = refusal(VerdictFeature.VOLTE),

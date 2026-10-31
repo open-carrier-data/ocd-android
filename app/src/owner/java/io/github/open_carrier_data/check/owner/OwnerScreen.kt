@@ -733,7 +733,7 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
             item {
                 Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     state.diagnoses.forEach { mark ->
-                        mark.shown()?.let { Summary("Slot ${mark.slot + 1}: $it") }
+                        mark.shown(System.currentTimeMillis())?.let { Summary("Slot ${mark.slot + 1}: $it") }
                         mark.details.forEach { Summary("Details: $it") }
                     }
                 }
