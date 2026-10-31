@@ -50,7 +50,8 @@ class SwitchStepTest {
         assertEquals(true, volte.on)
         assertEquals("device_record", volte.basis)
         assertEquals(false, volte.sameStack)
-        assertEquals(CapabilityValue.CONDITIONAL, volte.summary)
+        // The bundle from public 8491a691 (0.4.13): OCD's VoLTE summary for 26202 reads supported (conditional in 8cb64d63).
+        assertEquals(CapabilityValue.SUPPORTED, volte.summary)
         assertEquals("samsung_omc", volte.record!!.record.source)
         val wifi = OcdFeatureValue.of(T2Feature.VOWIFI, asset, resolution, Fixtures.s20Lineage)
         assertEquals(true, wifi.on)
@@ -69,7 +70,7 @@ class SwitchStepTest {
         assertEquals(false, step.phone.carrierSetting)
         assertEquals(
             "on: this model's stock firmware file (one source: Samsung's carrier pack, stock firmware, newest entry 2025-02), " +
-                "on OCD's profile Vodafone (open.26202.8cebd7550c67). OCD's carrier summary there is conditional.",
+                "on OCD's profile Vodafone (open.26202.8cebd7550c67). OCD's carrier summary there is supported.",
             step.ocd.sourceLine,
         )
         val note = step.ocd.stackNote(Fixtures.s20Lineage)
