@@ -14,7 +14,9 @@ import org.junit.Test
  * Spec appendix A, normative: the 27 matcher vectors, run twice, once on the matcher alone
  * with the appendix's profiles and once through the whole path (the fixture dataset verified,
  * its serving index written and read, and the bundle built), plus the APN coupling vectors of
- * 4.6. The appendix JSON below is copied from the spec verbatim.
+ * 4.6. The appendix JSON below is copied from the spec verbatim (2026-10-25). Rule round 45's
+ * resolution order keeps every result; GoldenVectorsTest runs the same 27 with the step that
+ * makes each serve, and OCD's golden vectors.
  */
 class VectorsTest {
     companion object {

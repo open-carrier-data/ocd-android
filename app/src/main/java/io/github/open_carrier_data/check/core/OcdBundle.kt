@@ -99,6 +99,11 @@ data class OcdProfile(
     @SerialName("depends_on") val dependsOn: Map<String, List<String>> = emptyMap(),
     /** Rule round 45, item 4: what an admitted statement says about availability, per feature (TwoAnswers). */
     @SerialName("for_you") val forYou: Map<String, ForYou> = emptyMap(),
+    /**
+     * Android's weight of the profile on each network code of its match (lookup.json since OCD
+     * rule round 45): step 1 of the resolution order ([ResolutionOrder]). Empty in older data.
+     */
+    val weight: Map<String, Int> = emptyMap(),
 ) {
     fun capability(key: String): CapabilityValue = CapabilityValue.fromWire(capabilities[key])
 }

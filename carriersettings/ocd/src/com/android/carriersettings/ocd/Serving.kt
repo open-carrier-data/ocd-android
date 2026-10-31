@@ -302,7 +302,7 @@ object BundleBuilder {
             googleValue = data.googleNoSim
         } else {
             val candidates = data.network(sim.network) ?: refuse("storage", "network ${sim.network} unreadable")
-            val served = Matcher.stack(candidates, sim, { it.profile.match }, { it.profile.id })
+            val served = Matcher.stack(candidates, sim, { it.profile.match }, { it.profile.id }, { it.profile.fillOnly })
             stack = served.map { it.profile }
             val top = served.lastOrNull()
             serving = top?.profile

@@ -2,7 +2,8 @@
 # Off-device checks for OCD's dataset in OcdCarrierSettings (OCD rule round 30). No Android
 # build: the reader, matcher, bundle order, APN logic, guard, store and engine are plain Kotlin
 # (ocd/src/.../ocd/*.kt without the Android glue), compiled with the Kotlin compiler from
-# Gradle's cache and tested with JUnit 4, among them the spec's 27 matcher vectors, the
+# Gradle's cache and tested with JUnit 4, among them the spec's 27 matcher vectors, OCD's golden
+# vectors of the resolution order (GoldenVectorsTest, rule round 45, vectors/ at the root), the
 # refusals of its section 2.12, round 32's APN candidate trials (CandidateTest), and the
 # writer-to-provider contract (ProtocolContractTest, round 37).
 #
@@ -52,7 +53,7 @@ kotlinc -cp "$stdlib:$junit" -d "$out/classes" $pure "$here"/src/*.kt
 mkdir -p "$out/tmp"
 # ProtocolContractTest reads ocd-android's protocol/ (round 37, item 6) from the repository root.
 "$java" -Djava.io.tmpdir="$out/tmp" -Docd.repo="$(dirname "$(dirname "$module")")" -cp "$out/classes:$stdlib:$junit" org.junit.runner.JUnitCore \
-    com.android.carriersettings.ocd.VectorsTest com.android.carriersettings.ocd.ReaderTest \
+    com.android.carriersettings.ocd.VectorsTest com.android.carriersettings.ocd.GoldenVectorsTest com.android.carriersettings.ocd.ReaderTest \
     com.android.carriersettings.ocd.BundleTest com.android.carriersettings.ocd.ApnTest \
     com.android.carriersettings.ocd.EngineTest com.android.carriersettings.ocd.CandidateTest \
     com.android.carriersettings.ocd.ProtocolContractTest

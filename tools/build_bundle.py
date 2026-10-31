@@ -5,7 +5,9 @@ Data's public repository.
 Reads, and never writes, these files of the public checkout:
 
 - generated/android/lookup.json: per profile, profile_id, display_name,
-  match, capabilities, newest_entry, depends_on and for_you are kept;
+  match, capabilities, newest_entry, depends_on, for_you and weight (OCD
+  rule round 45: Android's weight per network code, the resolution order's
+  first step) are kept;
   everything else is dropped.
 - generated/android/metadata.json: the snapshot's checks_through,
   stale_after and data_digest.
@@ -53,7 +55,8 @@ INPUTS = (
     "generated/devices/android.json",
 )
 
-PROFILE_KEYS = ("profile_id", "display_name", "match", "capabilities", "newest_entry", "depends_on", "for_you")
+# weight: Android's weight per network code, lookup.json since OCD rule round 45 (item 3).
+PROFILE_KEYS = ("profile_id", "display_name", "match", "capabilities", "newest_entry", "depends_on", "for_you", "weight")
 # Rule round 45, item 4: the two answers' sibling maps, kept where lookup.json has them.
 DEPENDS_ON_REASONS = {"sources_disagree", "device", "firmware", "ims_stack"}
 FOR_YOU_STATES = {"included", "free_option", "paid_option", "not_offered", "ended", "depends_on_plan"}
@@ -195,6 +198,13 @@ def compact_profile(profile: dict[str, Any], capability_keys: list[str]) -> dict
     newest = kept.get("newest_entry")
     if newest is not None and (not isinstance(newest, str) or not MONTH.match(newest)):
         raise BundleError(f"{profile_id}: newest_entry {newest!r} is not YYYY-MM")
+    weight = kept.get("weight")
+    if weight is not None and (
+        not isinstance(weight, dict)
+        or set(weight) != set(kept_match["mccmnc"])
+        or not all(isinstance(v, int) and not isinstance(v, bool) and 256 <= v <= 511 for v in weight.values())
+    ):
+        raise BundleError(f"{profile_id}: weight {weight!r} is not one score of 256 to 511 per network code of its match")
     return kept
 
 

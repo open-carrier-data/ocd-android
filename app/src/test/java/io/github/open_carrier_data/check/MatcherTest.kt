@@ -12,6 +12,9 @@ import org.junit.Test
  * Expected stacks were cross-checked with OCD's tools/resolve_carrier_profiles.py
  * on the full lookup.json (the fixture holds a subset, so its stacks are the
  * resolver's stacks restricted to the fixture's profiles, in the same order).
+ * Since rule round 45 the order is `--order android`; the fixture predates
+ * lookup.json's weight, so the app computes the weight from the match, and
+ * every stack here comes out as before.
  */
 class MatcherTest {
     private fun resolve(mccmnc: String, spn: String? = "", gid1: String? = "", ids: Set<Long>? = emptySet()): Resolution =
@@ -90,7 +93,7 @@ class MatcherTest {
     }
 
     @Test
-    fun `equal specificity is ordered by profile id`() {
+    fun `profiles go by Android's weight, SPN below GID1 below both (rule round 45)`() {
         assertEquals(
             listOf(
                 "open.26201.13528695fee7",

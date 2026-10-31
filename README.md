@@ -332,14 +332,14 @@ python3 tools/build_bundle.py --public ../live-public --check  # compares only
 
 The script refuses a public checkout with uncommitted changes in those files. The output is deterministic: sorted keys and no time in the gzip header. The asset is named `.gzip`, not `.gz`, because the Android build unpacks `.gz` assets and drops the suffix.
 
-**Matching** ports `profile_matches`, `specificity` and `resolve` from OCD's `tools/resolve_carrier_profiles.py`:
-- profiles come generic to specific, ordered by specificity, then `profile_id`;
+**Matching** ports `profile_matches` and `resolve` from OCD's `tools/resolve_carrier_profiles.py` in the resolution order of OCD's rule round 45 (`--order android`, `core/Matcher.kt` `ResolutionOrder`), which OcdCarrierSettings uses too:
+- profiles come generic to specific: by Android's weight (`weight` in `lookup.json` for the SIM's network code; data without it gets the weight from the match, a carrier-ID selector at the MCC/MNC-only weight), a carrier-ID selector above a raw profile of equal weight, then the longer prefix or more fixed digits, fewer list values, fewer network codes, and `profile_id` last;
 - SPN is compared ignoring case;
 - GID1 is compared as a prefix, ignoring case;
 - the answer is the most specific profile's value, as `docs/consume.md` says.
 
 Two differences from the resolver:
-- **Two carrier IDs.** A SIM has a carrier ID and a specific carrier ID, and a profile's `android_carrier_ids` match when either one is listed. Android's CarrierConfig app compares `cid` the same way (`DefaultCarrierConfigService`, case `"cid"`). The Python resolver takes one ID.
+- **Two carrier IDs.** A SIM has a carrier ID and a specific carrier ID, and a profile's `android_carrier_ids` match when either one is listed. Android's CarrierConfig app compares `cid` the same way (`DefaultCarrierConfigService`, case `"cid"`). The Python resolver takes the second as `--android-specific-carrier-id` since rule round 45.
 - **Unreadable dimensions are kept aside.** A profile that needs a value the app cannot read (ICCID, IMSI, GID2, or GID1 without the permission) does not simply fail to match. It is listed as "cannot check". The matched stack is the same as the resolver's for the same inputs.
 
 **Device records** (OCD's round 17) say what one phone model's own carrier file sets for VoLTE, Wi-Fi calling, video calling and VoNR on one carrier profile. OCD lists every device value it publishes, including those that agree with the carrier value. The app reads them for the most specific profile:
@@ -743,6 +743,7 @@ To move to newer libraries, install build-tools 35 or later, raise AGP, and then
 
 **Tests.** JVM tests sit under `app/src/test`. They use a fixture of 17 real profiles from `lookup.json` (`app/src/test/resources/fixture-bundle.json`):
 - `MatcherTest`: the 26202 base profile, LIDL Connect, the Vodafone.de SPN, the 1&1 GID1 profile, the Telekom stack from OCD's README example, Tracfone's specific carrier ID, and ICCID, IMSI and GID2 profiles;
+- `ResolutionOrderTest`: OCD's golden vectors of the resolution order (`vectors/resolution-order.json` at the repository root, a byte copy of OCD's `tests/vectors/resolution-order.json`; rule round 45), each vector's stack and reason through the comparator and its readable part through `resolve`, with the weights computed from the file's pinned carrier ID rows;
 - `FindingsTest`: the comparisons, no German MMS claim, no "works" or "OCD is wrong" wording, the deep-check finding, and the deep check's findings (the A50 DNS case, signed in over 4G or Wi-Fi, not signed in over 4G), and on Android's IMS the S20 with the LIDL SIM on 2026-10-19 (signed in over LTE while the log says Wi-Fi, the phone's own lookup empty, Android's retry wait), a cell without VoPS, and the wording rules;
 - `ReportTest`: the key allowlist, the redaction and fail-closed scan, the GID1 switch, date only, both access tiers, a Shizuku report built from dumps full of identifiers, and a report from Android's IMS with the new fields;
 - `DeepParsersTest`: the deep check's parsers on `phone_check.py`'s Samsung IMS fixture, ping's first line, the Wi-Fi calling switch and APN rows in the `content` tool's format, with made-up identifiers mixed in that must not come out, and the A50's real APN output of 2026-10-19 (`app/src/test/resources/a50/`), whose rows Samsung keeps once per SIM slot;
