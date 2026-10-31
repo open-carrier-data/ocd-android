@@ -46,6 +46,7 @@ class OlderAppTest {
         "15cc9e2 (#46, 0.4.6; vendor/extra app-0.4.6 5ba975a, round 42's live runners)" to 10,
         "5f93349 (#49, 0.4.7; vendor/extra main 3077346, the update on the S20 since 2026-10-30)" to 11,
         "495f8b0 (#54, 0.4.8; vendor/extra main bbe5d8f, the update on the S20 since 2026-10-30)" to 12,
+        "55b57d8 (#55, 0.4.9; vendor/extra main cbe8fcb, in the S20's ROM since build H of 2026-10-30)" to 13,
     )
 
     @Test

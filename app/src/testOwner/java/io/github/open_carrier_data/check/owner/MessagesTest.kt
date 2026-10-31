@@ -63,11 +63,13 @@ class MessagesTest {
     }
 
     @Test
-    fun `the probe is one GET with no body, through the MMS proxy when there is one`() {
+    fun `the probe is one GET of a made-up path with no body, through the MMS proxy when there is one`() {
         val viaProxy = MmsProbe.request("http://mms.example.net:8002/servlets/mms", "10.0.0.1", 8080)!!
         assertEquals("10.0.0.1", viaProxy.connectHost)
         assertEquals(8080, viaProxy.connectPort)
-        assertEquals("GET http://mms.example.net:8002/servlets/mms HTTP/1.1", viaProxy.requestLine)
+        // Round 42, item 6: M4 is only a GET of a made-up message path, never the row's own MMSC path.
+        assertEquals("GET http://mms.example.net:8002/ocd-check/no-such-message HTTP/1.1", viaProxy.requestLine)
+        assertFalse("servlets" in viaProxy.bytes().decodeToString())
         val text = viaProxy.bytes().decodeToString()
         assertTrue(text.startsWith("GET "))
         assertTrue(text.endsWith("\r\n\r\n"))
@@ -75,7 +77,8 @@ class MessagesTest {
         assertFalse("application/vnd.wap.mms-message" in text)
         val direct = MmsProbe.request("http://mms.example.net/mms/wapenc", null, null)!!
         assertEquals("mms.example.net" to 80, direct.connectHost to direct.connectPort)
-        assertEquals("GET /mms/wapenc HTTP/1.1", direct.requestLine)
+        assertEquals("GET /ocd-check/no-such-message HTTP/1.1", direct.requestLine)
+        assertEquals("Host: mms.example.net", direct.bytes().decodeToString().lines()[1])
         // Nothing is sent for anything that is not a plain http URL, host and port.
         for (bad in listOf(null, "", "https://mms.example.net/", "ftp://x/", "http://user@mms.example.net/", "http://mms.example.net/a\r\nX: y", "http://mms.example.net:0/", "http://mms.example.net:99999/", "http://bad host/")) {
             assertNull(bad, MmsProbe.request(bad, null, null))

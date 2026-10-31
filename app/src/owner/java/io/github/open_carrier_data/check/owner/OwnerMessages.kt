@@ -14,9 +14,14 @@ import android.net.NetworkRequest
 import android.net.Uri
 import android.os.Build
 import android.provider.Telephony
+import android.telephony.PreciseDataConnectionState
 import android.telephony.SmsManager
 import android.telephony.SmsMessage
 import android.telephony.SubscriptionManager
+import android.telephony.TelephonyCallback
+import android.telephony.TelephonyManager
+import android.telephony.data.ApnSetting
+import androidx.annotation.RequiresApi
 import io.github.open_carrier_data.check.core.ImsService
 import io.github.open_carrier_data.check.owner.core.InboundSms
 import io.github.open_carrier_data.check.owner.core.MmsCheck
@@ -42,6 +47,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.net.InetSocketAddress
 import java.security.SecureRandom
 import java.time.ZoneId
+import java.util.concurrent.Executor
 
 /*
  * The two message checks of round 26 as the coordinator refined them on
@@ -80,14 +86,20 @@ object OwnerMms {
         }
     }.getOrNull()
 
-    /** The MMS ladder's probe (M1-M4): bring up the MMS network, then one GET of a made-up path. Null status on no answer. */
-    private data class ProbeOutcome(val status: Int?, val stage: String, val result: String)
+    /**
+     * The MMS ladder's probe (M1-M4). [stage] is the farthest step that ran: m1_apn when the MMS network did not
+     * come up (then [apnCause] is the MMS APN's cause Android reported during this attempt, or null), else
+     * m2_dns, m3_tcp or m4_get, where the GET of the made-up path stopped. [status] is the HTTP status, null
+     * without an answer.
+     */
+    private data class ProbeOutcome(val status: Int?, val stage: String, val result: String, val apnCause: Int? = null)
 
     /**
      * One MMS access point check of [sim] (round 42, item 6, the M0-M4 ladder). Where MMS ended it is
-     * never flipped: the ladder still runs as corroboration (an answer only flags the operator
-     * statement for a fresh read, never turns MMS back on). Elsewhere the GET status reads the MMSC:
-     * 404 alive, 403 refuses this SIM, 5xx degraded. No MMS is ever sent.
+     * never flipped: the ladder still runs as corroboration (no answer, an MMS network that does not come
+     * up included, supports the statement; an answer only flags it for a fresh read, never turns MMS back
+     * on). Elsewhere the GET status reads the MMSC: 404 alive, 403 refuses this SIM, 5xx degraded. When the
+     * MMS network does not come up, the MMS APN's cause is kept (M1). No MMS is ever sent.
      */
     @SuppressLint("MissingPermission")
     suspend fun check(context: Context, phone: OwnerPhone, sim: OwnerSim): MmsCheck {
@@ -100,7 +112,8 @@ object OwnerMms {
             val base = MmsCheck(sim.key, now, "ended", operator = endedEntry.operator, ended = endedEntry.lastDay ?: endedEntry.firstDayWithout, stage = "m0_ended")
             if (!canProbe) return base
             val outcome = probe(context, sim) ?: return base
-            return base.copy(httpStatus = outcome.status, corroboration = MmsLadder.corroboration(outcome.status))
+            // The result stays "ended" whatever the probe gives (X6 and enabledMMS are never flipped).
+            return base.copy(stage = outcome.stage, httpStatus = outcome.status, apnCause = outcome.apnCause, corroboration = MmsLadder.corroboration(outcome.status))
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return MmsCheck(sim.key, now, "refused_android_too_old")
         if (QuietReader.roaming(context) != false) return MmsCheck(sim.key, now, "refused_roaming")
@@ -110,10 +123,16 @@ object OwnerMms {
             return MmsCheck(sim.key, now, "mmsc_not_probed", stage = "m1_apn")
         }
         val outcome = probe(context, sim) ?: return MmsCheck(sim.key, now, "refused_no_mms_network", stage = "m1_apn")
-        return MmsCheck(sim.key, now, outcome.result, httpStatus = outcome.status, stage = outcome.stage)
+        return MmsCheck(sim.key, now, outcome.result, httpStatus = outcome.status, stage = outcome.stage, apnCause = outcome.apnCause)
     }
 
-    /** Brings up the MMS network and runs the GET; returns the status, the stage reached, and the ladder reading. */
+    /**
+     * Brings up the MMS network and runs the GET; returns the stage reached, the status and the ladder reading.
+     * While it waits for the MMS network it watches the SIM's precise data states (READ_PRECISE_PHONE_STATE,
+     * Android 12 and later), so an MMS network that does not come up returns M1's cause: the MMS APN's
+     * DataFailCause of this attempt (the S20 on 2026-10-31: 11 setups of event.vodafone.de on 262-02, each
+     * refused with 55, MULTI_CONN_TO_SAME_PDN_NOT_ALLOWED). Null only when no request can be built.
+     */
     @SuppressLint("MissingPermission")
     private suspend fun probe(context: Context, sim: OwnerSim): ProbeOutcome? {
         val row = mmsRow(context, sim) ?: return null
@@ -134,30 +153,74 @@ object OwnerMms {
                 available.complete(null)
             }
         }
+        val watch = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MmsCauseWatch.start(context, sim.subId) else null
         return try {
             cm.requestNetwork(networkRequest, callback, MmsProbe.TIMEOUT_MS.toInt())
-            val network = withTimeoutOrNull(MmsProbe.TIMEOUT_MS + 2_000) { available.await() } ?: return null
-            val status = withContext(Dispatchers.IO) { get(network, request) }
-            ProbeOutcome(status, "m4_get", MmsLadder.classifyStatus(status))
+            val network = withTimeoutOrNull(MmsProbe.TIMEOUT_MS + 2_000) { available.await() }
+                ?: return ProbeOutcome(null, "m1_apn", "refused_no_mms_network", apnCause = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) watch?.cause else null)
+            val (stage, status) = withContext(Dispatchers.IO) { get(network, request) }
+            ProbeOutcome(status, stage, MmsLadder.classifyStatus(status))
         } finally {
             runCatching { cm.unregisterNetworkCallback(callback) }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) watch?.stop()
         }
     }
 
-    /** One GET on [network], the status line read and the socket closed; null without an HTTP answer. */
-    private fun get(network: Network, request: MmsRequest): Int? = runCatching {
-        val address = network.getAllByName(request.connectHost.removePrefix("[").removeSuffix("]")).first()
-        network.socketFactory.createSocket().use { socket ->
-            socket.soTimeout = 15_000
-            socket.connect(InetSocketAddress(address, request.connectPort), 15_000)
-            socket.getOutputStream().apply {
-                write(request.bytes())
-                flush()
+    /**
+     * M2-M4 on [network]: the host's address (M2), a TCP connect (M3) and one GET of the made-up path with
+     * the status line read and the socket closed (M4). The step it reached, and the status (null without an
+     * HTTP answer).
+     */
+    private fun get(network: Network, request: MmsRequest): Pair<String, Int?> {
+        val address = runCatching { network.getAllByName(request.connectHost.removePrefix("[").removeSuffix("]")).first() }.getOrNull()
+            ?: return "m2_dns" to null
+        return runCatching {
+            network.socketFactory.createSocket().use { socket ->
+                socket.soTimeout = 15_000
+                if (runCatching { socket.connect(InetSocketAddress(address, request.connectPort), 15_000) }.isFailure) return "m3_tcp" to null
+                socket.getOutputStream().apply {
+                    write(request.bytes())
+                    flush()
+                }
+                val first = socket.getInputStream().bufferedReader(Charsets.ISO_8859_1).readLine()
+                "m4_get" to MmsProbe.status(first)
             }
-            val first = socket.getInputStream().bufferedReader(Charsets.ISO_8859_1).readLine()
-            MmsProbe.status(first)
-        }
-    }.getOrNull()
+        }.getOrDefault("m4_get" to null)
+    }
+}
+
+/**
+ * M1's cause (round 42, item 6: "on failure read the MMS APN's PreciseDataConnectionState cause"): the MMS
+ * APN's last non-zero DataFailCause while the ladder waits for the MMS network. A cause counts only after
+ * this attempt's CONNECTING state was seen, so the state Android replays on registration (an earlier
+ * attempt's) is never taken for this one. Only the integer is kept.
+ */
+@RequiresApi(Build.VERSION_CODES.S)
+private class MmsCauseWatch private constructor(private val tm: TelephonyManager) : TelephonyCallback(), TelephonyCallback.PreciseDataConnectionStateListener {
+    @Volatile private var connecting = false
+
+    @Volatile var cause: Int? = null
+        private set
+
+    override fun onPreciseDataConnectionStateChanged(state: PreciseDataConnectionState) {
+        val mms = runCatching { (state.apnSetting?.apnTypeBitmask ?: 0) and ApnSetting.TYPE_MMS != 0 }.getOrDefault(false)
+        if (!mms) return
+        if (runCatching { state.state }.getOrNull() == TelephonyManager.DATA_CONNECTING) connecting = true
+        val last = runCatching { state.lastCauseCode }.getOrDefault(0)
+        if (connecting && last != 0) cause = last
+    }
+
+    fun stop() {
+        runCatching { tm.unregisterTelephonyCallback(this) }
+    }
+
+    companion object {
+        @SuppressLint("MissingPermission")
+        fun start(context: Context, subId: Int): MmsCauseWatch? = runCatching {
+            val tm = context.getSystemService(TelephonyManager::class.java)?.createForSubscriptionId(subId) ?: return null
+            MmsCauseWatch(tm).also { tm.registerTelephonyCallback(Executor { it.run() }, it) }
+        }.getOrNull()
+    }
 }
 
 /** The optional data SMS to the phone's own number on the app's port; the number is read for the send and never kept. */
