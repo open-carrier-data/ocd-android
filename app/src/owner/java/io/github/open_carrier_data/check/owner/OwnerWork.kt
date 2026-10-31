@@ -477,7 +477,11 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
      * candidate.
      */
     private suspend fun diagnoseCauses(store: FileStateStore, phone: OwnerPhone, sims: List<OwnerSim>) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        // The fail causes it reads need Android 12. Older Android records that the verdict did not run, never silence.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            for (sim in sims) quietLog(store, "diagnosis:${sim.slot}", "slot ${sim.slot + 1}: $DIAGNOSIS_NOT_RUN_OLD_ANDROID")
+            return
+        }
         val context = applicationContext
         val ended = runCatching { OwnerMms.ended(context) }.getOrNull().orEmpty()
         val now = System.currentTimeMillis()
@@ -852,6 +856,9 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val KEY_PERIODIC = "periodic"
         const val KEY_REASON = "reason"
         const val KEY_DRY_RUN = "dry_run"
+
+        /** Round 42: the verdict line on Android 10 and 11, where the cause read cannot run. */
+        const val DIAGNOSIS_NOT_RUN_OLD_ANDROID = "cause diagnosis not run: needs Android 12 or newer"
 
         const val STEP_WEEKLY = "weekly"
         const val STEP_QUIET = "quiet"

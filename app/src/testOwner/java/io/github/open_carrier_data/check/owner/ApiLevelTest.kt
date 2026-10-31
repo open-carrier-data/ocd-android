@@ -39,8 +39,13 @@ class ApiLevelTest {
         assertTrue(apis.contains("@RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)\n            fun onUnregistered(info: android.telephony.ims.ImsReasonInfo, details: android.telephony.ims.SipDetails)"))
         val work = source("OwnerWork.kt")
         val diagnose = work.substring(work.indexOf("private suspend fun diagnoseCauses("))
-        assertTrue(diagnose.contains("if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return"))
-        assertTrue(diagnose.indexOf("if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return") < diagnose.indexOf("ImsReasonReader.read(context, sim.subId)"))
+        val gate = diagnose.indexOf("if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {")
+        assertTrue(gate >= 0)
+        assertTrue(gate < diagnose.indexOf("ImsReasonReader.read(context, sim.subId)"))
+        // Older Android gets a "not run" line per SIM under the verdict's own tag, never silence.
+        val older = diagnose.substring(gate, diagnose.indexOf("return", gate))
+        assertTrue(older.contains("quietLog(store, \"diagnosis:${'$'}{sim.slot}\", \"slot ${'$'}{sim.slot + 1}: ${'$'}DIAGNOSIS_NOT_RUN_OLD_ANDROID\")"))
+        assertEquals("cause diagnosis not run: needs Android 12 or newer", OwnerWorker.DIAGNOSIS_NOT_RUN_OLD_ANDROID)
     }
 
     @Test
