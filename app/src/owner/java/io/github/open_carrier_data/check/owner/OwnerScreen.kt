@@ -858,8 +858,10 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         }
     }
 
-    // The restart check leaves a test override live until the restart: a rom build offers it once the opt-in is on (SM9).
-    if (!state.rebootCleared && (owner || state.activeTests.on)) {
+    // The restart check leaves a test override live until the restart: offered on an IMS stack the tests are calibrated on (SM8),
+    // and in a rom build once the opt-in is on (SM9).
+    val trialsAllowed = remember(state.activeTests.on) { OwnerTester.trialRefusal(context, state) == null }
+    if (!state.rebootCleared && trialsAllowed) {
         SectionTitle("Restart check")
         Group {
             item {

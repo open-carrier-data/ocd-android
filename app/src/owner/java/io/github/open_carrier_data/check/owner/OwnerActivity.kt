@@ -277,6 +277,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             line?.startsWith("queued already") == true -> say("A test is already running")
             line?.startsWith("refused: ") == true -> say("Not tested: this app is older than the ROM's installer")
             line?.startsWith("off: ") == true -> say("Not tested: turn on \"${io.github.open_carrier_data.check.owner.core.OptInWords.TITLE}\" in Details first")
+            line?.startsWith("not counted: ") == true -> say("Not tested: the tests are not calibrated on this phone's IMS stack")
             line?.startsWith("queued") != true -> say("Couldn't start the test")
         }
         refresh()

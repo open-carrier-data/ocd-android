@@ -78,11 +78,24 @@ data class TesterPolicy(val build: TesterBuild, val optIn: Boolean = false) {
         else -> null
     }
 
+    /**
+     * Why the round 29 setting trials (a non-persistent override, a temporary access point row, the restart check's
+     * override) may not start on the IMS stack [stackId], or null (SM8, SM9). The stack is read first, as in the round 30
+     * and 31 paths: the opt-in cannot make a stack count that the tests are not calibrated on.
+     */
+    fun trialRefusal(stackId: String?): TrialRefusal? =
+        StackCalibration.notCounted(stackId)?.let { TrialRefusal(NOT_CALIBRATED, it) }
+            ?: if (!activeTests) TrialRefusal(OPT_IN_OFF, "the active tests are off on this phone; only the passive checks run") else null
+
     companion object {
         const val OPT_IN_OFF = "active_tests_off"
         const val NOT_FREE = "not_marked_free"
+        const val NOT_CALIBRATED = "stack_not_calibrated"
     }
 }
+
+/** A refusal to start a setting trial: its [code] and [plain] words for the log and the screen. */
+data class TrialRefusal(val code: String, val plain: String)
 
 /** SM8: the IMS stacks whose counters one calls-out pass has confirmed against the stack's own logs. */
 object StackCalibration {
