@@ -50,6 +50,7 @@ class OlderAppTest {
         "a8d40c9 (#58, 0.4.10; vendor/extra main e4446cd, the adb update on the S20 since 2026-10-31, in its ROM since build I)" to 14,
         "f8fdc5c (#61, 0.4.11; vendor/extra main a7c81c6, the adb update on the S20 since 2026-10-31)" to 15,
         "42c5fba (#63, 0.4.12; vendor/extra main c290be3, the adb update on the S20 since 2026-10-31, in its ROM since build J)" to 16,
+        "dd1f83d (#69, 0.4.13; vendor/extra main cf0bb23, the adb update on the S20 since 2026-10-31)" to 17,
     )
 
     @Test

@@ -978,8 +978,7 @@ private fun OcdSection(state: UiState, bundle: OcdBundle) {
                     }
                 }
                 Field(Capabilities.label(key), value.wire, note, emphasize = true)
-                most.dependsOn[key]?.let { TwoAnswers.dependsOnLine(it) }?.let { Note(it) }
-                most.forYou[key]?.let { TwoAnswers.forYouLine(it) }?.let { Note("${TwoAnswers.FOR_YOU_LABEL}: $it") }
+                TwoAnswers.lines(most, key).forEach { Note(it) }
                 DeviceRecordLine(state, bundle, most.profileId, key)
             }
             bundle.limits.deviceRecords?.takeIf { bundle.records != null }?.let { Note("From OCD's README: $it") }

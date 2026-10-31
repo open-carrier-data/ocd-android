@@ -38,6 +38,7 @@ import io.github.open_carrier_data.check.owner.core.ObservedCell
 import io.github.open_carrier_data.check.owner.core.ObservedReports
 import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerState
+import io.github.open_carrier_data.check.owner.core.ProfileAnswers
 import io.github.open_carrier_data.check.owner.core.QuietPlan
 import io.github.open_carrier_data.check.owner.core.SimView
 import io.github.open_carrier_data.check.owner.core.WifiCallingDetails
@@ -83,6 +84,8 @@ data class OwnerUi(
     val mmsLines: List<String> = emptyList(),
     /** Round 32 part A: what each SIM's operator states on its own pages, in part A's words; empty without the pinned statements. */
     val statementLines: List<String> = emptyList(),
+    /** Round 45 item 4: each SIM's profile with the two answers, from the data the owner build uses ([ProfileAnswers.of]). */
+    val profileAnswers: List<ProfileAnswers> = emptyList(),
     val selfSmsLine: String? = null,
     /** Round 30: CarrierSettings's dataset installer as it last answered (serving, changes halted); null before the first look. */
     val dataset: io.github.open_carrier_data.check.owner.core.DatasetStatus? = null,
@@ -137,6 +140,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             },
             selfSmsLine = SelfSms.line(state.selfSms.lastOrNull(), zone),
             statementLines = withContext(Dispatchers.IO) { runCatching { statementLines(state, sims) }.getOrDefault(emptyList()) },
+            profileAnswers = withContext(Dispatchers.IO) { runCatching { profileAnswers(state, sims) }.getOrDefault(emptyList()) },
             apnCandidates = keys.mapValues { it.value.size },
             reportLines = withContext(Dispatchers.IO) { runCatching { reportLines(state, sims, keys) }.getOrDefault(emptyList()) },
             stepsToGo = OwnerScheduler.pending(run) + testNow,
@@ -213,6 +217,22 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         }
         statementCache = key to lines
         return lines
+    }
+
+    private var answersCache: Pair<String, List<ProfileAnswers>>? = null
+
+    /**
+     * Round 45 item 4: each SIM's most specific profile in the pinned bundle (else the bundled snapshot), the data the
+     * owner build tests with, with the two answers in the check screen's words; read once per pin and SIM set.
+     */
+    private fun profileAnswers(state: OwnerState, sims: List<OwnerSim>?): List<ProfileAnswers> {
+        if (sims.isNullOrEmpty()) return emptyList()
+        val key = (state.pin?.commit ?: "bundled") + sims.joinToString { "${it.subId}/${it.identity}" }
+        answersCache?.takeIf { it.first == key }?.let { return it.second }
+        val bundle = OwnerData(getApplication(), store).bundle()
+        val answers = sims.mapNotNull { ProfileAnswers.of(bundle, it.identity, it.name.takeIf { sims.size > 1 }) }
+        answersCache = key to answers
+        return answers
     }
 
     private var cellCache: Pair<String, List<Pair<OwnerSim, ObservedCell>>>? = null
