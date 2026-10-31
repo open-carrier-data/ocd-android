@@ -78,6 +78,12 @@ class BuildBundleTest(unittest.TestCase):
         self.assertEqual(bundle["source"]["commit"], COMMIT)
         self.assertEqual(bundle["source"]["stale_after"], "2027-01-10")
 
+    def test_keeps_the_weight_of_rule_round_45(self) -> None:
+        bundle = self.build(profile("open.26202.a", {"mccmnc": ["26202"], "spn": ["X"]}, weight={"26202": 258}))
+        self.assertEqual(bundle["profiles"][0]["weight"], {"26202": 258})
+        with self.assertRaises(build_bundle.BundleError):
+            self.build(profile("open.26202.a", {"mccmnc": ["26202"]}, weight={"26203": 256}))
+
     def test_limits_text_comes_from_the_readme(self) -> None:
         limits = self.build(profile("open.1", {"mccmnc": ["26202"]}))["limits"]
         self.assertEqual(set(limits["value_meanings"]), {"supported", "conditional", "unsupported", "unknown"})

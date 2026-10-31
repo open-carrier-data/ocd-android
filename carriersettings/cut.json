@@ -120,7 +120,8 @@
     "ocd/src/com/android/carriersettings/ocd/Matcher.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Matcher.kt",
       "blob": "2c4b018e927e41c91f0ebb741cb0e370232ce713",
-      "status": "equal"
+      "status": "changed",
+      "why": "carriersettings/v1.1.0, OCD rule round 45, item 3: OCD's resolution order (Android's weights from the phone's carrier ID table, then the written tie rule) instead of specificity and ID; Order, CarrierIdTable and SimId's carrierIdTable; Matcher.stack sorts by the order. The dataset format is unchanged."
     },
     "ocd/src/com/android/carriersettings/ocd/Model.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Model.kt",
@@ -130,7 +131,8 @@
     "ocd/src/com/android/carriersettings/ocd/OcdAndroid.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/OcdAndroid.kt",
       "blob": "c04673edffa9867fb2b7b92c5d1b96292ba529e8",
-      "status": "equal"
+      "status": "changed",
+      "why": "carriersettings/v1.1.0, OCD rule round 45, item 3: OCD's resolution order (Android's weights from the phone's carrier ID table, then the written tie rule) instead of specificity and ID; AndroidCarrierIdTable reads content://carrier_id/all (READ_PRIVILEGED_PHONE_STATE, held) and logs a carrier ID counted at the MCC/MNC-only weight; simOf and AndroidSims attach it to the SIM."
     },
     "ocd/src/com/android/carriersettings/ocd/OcdDataProvider.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/OcdDataProvider.kt",
@@ -150,7 +152,8 @@
     "ocd/src/com/android/carriersettings/ocd/Serving.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Serving.kt",
       "blob": "7a269add4c00cb1a897e647dd8bd9d305bf08ccb",
-      "status": "equal"
+      "status": "changed",
+      "why": "carriersettings/v1.1.0, OCD rule round 45, item 3: OCD's resolution order (Android's weights from the phone's carrier ID table, then the written tie rule) instead of specificity and ID; the bundle's stack passes each profile's kind to the order (an OCD profile above a fill-only one)."
     },
     "ocd/src/com/android/carriersettings/ocd/ServingIndex.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/ServingIndex.kt",
@@ -177,7 +180,7 @@
       "from": "carriersettings/ocd/test/run.sh",
       "blob": "07dbaaf1b1eea2778fa26dd6ecf420f2aa5140d2",
       "status": "changed",
-      "why": "Runs ProtocolContractTest, the writer-to-provider contract, with the repository root as ocd.repo."
+      "why": "Runs ProtocolContractTest, the writer-to-provider contract, with the repository root as ocd.repo; and GoldenVectorsTest (carriersettings/v1.1.0, rule round 45: OCD's golden vectors of the resolution order, from vectors/ at the repository root)."
     },
     "ocd/test/src/ApnTest.kt": {
       "from": "carriersettings/ocd/test/src/ApnTest.kt",
@@ -205,6 +208,10 @@
       "blob": "9095da2c6c0884ad4bf5441a75ad903da2cfd292",
       "status": "equal"
     },
+    "ocd/test/src/GoldenVectorsTest.kt": {
+      "status": "added",
+      "why": "carriersettings/v1.1.0, OCD rule round 45, item 3: every golden vector of the resolution order (vectors/resolution-order.json, a byte copy of OCD's tests/vectors/resolution-order.json) through the matcher with the pinned AOSP carrier list's rules, and the tie steps."
+    },
     "ocd/test/src/ProtocolContractTest.kt": {
       "status": "added",
       "why": "The provider's half of the writer-to-provider contract test (round 37): protocol/ocd-provider-protocol.json and its status vectors."
@@ -217,7 +224,8 @@
     "ocd/test/src/VectorsTest.kt": {
       "from": "carriersettings/ocd/test/src/VectorsTest.kt",
       "blob": "372ea9c3ff771940da78abf8fe60622ca99a719f",
-      "status": "equal"
+      "status": "changed",
+      "why": "carriersettings/v1.1.0, OCD rule round 45, item 3: OCD's resolution order (Android's weights from the phone's carrier ID table, then the written tie rule) instead of specificity and ID; its comment names GoldenVectorsTest; the appendix and every assertion are unchanged."
     },
     "ocd/test/stubs/Stubs.kt": {
       "from": "carriersettings/ocd/test/stubs/Stubs.kt",

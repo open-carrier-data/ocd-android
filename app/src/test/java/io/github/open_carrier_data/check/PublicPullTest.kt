@@ -140,8 +140,11 @@ class PublicPullTest {
         assertThrows(PullException::class.java) { PublicPull.pull(Github(badBlob = "generated/android/lookup.json"), null, dir(), bundled, 1L) }
         val other = Github().apply { files["generated/devices/carrier-variants.json"] = variants.replace(digest, "sha256:" + "cd".repeat(32)) }
         assertThrows(PullException::class.java) { PublicPull.pull(other, null, dir(), bundled, 1L) }
-        val schema = Github().apply { files["generated/android/lookup.json"] = lookup.replace("\"schema_version\":1", "\"schema_version\":2") }
+        val schema = Github().apply { files["generated/android/lookup.json"] = lookup.replace("\"schema_version\":1", "\"schema_version\":3") }
         assertThrows(PullSchemaRefused::class.java) { PublicPull.pull(schema, null, dir(), bundled, 1L) }
+        // lookup.json 2 (rule round 45's resolution order as the documented order) is read.
+        val two = Github().apply { files["generated/android/lookup.json"] = lookup.replace("\"schema_version\":1", "\"schema_version\":2") }
+        assertTrue(PublicPull.pull(two, null, dir(), bundled, 1L) is PublicPull.Result.Pinned)
         val statements2 = Github().apply { files[OperatorFiles.path(OperatorFiles.STATEMENTS)] = statements.replaceFirst("\"schema_version\": 1", "\"schema_version\": 2") }
         assertThrows(Exception::class.java) { PublicPull.pull(statements2, null, dir(), bundled, 1L) }
         val half = Github().apply { files.remove(OperatorFiles.path(OperatorFiles.IDENTITY)) }

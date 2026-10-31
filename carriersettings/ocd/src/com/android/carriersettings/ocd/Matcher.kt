@@ -19,6 +19,12 @@ class SimId(
     val iccid: String? = null,
     val carrierId: Int = -1,
     val specificCarrierId: Int = -1,
+    /**
+     * The phone's Android carrier ID table, whose rules weigh a profile's carrier-ID selector in
+     * the resolution order (OCD rule round 45, item 3). Null: every carrier-ID selector counts at
+     * the MCC/MNC-only weight.
+     */
+    val carrierIdTable: CarrierIdTable? = null,
 ) {
     val network: String get() = "$mcc-$mnc"
 
@@ -29,6 +35,122 @@ class SimId(
 
     companion object {
         val NO_SIM = SimId("", "")
+    }
+}
+
+/**
+ * The phone's Android carrier ID table (`content://carrier_id/all`, CarrierIdProvider), as the
+ * resolution order reads it. The Android side reads the provider ([OcdAndroid]); tests give
+ * rows of the AOSP carrier list.
+ */
+interface CarrierIdTable {
+    /**
+     * CarrierResolver's score of each rule the table holds for [carrierId] on [mccmnc] (MCC and
+     * MNC without a dash): empty when it holds none, null when the table cannot be read.
+     */
+    fun ruleWeights(carrierId: Int, mccmnc: String): List<Int>?
+
+    /** A carrier-ID selector counts at the MCC/MNC-only weight: no rule there, or no table ([unreadable]). */
+    fun fallback(carrierId: Int, mccmnc: String, unreadable: Boolean) {}
+
+    companion object {
+        /** CarrierResolver.CarrierMatchingRule's score of a rule, from the provider's columns it has (non-null). */
+        val COLUMN_WEIGHTS = linkedMapOf(
+            "mccmnc" to 256, "imsi_prefix_xpattern" to 128, "iccid_prefix" to 64, "gid1" to 32, "gid2" to 16,
+            "plmn" to 8, "privilege_access_rule" to 4, "spn" to 2, "apn" to 1,
+        )
+
+        fun weightOf(columns: Set<String>): Int = COLUMN_WEIGHTS.entries.sumOf { (c, w) -> if (c in columns) w else 0 }
+    }
+}
+
+/**
+ * OCD's resolution order (rule round 45, item 3), generic to specific:
+ * 1. Android's weight: CarrierResolver's score of the fields the profile pins (MCC/MNC 256, IMSI
+ *    prefix 128, ICCID prefix 64, GID1 32, GID2 16, SPN 2). A carrier-ID selector stays a match
+ *    condition; it adds the fields of the phone's carrier ID table's rules behind the ID on the
+ *    SIM's network (the lowest-weight rule; MCC/MNC alone, logged, when there is none or the table
+ *    cannot be read), and at equal weight it ranks above a raw profile.
+ * 2. Longer prefix or more fixed digits: IMSI (digits other than x), ICCID, GID1, GID2, each the
+ *    shortest of the profile's values.
+ * 3. An OCD profile above a fill-only one.
+ * 4. Fewer list values. 5. Fewer network codes.
+ * 6. The profile ID in byte order, which OCD's conflict checker keeps from deciding between
+ *    profiles whose served values differ.
+ * All of it comes from profiles.json's match and kind, so the dataset format is unchanged.
+ */
+object Order {
+    val STEPS = listOf("weight", "carrier_id", "prefix", "ocd_before_fill_only", "fewer_values", "fewer_networks", "profile_id")
+    const val MCCMNC_WEIGHT = 256
+
+    fun rawWeight(m: Match): Int = MCCMNC_WEIGHT +
+        (if (m.imsi != null) 128 else 0) + (if (m.iccid != null) 64 else 0) + (if (m.gid1 != null) 32 else 0) +
+        (if (m.gid2 != null) 16 else 0) + (if (m.spn != null) 2 else 0)
+
+    /** Step 1 on network [mccmnc] (no dash). */
+    fun weight(m: Match, mccmnc: String, table: CarrierIdTable?): Int {
+        val raw = rawWeight(m)
+        val ids = m.carrierIds ?: return raw
+        var weight: Int? = null
+        for (id in ids) {
+            val rules = table?.ruleWeights(id, mccmnc)
+            val used = if (rules.isNullOrEmpty()) {
+                table?.fallback(id, mccmnc, unreadable = rules == null)
+                listOf(MCCMNC_WEIGHT)
+            } else rules
+            for (rule in used) {
+                val combined = raw or rule
+                weight = if (weight == null) combined else minOf(weight, combined)
+            }
+        }
+        return weight ?: raw
+    }
+
+    fun fixedLength(imsi: Boolean, value: String): Int = if (imsi) value.count { it != 'x' && it != 'X' } else value.length
+
+    class Key(
+        val weight: Int,
+        val carrierId: Int,
+        val prefix: IntArray,
+        val ocd: Int,
+        val values: Int,
+        val networks: Int,
+        val id: String,
+    ) {
+        /** The first step of [STEPS] where [this] and [other] differ, or null; and the sign of the comparison. */
+        fun compareStep(other: Key): Pair<String, Int>? {
+            fun step(i: Int, c: Int): Pair<String, Int>? = if (c != 0) STEPS[i] to c else null
+            step(0, weight.compareTo(other.weight))?.let { return it }
+            step(1, carrierId.compareTo(other.carrierId))?.let { return it }
+            for (i in prefix.indices) step(2, prefix[i].compareTo(other.prefix[i]))?.let { return it }
+            step(3, ocd.compareTo(other.ocd))?.let { return it }
+            step(4, other.values.compareTo(values))?.let { return it }
+            step(5, other.networks.compareTo(networks))?.let { return it }
+            step(6, compareBytes(id, other.id))?.let { return it }
+            return null
+        }
+    }
+
+    fun key(m: Match, mccmnc: String, fillOnly: Boolean, id: String, table: CarrierIdTable?): Key {
+        fun shortest(values: List<String>?, imsi: Boolean = false): Int = values?.minOf { fixedLength(imsi, it) } ?: 0
+        return Key(
+            weight(m, mccmnc, table),
+            if (m.carrierIds != null) 1 else 0,
+            intArrayOf(shortest(m.imsi, imsi = true), shortest(m.iccid), shortest(m.gid1), shortest(m.gid2)),
+            if (fillOnly) 0 else 1,
+            listOfNotNull(m.spn, m.imsi, m.gid1, m.gid2, m.iccid).sumOf { it.size } + (m.carrierIds?.size ?: 0),
+            m.mccmnc.size,
+            id,
+        )
+    }
+
+    val COMPARATOR: Comparator<Key> = Comparator { a, b -> a.compareStep(b)?.second ?: 0 }
+
+    /** Why the last profile of an ordered stack serves: `default`, `only`, or the step above the one below it. */
+    fun reason(keys: List<Key>): String = when (keys.size) {
+        0 -> "default"
+        1 -> "only"
+        else -> keys[keys.size - 2].compareStep(keys.last())?.first ?: "profile_id"
     }
 }
 
@@ -72,12 +194,33 @@ object Matcher {
         return true
     }
 
-    /** The stack: matching profiles by (specificity, id in byte order); the serving profile is the last. */
-    fun <P> stack(candidates: List<P>, sim: SimId, matchOf: (P) -> Match, idOf: (P) -> String): List<P> =
-        candidates.filter { matches(matchOf(it), sim) }
-            .sortedWith { a, b -> matchOf(a).specificity.compareTo(matchOf(b).specificity).takeIf { it != 0 } ?: compareBytes(idOf(a), idOf(b)) }
+    /**
+     * The stack: matching profiles generic to specific in the resolution order ([Order], rule
+     * round 45); the serving profile is the last. A fill-only profile's ID starts with `fill.`
+     * (the reader refuses one that does not), which [fillOnlyOf] reads by default.
+     */
+    fun <P> stack(
+        candidates: List<P>,
+        sim: SimId,
+        matchOf: (P) -> Match,
+        idOf: (P) -> String,
+        fillOnlyOf: (P) -> Boolean = { idOf(it).startsWith("fill.") },
+    ): List<P> = ordered(candidates.filter { matches(matchOf(it), sim) }, sim, matchOf, idOf, fillOnlyOf).map { it.first }
 
-    fun stack(profiles: List<Profile>, sim: SimId): List<Profile> = stack(profiles, sim, { it.match }, { it.id })
+    /** Matching profiles with their [Order.Key]s, in the resolution order. */
+    fun <P> ordered(
+        matching: List<P>,
+        sim: SimId,
+        matchOf: (P) -> Match,
+        idOf: (P) -> String,
+        fillOnlyOf: (P) -> Boolean = { idOf(it).startsWith("fill.") },
+    ): List<Pair<P, Order.Key>> {
+        val mccmnc = sim.mcc + sim.mnc
+        return matching.map { it to Order.key(matchOf(it), mccmnc, fillOnlyOf(it), idOf(it), sim.carrierIdTable) }
+            .sortedWith { a, b -> Order.COMPARATOR.compare(a.second, b.second) }
+    }
+
+    fun stack(profiles: List<Profile>, sim: SimId): List<Profile> = stack(profiles, sim, { it.match }, { it.id }, { it.fillOnly })
 
     /** A fill item's condition for this SIM (2.5.5), with the matcher's own primitives. */
     fun holds(condition: When?, sim: SimId): Boolean = when (condition?.kind) {

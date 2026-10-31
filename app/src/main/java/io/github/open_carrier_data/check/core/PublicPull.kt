@@ -205,7 +205,11 @@ object PublicPull {
     val OPTIONAL = setOf(OperatorFiles.path(OperatorFiles.STATEMENTS), OperatorFiles.path(OperatorFiles.IDENTITY))
 
     /** F3: the schema_version major this build reads, per file. */
-    val KNOWN_SCHEMAS = mapOf("metadata.json" to 1, "lookup.json" to 1, "carrier-variants.json" to 1)
+    /**
+     * The schema_version majors this build reads, per file. lookup.json 2 is 1 with OCD's resolution
+     * order of rule round 45 as its documented order, the order this build already uses for 1.
+     */
+    val KNOWN_SCHEMAS = mapOf("metadata.json" to setOf(1), "lookup.json" to setOf(1, 2), "carrier-variants.json" to setOf(1))
 
     private val json = Json { ignoreUnknownKeys = true }
     private val DIGEST = Regex("sha256:[0-9a-f]{64}")
@@ -271,7 +275,7 @@ object PublicPull {
     private fun schema(file: String, version: JsonElement?) {
         val known = KNOWN_SCHEMAS.getValue(file)
         val major = major(version) ?: throw PullSchemaRefused("$file has no schema_version this build can read")
-        if (major != known) throw PullSchemaRefused("$file is schema_version $major; this build reads $known")
+        if (major !in known) throw PullSchemaRefused("$file is schema_version $major; this build reads ${known.joinToString(" or ")}")
     }
 
     /**

@@ -37,6 +37,7 @@ import android.util.Log
 import com.android.carriersettings.R
 import org.xmlpull.v1.XmlPullParser
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -109,8 +110,14 @@ object OcdAndroid {
     fun simOf(context: Context, subId: Int, id: CarrierIdentifier?): SimId {
         id ?: return SimId.NO_SIM
         val iccid = runCatching { context.getSystemService(SubscriptionManager::class.java)?.getActiveSubscriptionInfo(subId)?.iccId }.getOrNull()
-        return SimId(id.mcc.orEmpty(), id.mnc.orEmpty(), id.spn, id.imsi, id.gid1, id.gid2, iccid, id.carrierId, id.specificCarrierId)
+        return SimId(id.mcc.orEmpty(), id.mnc.orEmpty(), id.spn, id.imsi, id.gid1, id.gid2, iccid, id.carrierId, id.specificCarrierId, carrierIdTable(context))
     }
+
+    @Volatile private var carrierIds: AndroidCarrierIdTable? = null
+
+    /** The phone's carrier ID table for the resolution order (rule round 45), one per process. */
+    fun carrierIdTable(context: Context): CarrierIdTable =
+        carrierIds ?: synchronized(this) { carrierIds ?: AndroidCarrierIdTable(context.applicationContext ?: context).also { carrierIds = it } }
 
     /** A built bundle as Telephony takes it. */
     fun toBundle(built: Built): PersistableBundle {
@@ -562,6 +569,52 @@ object AndroidSims {
         val info = context.getSystemService(SubscriptionManager::class.java)?.getActiveSubscriptionInfo(subId) ?: return null
         val t = context.getSystemService(TelephonyManager::class.java)!!.createForSubscriptionId(subId)
         val op = t.simOperator.orEmpty()
-        SimId(op.take(3), if (op.length > 3) op.substring(3) else "", t.simOperatorName, runCatching { t.subscriberId }.getOrNull(), runCatching { t.groupIdLevel1 }.getOrNull(), null, info.iccId, t.simCarrierId, t.simSpecificCarrierId)
+        SimId(op.take(3), if (op.length > 3) op.substring(3) else "", t.simOperatorName, runCatching { t.subscriberId }.getOrNull(), runCatching { t.groupIdLevel1 }.getOrNull(), null, info.iccId, t.simCarrierId, t.simSpecificCarrierId,
+            OcdAndroid.carrierIdTable(context))
     }.getOrNull()
+}
+
+/**
+ * The phone's own Android carrier ID table, read from TelephonyProvider's CarrierIdProvider
+ * (`content://carrier_id/all`, which needs READ_PRIVILEGED_PHONE_STATE, granted to this app):
+ * the rules behind a profile's carrier-ID selector weigh it in the resolution order (OCD rule
+ * round 45, item 3). One query per network code, kept for the process; a failed read is not kept
+ * and is read again next time. A carrier ID or a network code is no SIM identifier, so the log
+ * may name them.
+ */
+class AndroidCarrierIdTable(private val context: Context) : CarrierIdTable {
+    private val byNetwork = ConcurrentHashMap<String, Map<Int, List<Int>>>()
+    private val logged = ConcurrentHashMap.newKeySet<String>()
+
+    override fun ruleWeights(carrierId: Int, mccmnc: String): List<Int>? {
+        val rules = byNetwork[mccmnc] ?: read(mccmnc)?.also { byNetwork[mccmnc] = it } ?: return null
+        return rules[carrierId].orEmpty()
+    }
+
+    private fun read(mccmnc: String): Map<Int, List<Int>>? = runCatching {
+        context.contentResolver.query(ALL, COLUMNS, "mccmnc=?", arrayOf(mccmnc), null)?.use { c ->
+            val id = c.getColumnIndexOrThrow("carrier_id")
+            val columns = CarrierIdTable.COLUMN_WEIGHTS.keys.associateWith { c.getColumnIndexOrThrow(it) }
+            val out = HashMap<Int, MutableList<Int>>()
+            while (c.moveToNext()) {
+                val present = columns.filterValues { !c.isNull(it) }.keys
+                out.getOrPut(c.getInt(id)) { ArrayList() } += CarrierIdTable.weightOf(present)
+            }
+            out
+        }
+    }.onFailure { Log.w(OcdAndroid.TAG, "the carrier ID table could not be read for $mccmnc: $it") }.getOrNull()
+
+    override fun fallback(carrierId: Int, mccmnc: String, unreadable: Boolean) {
+        if (!logged.add("$carrierId $mccmnc $unreadable")) return
+        Log.i(
+            OcdAndroid.TAG,
+            if (unreadable) "carrier ID $carrierId on $mccmnc: the carrier ID table is unreadable, the selector counts at the MCC/MNC-only weight"
+            else "carrier ID $carrierId on $mccmnc: no rule in the phone's carrier ID table, the selector counts at the MCC/MNC-only weight",
+        )
+    }
+
+    companion object {
+        val ALL: Uri = Uri.parse("content://carrier_id/all")
+        val COLUMNS = arrayOf("carrier_id") + CarrierIdTable.COLUMN_WEIGHTS.keys.toTypedArray()
+    }
 }

@@ -338,8 +338,11 @@ object DataCheck {
     private val DIGEST = Regex("sha256:[0-9a-f]{64}")
     private val VERSION = Regex("[0-9]+(\\.[0-9]+)*")
 
-    /** F3: the schema_version major this build reads, per file. */
-    val KNOWN_SCHEMAS = mapOf("metadata.json" to 1, "lookup.json" to 1, "carrier-variants.json" to 1)
+    /**
+     * F3: the schema_version majors this build reads, per file. lookup.json 2 is 1 with OCD's
+     * resolution order of rule round 45 as its documented order, the order this build already uses.
+     */
+    val KNOWN_SCHEMAS = mapOf("metadata.json" to setOf(1), "lookup.json" to setOf(1, 2), "carrier-variants.json" to setOf(1))
 
     /** The `<apns version>` this build reads: OCD generates version 8, against LineageOS's apns-conf.xsd. */
     const val APN_VERSION = "8"
@@ -352,11 +355,11 @@ object DataCheck {
         return text.substringBefore('.').toIntOrNull()
     }
 
-    /** F3: refuses [file] unless its schema_version major is the one this build reads. */
+    /** F3: refuses [file] unless its schema_version major is one this build reads. */
     fun schema(file: String, version: JsonElement?) {
         val known = KNOWN_SCHEMAS.getValue(file)
         val major = major(version) ?: throw SchemaRefused("$file has no schema_version this build can read")
-        if (major != known) throw SchemaRefused("$file is schema_version $major; this build reads $known")
+        if (major !in known) throw SchemaRefused("$file is schema_version $major; this build reads ${known.joinToString(" or ")}")
     }
 
     fun sha256Hex(input: InputStream): String {

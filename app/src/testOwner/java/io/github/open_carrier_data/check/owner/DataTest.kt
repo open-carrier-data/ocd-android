@@ -228,7 +228,7 @@ class DataTest {
     @Test
     fun `a schema_version major this build does not know is refused, and nothing of the pull is used`() {
         for ((name, setup) in listOf<Pair<String, Map<String, ByteArray>>>(
-            "lookup schema 2" to files(schema = mapOf("lookup.json" to "2")),
+            "lookup schema 3" to files(schema = mapOf("lookup.json" to "3")),
             "variants schema 3.0" to files(schema = mapOf("carrier-variants.json" to "\"3.0\"")),
             "metadata schema missing" to files(schema = mapOf("metadata.json" to "null")),
             "lookup schema not a version" to files(schema = mapOf("lookup.json" to "\"one\"")),
@@ -245,6 +245,9 @@ class DataTest {
         assertEquals(1, DataCheck.major(JsonPrimitive("1.4")))
         assertNull(DataCheck.major(JsonPrimitive(1.5)))
         assertNull(DataCheck.major(null))
+        // lookup.json 2, rule round 45's resolution order as the documented order, is read.
+        val two = FakeGithub(listOf(a), mapOf(a to listOf(checkRun(a, "success"))), mapOf(a to files(schema = mapOf("lookup.json" to "2"))))
+        assertEquals(a, (pull(two) as MainPull.Pinned).pin.commit)
         // A minor step of a known major is read.
         val minor = FakeGithub(listOf(a), mapOf(a to listOf(checkRun(a, "success"))), mapOf(a to files(schema = mapOf("lookup.json" to "\"1.1\""))))
         assertEquals(a, (pull(minor) as MainPull.Pinned).pin.commit)
