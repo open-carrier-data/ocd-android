@@ -18,9 +18,10 @@ import java.util.concurrent.TimeUnit
  * cover yet; it only shrinks ([MmsEndedList]). Everywhere else MMS stays a test target,
  * but the app never sends an MMS (it costs money). It only checks, silently
  * and for free, that the MMS access point answers: it asks Android for the
- * SIM's MMS network, sends one HTTP GET to the MMSC from the phone's MMS APN
- * row (through its MMS proxy, when the row names one) and reads the status
- * line. Any HTTP answer is "MMS access point reachable", never "MMS works".
+ * SIM's MMS network, sends one HTTP GET of a made-up message path to the MMSC
+ * host of the phone's MMS APN row (through its MMS proxy, when the row names
+ * one) and reads the status line. Any HTTP answer is "MMS access point
+ * reachable", never "MMS works".
  */
 
 @Serializable
@@ -42,10 +43,14 @@ data class MmsCheck(
     val ended: String? = null,
     /**
      * Round 42, item 6, the ladder's stage: m0_ended, m1_apn, m2_dns, m3_tcp, m4_get, or null.
-     * The farthest step that ran; on a failure it names where the ladder stopped.
+     * The farthest step that ran; on a failure it names where the ladder stopped. On an MMS-ended
+     * network m0_ended means the probe did not run (roaming, mobile data off, no MMS APN row).
      */
     val stage: String? = null,
-    /** The MMS APN's last DataFailCause (M1), when the MMS network failed to come up. */
+    /**
+     * The MMS APN's DataFailCause of this attempt (M1), when the MMS network failed to come up; null when
+     * Android reported none. An integer only.
+     */
     val apnCause: Int? = null,
     /**
      * Round 42, item 6, corroboration on an MMS-ended network: no_answer_supports_ended, or
@@ -86,6 +91,12 @@ object MmsProbe {
     const val ASSET_NAME = "mms-ended.json"
     val EVERY_MS: Long = TimeUnit.DAYS.toMillis(14)
     const val TIMEOUT_MS = 30_000L
+
+    /**
+     * M4's path (round 42, item 6: "M4 is only a GET of a made-up message path"): fixed here, never taken
+     * from a reply, so a live MMSC answers 404. The row's own MMSC path is never requested.
+     */
+    const val MADE_UP_PATH = "/ocd-check/no-such-message"
     private val HOST = Regex("[A-Za-z0-9.-]{1,253}|\\[[0-9A-Fa-f:.]{2,45}\\]")
     private val PATH = Regex("/[A-Za-z0-9._~!$&'()*+,;=:@%/?-]{0,400}")
     private val json = Json { ignoreUnknownKeys = false }
@@ -99,7 +110,7 @@ object MmsProbe {
     fun ended(list: List<MmsEndedEntry>, mccmnc: String): MmsEndedEntry? = list.firstOrNull { it.mccmnc == mccmnc }
 
     /**
-     * The GET for [mmsc] (http only; an https MMSC is not probed), through
+     * The GET of [MADE_UP_PATH] on [mmsc]'s host (http only; an https MMSC is not probed), through
      * [proxy]:[proxyPort] when the APN row names a proxy. Null when a field
      * is not a plain URL, host or port: nothing is sent then.
      */
@@ -118,9 +129,9 @@ object MmsProbe {
         if (proxyHost != null) {
             if (!HOST.matches(proxyHost)) return null
             val pPort = (proxyPort ?: 80).takeIf { it in 1..65535 } ?: return null
-            return MmsRequest(proxyHost, pPort, "GET $url HTTP/1.1", authority)
+            return MmsRequest(proxyHost, pPort, "GET http://$authority$MADE_UP_PATH HTTP/1.1", authority)
         }
-        return MmsRequest(host, mmscPort, "GET $path HTTP/1.1", authority)
+        return MmsRequest(host, mmscPort, "GET $MADE_UP_PATH HTTP/1.1", authority)
     }
 
     /** The HTTP status of an answer's first line; null when it is not an HTTP answer. */
@@ -132,9 +143,23 @@ object MmsProbe {
         return nowMs - last.atMs >= EVERY_MS || nowMs < last.atMs
     }
 
-    /** The plain line for Details. */
+    /**
+     * The plain line for Details. On an MMS-ended network it adds the corroboration probe's reading when the
+     * last check carries one: no answer agrees with the statement; an answer flags it for a fresh read.
+     */
     fun line(check: MmsCheck?, ended: MmsEndedEntry?, zone: ZoneId): String {
-        if (ended != null) return "MMS: not checked, the network no longer offers MMS (${ended.plain})"
+        if (ended != null) {
+            val head = "MMS: not checked, the network no longer offers MMS (${ended.plain})"
+            val probe = check?.takeIf { it.result == "ended" } ?: return head
+            val day = Instant.ofEpochMilli(probe.atMs).atZone(zone).toLocalDate()
+            return when (probe.corroboration) {
+                "no_answer_supports_ended" -> head + "; the free probe on $day " +
+                    (if (probe.stage == "m1_apn") "could not open the MMS connection${code(probe.apnCause)}" else "got no answer from the MMS access point") +
+                    ", which agrees (no MMS was sent)"
+                "answer_flags_for_reread" -> "$head; but the MMS access point answered the free probe on $day (no MMS was sent), so the statement is flagged for a fresh read"
+                else -> head
+            }
+        }
         check ?: return "MMS: not checked yet"
         val day = Instant.ofEpochMilli(check.atMs).atZone(zone).toLocalDate()
         return when (check.result) {
@@ -148,6 +173,9 @@ object MmsProbe {
             else -> "MMS: not checked (${check.result.removePrefix("refused_").replace('_', ' ')})"
         }
     }
+
+    /** " (code N)" for a 3GPP cause number (1-255); nothing for no cause or an Android-internal value. */
+    private fun code(cause: Int?): String = cause?.takeIf { it in 1..255 }?.let { " (code $it)" } ?: ""
 
     fun add(checks: List<MmsCheck>, check: MmsCheck): List<MmsCheck> =
         (checks.filterNot { it.sim.sameCard(check.sim) } + check).takeLast(8)

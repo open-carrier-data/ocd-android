@@ -25,8 +25,8 @@ android {
         // Every build that goes onto a phone raises it (OlderAppTest): Android drops an adb-installed update of a
         // system app only for a system copy with a higher versionCode, so a ROM's newer copy of the same code
         // stays shadowed by the older update (the S20 on 2026-10-28: round 30's e5240ec ran instead of round 31's 64e559c).
-        versionCode = 13
-        versionName = "0.4.9"
+        versionCode = 14
+        versionName = "0.4.10"
         // True only in the owner build type; debug and release stay read-only.
         buildConfigField("boolean", "OWNER", "false")
         // Round 31: which tester build this is: "" (read-only), "owner", or "rom" (the build other ROMs ship).
