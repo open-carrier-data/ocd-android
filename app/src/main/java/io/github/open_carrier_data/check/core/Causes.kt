@@ -30,7 +30,11 @@ enum class CauseClass(val letter: String, val wire: String, val plain: String) {
     DEVICE_NOT_ALLOWED("g", "device_not_allowed", "the device is not allowed by the network"),
     PHONE_SIDE("h", "phone_side", "a phone-side cause"),
 
-    /** The code or behaviour is known but does not sort cleanly (for example an ESM #30/#31 OCS/PCRF refusal to re-test with credit). */
+    /**
+     * The code or behaviour is known but does not sort cleanly (for example an ESM #30/#31 OCS/PCRF refusal
+     * to re-test with credit). Round 44: also the verdict of a #33 on OCD's test row or on a row OCD does not
+     * keep, which can be a wrong access point name as well as the plan ([CauseVerdicts]).
+     */
     AMBIGUOUS("?", "ambiguous", "an ambiguous refusal; re-test"),
 
     /**
@@ -60,7 +64,8 @@ enum class CauseClass(val letter: String, val wire: String, val plain: String) {
  */
 object DataFailCauseClass {
     fun of(cause: Int): CauseClass = when (cause) {
-        // ESM / 5GSM (TS 24.301 / 24.501), preserved as DataFailCause.
+        // ESM / 5GSM (TS 24.301 / 24.501), preserved as DataFailCause. Round 44: #33 stays NOT_BOOKED here (the
+        // gate and the balance read key on it); its words go by the refused access point row in CauseVerdicts.
         33 -> CauseClass.NOT_BOOKED
         8 -> CauseClass.BARRED
         27, 28, 29, 50, 51 -> CauseClass.WRONG_SETTINGS

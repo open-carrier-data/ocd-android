@@ -200,27 +200,29 @@ object ModemValue {
 }
 
 /**
- * The read-only builds' part of round 43: the hidden-refusal line only, where the Shizuku deep
- * check's own `dumpsys telephony.registry` read holds the refusal. No row naming, no gate, no new
- * command and no new permission.
+ * The read-only builds' part of rounds 43 and 44: the refused-setup line only, where the Shizuku deep
+ * check's own `dumpsys telephony.registry` read holds the refusal: a hidden cause (round 43) or, since
+ * round 44, a coded one (round 42's items 1 and 7 already allow its class on display). No row naming,
+ * no account clause, no gate, no new command and no new permission.
  */
 object HiddenLines {
-    /** The newest refused WWAN setups of the SIM now in [phoneId]'s slot, from the registry dump's lines. */
+    /** The newest refused WWAN setups of the SIM now in [phoneId]'s slot, from the registry dump's lines: hidden or coded, never AOSP's -1 to -6. */
     fun fromRegistry(lines: List<RegistryDataLine>, phoneId: Int): List<Pair<SetupAttempt, VerdictFeature>> {
         val subId = SetupAttempts.currentSubId(lines, phoneId) ?: return emptyList()
         return CauseVerdicts.HIDDEN_FEATURES.mapNotNull { f ->
-            SetupAttempts.newest(lines, phoneId, subId, f)?.takeIf { DataFailCauseClass.hidden(it.cause) }?.let { it to f }
+            SetupAttempts.newest(lines, phoneId, subId, f)?.takeIf { DataFailCauseClass.refusal(it.cause) }?.let { it to f }
         }
     }
 
     /**
-     * The hidden refusals to show for [subId]: mobile data only while it is still down (on for every
-     * reason and no cellular internet network up for this SIM, [mobileDataDown]), VoLTE only while IMS
-     * is not registered. Unreadable counts as not down: no line on a guess.
+     * The refusals to show for [subId], hidden or coded: mobile data only while it is still down (on for
+     * every reason and no cellular internet network up for this SIM, [mobileDataDown]), VoLTE only while
+     * IMS is not registered. Unreadable counts as not down: no line on a guess. The registry's local log
+     * keeps old lines, so an hours-old #33 never shows after data came back.
      */
     fun shown(refusals: List<SetupRefusal>, subId: Int?, mobileDataDown: Boolean?, imsRegistered: Boolean?): List<SetupRefusal> =
         refusals.filter { r ->
-            r.hidden && subId != null && r.subId == subId && when (r.feature) {
+            DataFailCauseClass.refusal(r.cause) && subId != null && r.subId == subId && when (r.feature) {
                 VerdictFeature.MOBILE_DATA -> mobileDataDown == true
                 VerdictFeature.VOLTE -> imsRegistered == false
                 VerdictFeature.MMS -> true
@@ -228,9 +230,13 @@ object HiddenLines {
             }
         }
 
-    /** The line for a hidden refusal, without row naming (the read-only builds never name a row). */
+    /**
+     * The line for a refused setup, without row naming (the read-only builds never name a row) and with no
+     * account read: a hidden one gets round 43's words, a #33 the not-told words (VoLTE the tariff words),
+     * another code round 42's.
+     */
     fun line(r: SetupRefusal): String? =
-        CauseVerdicts.of(r.feature, Refusal(CauseClass.HIDDEN), AccountState.UNKNOWN)?.line
+        r.copy(apnRow = null).refusal()?.let { CauseVerdicts.of(r.feature, it, AccountState.UNKNOWN)?.line }
 }
 
 /*

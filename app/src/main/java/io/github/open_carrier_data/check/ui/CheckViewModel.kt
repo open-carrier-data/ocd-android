@@ -237,7 +237,7 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
                     shizuku = status,
                 )
                 else -> {
-                    // Round 43: a hidden refusal shows only while its feature is still down for the SIM on screen.
+                    // Rounds 43 and 44: a refused setup (hidden or coded) shows only while its feature is still down for the SIM on screen.
                     val shown = HiddenLines.shown(deep.refusals, start.selectedSubId, dataDown, deep.ims.registered)
                     val updated = readings.copy(deep = deep.copy(refusals = shown))
                     current.copy(

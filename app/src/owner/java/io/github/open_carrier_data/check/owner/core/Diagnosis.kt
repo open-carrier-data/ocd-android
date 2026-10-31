@@ -197,19 +197,27 @@ object Diagnoses {
         return if (cls != CauseClass.UNKNOWN) Refusal(cls, code = c, temporaryDefinite = cls == CauseClass.TEMPORARY && c in setOf(26, 34, 38)) else null
     }
 
+    /**
+     * Round 44: a readable live code. When it equals the cause of the registry log's refused setup for the
+     * same feature, it is that setup's refusal, which carries the access point row (so a #33's row words and
+     * round 43's wait follow it); with no matching setup, the live code alone (a #33 then reads as not told).
+     */
+    private fun live(c: Int?, setup: SetupRefusal?): Refusal? =
+        c?.let { coded(it) }?.let { code -> setup?.takeIf { it.cause == c }?.refusal() ?: code }
+
     /** A reject cause explains "no data at all" when the session never came up. */
     private fun reject(i: DiagnosisInputs): Refusal? = i.rejectCause?.let { rc ->
         RejectCauseClass.of(rc, i.roaming).takeIf { it != CauseClass.UNKNOWN }?.let { Refusal(it, code = rc) }
     }
 
     /**
-     * The mobile-data refusal: a code first (the live state's, then the registry log's refused setup),
-     * then (round 43) a hidden refusal, below an attach reject cause, then the probe ladder's
-     * user-plane signature, then the passive phone-side reasons. With no refused setup in the log the
-     * order is round 42's.
+     * The mobile-data refusal: a code first (the live state's, as the log's refused setup when the two
+     * agree, then the registry log's refused setup), then (round 43) a hidden refusal, below an attach
+     * reject cause, then the probe ladder's user-plane signature, then the passive phone-side reasons.
+     * With no refused setup in the log the order is round 42's.
      */
     private fun dataRefusal(i: DiagnosisInputs): Refusal? {
-        i.defaultDataCause?.let { c -> coded(c)?.let { return it } }
+        live(i.defaultDataCause, i.dataSetupRefusal)?.let { return it }
         val setup = i.dataSetupRefusal?.refusal()
         if (setup != null && setup.cause != CauseClass.HIDDEN) return setup
         if (setup != null) return reject(i) ?: setup
@@ -226,7 +234,7 @@ object Diagnoses {
      */
     private fun imsRefusal(dataCause: Int?, i: DiagnosisInputs, epdg: Refusal? = null, setup: SetupRefusal? = null): Refusal? {
         if (i.imsRegistered == true) return null
-        val code = dataCause?.let { coded(it) }
+        val code = live(dataCause, setup)
         if (code != null && code.cause != CauseClass.PHONE_SIDE) return code
         epdg?.let { return it }
         // Round 43, VoLTE: the registry log's refused IMS setup on WWAN (a code, else the hidden class), only while IMS is not registered.
@@ -244,7 +252,7 @@ object Diagnoses {
         CauseVerdicts.of(VerdictFeature.VOWIFI, imsRefusal(i.iwlanDataCause, i, EpdgW1.refusal(i.epdgWifi, i.epdgCellular)), AccountState.UNKNOWN)?.let { verdicts += it }
         val volte = imsRefusal(i.imsDataCause, i, setup = i.imsSetupRefusal)
         CauseVerdicts.of(VerdictFeature.VOLTE, volte, AccountState.UNKNOWN)?.let { verdicts += it }
-        val mms = if (i.mmsEnded) null else i.mmsDataCause?.let { coded(it) } ?: i.mmsSetup?.refusal()
+        val mms = if (i.mmsEnded) null else live(i.mmsDataCause, i.mmsSetup) ?: i.mmsSetup?.refusal()
         if (i.mmsEnded) CauseVerdicts.of(VerdictFeature.MMS, null, AccountState.UNKNOWN, mmsEnded = true)?.let { verdicts += it }
         else mms?.let { r -> CauseVerdicts.of(VerdictFeature.MMS, r, AccountState.UNKNOWN)?.let { verdicts += it } }
         // Strict Private DNS that cannot reach its server is the phone's, never the carrier's: named beside the

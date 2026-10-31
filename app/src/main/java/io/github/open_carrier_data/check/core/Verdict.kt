@@ -69,7 +69,7 @@ data class Refusal(
     val userPlane: UserPlaneClass? = null,
     /** The W1 ePDG-name comparison's finding, when the Wi-Fi-calling refusal came from it ([EpdgW1]). */
     val epdg: EpdgClass? = null,
-    /** Round 43, owner and rom: which access point a refused setup used ([ApnRowClass]); null when not told. */
+    /** Round 43, owner and rom: which access point a refused setup used ([ApnRowClass]); null when not told. Round 44 picks a #33's words by it. */
     val apnRow: ApnRowClass? = null,
 )
 
@@ -108,8 +108,9 @@ object CauseVerdicts {
         // Two signals agree when a refusal that points at the account (barred/out of credit) meets a blocked account read.
         val agree = refusal != null && refusal.cause == CauseClass.BARRED && accountBlocks
 
-        // The account-block line (the LIDL case), for mobile data.
-        if (feature == VerdictFeature.MOBILE_DATA && (accountBlocks || refusal?.cause == CauseClass.BARRED)) {
+        // The account-block line (the LIDL case), for mobile data. Round 44: never in place of a coded wrong-settings
+        // refusal or a #33 ([keepsWords]); a fresh blocked account read is added after their words instead.
+        if (feature == VerdictFeature.MOBILE_DATA && !keepsWords(refusal) && (accountBlocks || refusal?.cause == CauseClass.BARRED)) {
             val bal = balance?.let { ": balance $it" } ?: ""
             return if (agree || (accountBlocks && refusal?.userPlane != null)) {
                 CauseVerdict(feature, "Mobile data blocked by the account$bal", CauseClass.BARRED, confident = true)
@@ -120,8 +121,13 @@ object CauseVerdicts {
 
         refusal ?: return null
         val code = refusal.code?.let { " (code $it)" } ?: ""
+        val accountToo = if (keepsWords(refusal)) accountToo(feature, account, balance) else ""
         val line = when (refusal.cause) {
-            CauseClass.NOT_BOOKED -> "Refused for ${feature.subject()}, probably the tariff$code"
+            // Round 44: a #33 on a WWAN feature reads by the refused setup's access point, and never falls through to
+            // the AMBIGUOUS line below ("re-test with credit" would send a wrong access point name to a top-up).
+            CauseClass.NOT_BOOKED ->
+                if (refusal.code == 33 && feature in HIDDEN_FEATURES) return code33(feature, refusal.apnRow, accountToo)
+                else "Refused for ${feature.subject()}, probably the tariff$code"
             CauseClass.WRONG_SETTINGS ->
                 if (feature == VerdictFeature.MOBILE_DATA) "The network refused the access point name$code: probably wrong settings"
                 else "Refused: probably wrong settings$code"
@@ -136,7 +142,7 @@ object CauseVerdicts {
         }
         // Temporary and phone-side lines are a single plain signal; the tariff/settings lines stay hedged by the word "probably".
         val confident = refusal.cause in setOf(CauseClass.TEMPORARY, CauseClass.PHONE_SIDE, CauseClass.DEVICE_NOT_ALLOWED, CauseClass.ROAMING)
-        return CauseVerdict(feature, line, refusal.cause, confident)
+        return CauseVerdict(feature, line + accountToo, refusal.cause, confident)
     }
 
     /** The features a hidden refusal can name: the WWAN ones. Wi-Fi calling's causes come from AOSP's IWLAN service, not the modem. */
@@ -150,18 +156,62 @@ object CauseVerdicts {
      */
     private fun hidden(feature: VerdictFeature, refusal: Refusal, account: AccountState, balance: String?): CauseVerdict? {
         if (feature !in HIDDEN_FEATURES) return null
-        val where = when (refusal.apnRow) {
+        return CauseVerdict(feature, "${refusedBy(feature, refusal.apnRow)}; this phone's modem software hides the reason${accountToo(feature, account, balance)}", CauseClass.HIDDEN, confident = false)
+    }
+
+    /**
+     * Round 44: a #33 ("requested service option not subscribed") on mobile data, VoLTE or MMS. Vodafone
+     * Germany answers a made-up access point name with #33, other cores with #27, so #33 alone cannot tell
+     * "not in the plan" from "an access point name the network does not know for this SIM". The words go by
+     * the refused setup's access point, told only by its row ID (round 43's [ApnRowClass]), never by name:
+     * OCD's kept row, which already worked on this SIM, "Refused for mobile data, probably the tariff
+     * (code 33)" (NOT_BOOKED); an OCD test row, whatever its value, "Mobile data refused by the network for
+     * the access point under test (code 33): a wrong access point name, or not in the plan" (AMBIGUOUS); any
+     * other row, or one not told (a live code with no matching setup, the read-only builds), "Refused for
+     * mobile data (code 33): not in the plan, or an access point name the network does not know for this
+     * SIM" (AMBIGUOUS). MMS alike. VoLTE keeps the tariff words on every row but a test row: its IMS APN
+     * comes from carrier data and is "ims" nearly everywhere. Never confident. [DataFailCauseClass.of] keeps
+     * NOT_BOOKED for 33, so the gate, the balance read and [TestBlame] do not change.
+     */
+    private fun code33(feature: VerdictFeature, row: ApnRowClass?, accountToo: String): CauseVerdict {
+        val tariff = "Refused for ${feature.subject()}, probably the tariff (code 33)"
+        val (line, cause) = when (row) {
+            ApnRowClass.TEST -> "${refusedBy(feature, row)} (code 33): a wrong access point name, or not in the plan" to CauseClass.AMBIGUOUS
+            ApnRowClass.OCD -> tariff to CauseClass.NOT_BOOKED
+            ApnRowClass.OTHER, null ->
+                if (feature == VerdictFeature.VOLTE) tariff to CauseClass.NOT_BOOKED
+                else "Refused for ${feature.subject()} (code 33): not in the plan, or an access point name the network does not know for this SIM" to CauseClass.AMBIGUOUS
+        }
+        return CauseVerdict(feature, line + accountToo, cause, confident = false)
+    }
+
+    /** Round 43's opening, shared with round 44's test-row words: "Mobile data refused by the network", then where. */
+    private fun refusedBy(feature: VerdictFeature, row: ApnRowClass?): String {
+        val where = when (row) {
             ApnRowClass.TEST -> " for the access point under test"
             ApnRowClass.OCD -> " for OCD's access point"
             ApnRowClass.OTHER, null -> ""
         }
-        val accountToo = if (feature == VerdictFeature.MOBILE_DATA && account == AccountState.BLOCKED) {
+        return "${feature.label} refused by the network$where"
+    }
+
+    /**
+     * Round 44: a coded refusal that keeps its words beside a blocked account read: wrong settings (#27,
+     * #28, #29, #50, #51) or a #33, which networks give an access point name that is not in the
+     * subscription. No top-up fixes those. BARRED, the ambiguous #30/#31 (where no credit can be the
+     * cause), the user-plane classes and every other class keep round 42's account-block line.
+     */
+    private fun keepsWords(refusal: Refusal?): Boolean =
+        refusal != null && refusal.code != null &&
+            (refusal.cause == CauseClass.WRONG_SETTINGS || (refusal.cause == CauseClass.NOT_BOOKED && refusal.code == 33))
+
+    /** Round 43's clause after the words, mobile data only, with a fresh blocked account read: "; the account also reads as blocked (balance 0.10 EUR)". */
+    private fun accountToo(feature: VerdictFeature, account: AccountState, balance: String?): String =
+        if (feature == VerdictFeature.MOBILE_DATA && account == AccountState.BLOCKED) {
             "; the account also reads as blocked" + (balance?.let { " (balance $it)" } ?: "")
         } else {
             ""
         }
-        return CauseVerdict(feature, "${feature.label} refused by the network$where; this phone's modem software hides the reason$accountToo", CauseClass.HIDDEN, confident = false)
-    }
 
     private fun phoneSide(refusal: Refusal): String = refusal.epdg?.line ?: when (refusal.userPlane) {
         UserPlaneClass.PRIVATE_DNS_BROKEN -> "Phone-side: the Private DNS server can't be reached on mobile data"
@@ -169,7 +219,8 @@ object CauseVerdicts {
         else -> "Phone-side: a fault on the phone, not the network"
     }
 
-    private fun VerdictFeature.subject(): String = if (this == VerdictFeature.MOBILE_DATA) "mobile data" else "this SIM"
+    /** Round 44: the feature, never "this SIM": the screen shows one line per slot, and a VoLTE-only refusal would read as the whole SIM refused. */
+    private fun VerdictFeature.subject(): String = if (this == VerdictFeature.MOBILE_DATA) "mobile data" else label
 }
 
 /**

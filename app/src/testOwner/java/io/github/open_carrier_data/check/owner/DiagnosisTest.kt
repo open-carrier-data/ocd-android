@@ -17,10 +17,11 @@ import org.junit.Test
 class DiagnosisTest {
     @Test
     fun `a data fail cause names the data verdict`() {
+        // Round 44: a live #33 with no matching refused setup in the log does not tell the row, so both readings.
         val d = Diagnoses.of(DiagnosisInputs(defaultDataCause = 33))
         val data = d.verdicts.single { it.feature == VerdictFeature.MOBILE_DATA }
-        assertEquals("Refused for mobile data, probably the tariff (code 33)", data.line)
-        assertEquals(CauseClass.NOT_BOOKED, data.cause)
+        assertEquals("Refused for mobile data (code 33): not in the plan, or an access point name the network does not know for this SIM", data.line)
+        assertEquals(CauseClass.AMBIGUOUS, data.cause)
     }
 
     @Test
@@ -66,7 +67,7 @@ class DiagnosisTest {
     fun `a SIP 403 names VoLTE as probably the tariff`() {
         val d = Diagnoses.of(DiagnosisInputs(sipResponseCode = 403, imsRegistered = false))
         assertEquals(
-            "Refused for this SIM, probably the tariff",
+            "Refused for VoLTE, probably the tariff",
             d.verdicts.single { it.feature == VerdictFeature.VOLTE }.line,
         )
     }

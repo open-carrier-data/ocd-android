@@ -509,11 +509,13 @@ private fun DeepResults(deep: DeepCheckReading) {
             ims.mno?.let { Field("Samsung's carrier table", it) }
         }
     }
-    // Round 43: a refused setup whose cause this phone's modem software hides; the raw value as the note.
+    // Round 43: a refused setup whose cause this phone's modem software hides, with the raw value as the note;
+    // round 44: or a coded one, whose line already carries "(code N)".
     deep.refusals.forEach { refusal ->
         HiddenLines.line(refusal)?.let { line ->
+            val note = if (refusal.hidden) HiddenDetails.line(refusal.feature, refusal.cause, refusal.modemValue) else null
             // Item 2: the wait, worked out again each time the line is shown.
-            Field("Refused", RetryWait.after(line, refusal.waitUntilMs, System.currentTimeMillis()), HiddenDetails.line(refusal.feature, refusal.cause, refusal.modemValue), emphasize = true)
+            Field("Refused", RetryWait.after(line, refusal.waitUntilMs, System.currentTimeMillis()), note, emphasize = true)
         }
     }
     deep.networkOffer?.let { offer ->
