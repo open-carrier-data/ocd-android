@@ -11,10 +11,11 @@ import kotlinx.serialization.Serializable
  * - The ROM build (build type `rom`): the build another ROM ships in its own image, signed with that
  *   ROM's key (SM5). It pulls, hands the dataset to CarrierSettings and runs the passive checks
  *   (IMS registration, data validation, the no-regression check) without asking. The active tests
- *   (dialled test calls, test SMS, trials that change carrier settings, and the emergency data
- *   test) run only after the person turns them on (SM9, off by default), and calls and SMS go only
- *   where OCD's allowlist marks them free for that carrier. Nothing leaves the phone by itself: no
- *   automatic report, no token, and results stay on the phone as local records (SM11).
+ *   (dialled test calls, test SMS, trials that change carrier settings, the emergency data test and,
+ *   since round 42, the mobile-data probe ladder and the Wi-Fi-calling name lookup) run only after
+ *   the person turns them on (SM9, off by default), and calls and SMS go only where OCD's allowlist
+ *   marks them free for that carrier. Nothing leaves the phone by itself: no automatic report, no
+ *   token, and results stay on the phone as local records (SM11).
  *
  * In both builds, active verdicts count only on an IMS stack that one calls-out pass has calibrated
  * (SM8); today that is AOSP ImsStack. On any other stack results read "not counted": no candidates,
@@ -44,7 +45,7 @@ data class ActiveTestsOptIn(val on: Boolean = false, val atMs: Long? = null)
 data class TesterPolicy(val build: TesterBuild, val optIn: Boolean = false) {
     val owner: Boolean get() = build == TesterBuild.OWNER
 
-    /** Dialled test calls, test SMS, override trials and the emergency data test (SM9). */
+    /** Dialled test calls, test SMS, override trials, the emergency data test and the probe ladder with W1 (SM9). */
     val activeTests: Boolean get() = owner || optIn
 
     /** Settled results and measured records go to main with the owner's token: the owner build only (SM11). */
@@ -98,7 +99,7 @@ object StackCalibration {
 /** The opt-in's words (SM9): what the app does, in plain words, before the person turns it on. */
 object OptInWords {
     const val TITLE = "Test calls on this phone"
-    const val OFF = "Off: Open Carrier Data only checks what the phone shows by itself. It makes no calls, sends no SMS and changes no carrier setting to test it"
+    const val OFF = "Off: Open Carrier Data only checks what the phone shows by itself. It makes no calls, sends no SMS, sends no test requests and changes no carrier setting to test it"
     const val ON = "On: Open Carrier Data tests calls on this phone, only where its list marks the call and the SMS free for your carrier"
 
     /** What the person agrees to, shown before the switch goes on. */
@@ -107,8 +108,9 @@ object OptInWords {
         append("- calls your SIM's own mailbox, muted, at most ${TestCaps.CALLS_PER_DAY} times a day;\n")
         append("- sends SMS to your SIM's own number;\n")
         append("- changes carrier settings for a short while to test them, and puts them back;\n")
+        append("- when mobile data or Wi-Fi calling fails, or when you ask for a check, sends a few kilobytes of test requests over mobile data and Wi-Fi to find out why, by itself at most once every 6 hours;\n")
         if (emergencyDataTest) append("- briefly opens the emergency data connection, without making a call.\n")
-        append("It does this only where Open Carrier Data's list marks the mailbox call and the SMS as free for your carrier, never during a call and never while roaming. ")
-        append("It never calls an emergency number. Results stay on this phone; nothing is sent anywhere by itself. You can turn it off at any time.")
+        append("The calls and SMS go only where Open Carrier Data's list marks the mailbox call and the SMS as free for your carrier. None of it happens during a call or while roaming, and the test requests wait while mobile data is switched off. ")
+        append("It never calls an emergency number. Results stay on this phone; apart from those test requests, nothing is sent anywhere by itself. You can turn it off at any time.")
     }
 }

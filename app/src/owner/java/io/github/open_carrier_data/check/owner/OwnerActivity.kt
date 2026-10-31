@@ -369,8 +369,9 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Round 31 (SM9), ROM builds: the person's opt-in for the active tests, off by default. On, the
-     * mailbox calls go live and the test SMS is on (both only where the allowlist marks them free);
-     * off, both go back off and only the passive checks run. The owner build has its own switches.
+     * mailbox calls go live and the test SMS is on (both only where the allowlist marks them free) and
+     * the probe ladder and W1 may run (round 42, item 2); off, all go back off and only the passive
+     * checks run. The owner build has its own switches.
      */
     fun setActiveTests(on: Boolean) = viewModelScope.launch {
         if (OwnerTester.build == io.github.open_carrier_data.check.owner.core.TesterBuild.OWNER) return@launch
@@ -380,7 +381,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
                 activeTests = io.github.open_carrier_data.check.owner.core.ActiveTestsOptIn(on, now),
                 callsOutMode = if (on) CallsOutMode.LIVE else CallsOutMode.DRY_RUN,
                 selfSmsOn = on,
-            ).logged(now, "opt_in", if (on) "the person turned the test calls on (mailbox calls, test SMS, setting trials, the emergency data test where the ROM has it on)" else "the person turned the test calls off: only the passive checks run")
+            ).logged(now, "opt_in", if (on) "the person turned the test calls on (mailbox calls, test SMS, setting trials, test requests for data and Wi-Fi calling, the emergency data test where the ROM has it on)" else "the person turned the test calls off: only the passive checks run")
         }
         // The tester declaration (SM7) follows at once in the dataset step.
         OwnerScheduler.dataset(getApplication())

@@ -484,8 +484,8 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
      * the fail causes and the user-plane state ([OwnerPassiveRead]), the IMS sign-out reason
      * ([ImsReasonReader]) and whether MMS ended, assembles the verdict ([Diagnoses]) and logs it when
      * it differs from the last one. The probe ladder (item 2: D1-D5 and W1) and the balance read (item
-     * 4) send their few requests only within their bounds; nothing here changes a value or starts a
-     * candidate.
+     * 4) send their few requests only within their bounds, on the rom build only after the person's
+     * active-tests opt-in (each checks it itself); nothing here changes a value or starts a candidate.
      */
     private suspend fun diagnoseCauses(store: FileStateStore, phone: OwnerPhone, sims: List<OwnerSim>) {
         // The fail causes it reads need Android 12. Older Android records that the verdict did not run, never silence.
