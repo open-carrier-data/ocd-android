@@ -3,9 +3,13 @@ package io.github.open_carrier_data.check.owner
 import io.github.open_carrier_data.check.core.ProvenBearer
 
 import io.github.open_carrier_data.check.core.DeviceInfo
+import io.github.open_carrier_data.check.core.ForYou
 import io.github.open_carrier_data.check.core.IwlanHold
 import io.github.open_carrier_data.check.core.IwlanReading
+import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.RomFamily
+import io.github.open_carrier_data.check.core.SimIdentity
+import io.github.open_carrier_data.check.core.TwoAnswers
 import io.github.open_carrier_data.check.owner.core.ApnResult
 import io.github.open_carrier_data.check.owner.core.CallsLevel
 import io.github.open_carrier_data.check.owner.core.CallsTested
@@ -25,6 +29,7 @@ import io.github.open_carrier_data.check.owner.core.OcdAnswer
 import io.github.open_carrier_data.check.owner.core.OwnerFeature
 import io.github.open_carrier_data.check.owner.core.OwnerRunner
 import io.github.open_carrier_data.check.owner.core.OwnerState
+import io.github.open_carrier_data.check.owner.core.ProfileAnswers
 import io.github.open_carrier_data.check.owner.core.QuietPlan
 import io.github.open_carrier_data.check.owner.core.RunOptions
 import io.github.open_carrier_data.check.owner.core.RunResult
@@ -41,8 +46,10 @@ import io.github.open_carrier_data.check.owner.core.WifiCallingDetails
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.time.LocalDateTime
 import java.time.ZoneId
 
@@ -437,5 +444,51 @@ class OverviewTest {
         assertEquals("some new error", WifiCallingDetails.cause("IWLAN_SOME_NEW_ERROR"))
         val words = (WifiCallingDetails.lines(null) + WifiCallingDetails.lines(refused)).joinToString(" ").lowercase()
         for (retired in listOf("refusal", "none", "tunnel", "iwlan_")) assertFalse(retired, retired in words)
+    }
+
+    @Test
+    fun `Details shows the SIM's profile as what the phone is set up to try, with what the brand states`() {
+        // Round 45 item 4. 0.4.13 showed the two answers only on the read-only check screen, which the owner build neither
+        // exports nor opens: on the S20 they could only be read with adb root (S20_Project reports/ocd-app-0413-20261031.md).
+        val fixture = javaClass.getResourceAsStream("/fixture-bundle.json")!!.use { OcdBundle.parse(it.readBytes().decodeToString()) }
+        val lidl = ForYou("depends_on_plan", listOf("de.lidl-connect.wifi_calling", "de.vodafone.wifi_calling"), "brand_not_tellable", listOf("BILDmobil", "LIDL Connect", "Vodafone Deutschland"))
+        val bundle = fixture.copy(
+            profiles = fixture.profiles.map {
+                if (it.profileId != "open.26202.8cebd7550c67") it else it.copy(
+                    forYou = mapOf("vowifi" to lidl, "mms" to ForYou("ended", listOf("de.vodafone.mms"))),
+                    dependsOn = mapOf("volte" to listOf("device", "sources_disagree")),
+                )
+            },
+        )
+        val block = ProfileAnswers.of(bundle, sim.identity)!!
+        assertEquals("What the phone is set up to try (Vodafone)", block.heading)
+        assertEquals(listOf(block.heading, TwoAnswers.CONFIGURE_NOTE), block.texts.take(2))
+        val wifi = block.rows.single { it.label == "Wi-Fi calling" }
+        assertEquals("supported", wifi.value)
+        assertEquals(
+            listOf("What the brand states: depends on the brand and the plan: this phone can't tell BILDmobil, LIDL Connect, Vodafone Deutschland SIMs apart; your plan is not checked"),
+            wifi.lines,
+        )
+        assertTrue("What the brand states: ended" in block.texts)
+        assertTrue("Not one value: it differs by phone model; the sources disagree" in block.texts)
+        // A value with neither keeps its label and value; every capability of the data is listed, in the check screen's order.
+        assertEquals(emptyList<String>(), block.rows.single { it.label == "RCS chat" }.lines)
+        assertEquals("VoLTE (calls over 4G)", block.rows.first().label)
+        assertEquals(bundle.capabilityKeys.size, block.rows.size)
+        for (text in block.texts) for (word in listOf("works", "booked", "you have it")) assertFalse(text, word in text.lowercase())
+        // Two SIMs: the heading names the SIM, as Details' other per-SIM lines do. No profile for the network code: no block.
+        assertEquals("LIDL Connect: What the phone is set up to try (Vodafone)", ProfileAnswers.of(bundle, sim.identity, "LIDL Connect")!!.heading)
+        assertNull(ProfileAnswers.of(bundle, SimIdentity("99999", null, null, null)))
+    }
+
+    @Test
+    fun `the owner screen shows every text of the profile block`() {
+        val details = File("src/owner/java/io/github/open_carrier_data/check/owner/OwnerScreen.kt").readText()
+            .substringAfter("private fun DetailsContent(").substringBefore("\n}\n")
+        for (shown in listOf("for (block in ui.profileAnswers)", "SectionTitle(block.heading)", "Summary(block.note", "Title(row.label)", "Summary(row.value)", "row.lines.forEach { Summary(it) }")) {
+            assertTrue(shown, shown in details)
+        }
+        val refresh = File("src/owner/java/io/github/open_carrier_data/check/owner/OwnerActivity.kt").readText().substringAfter("suspend fun refresh()").substringBefore("\n    }\n")
+        assertTrue("profileAnswers = " in refresh)
     }
 }

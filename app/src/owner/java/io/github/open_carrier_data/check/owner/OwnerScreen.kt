@@ -773,6 +773,24 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         }
     }
 
+    // Round 45 item 4: each SIM's profile with the check screen's two answers. The values are what the phone is set up
+    // to try, never a test; under a value, what the brand states, with the person's plan not checked.
+    for (block in ui.profileAnswers) {
+        SectionTitle(block.heading)
+        Group {
+            item { Summary(block.note, Modifier.padding(16.dp)) }
+            block.rows.forEach { row ->
+                item {
+                    Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Title(row.label)
+                        Summary(row.value)
+                        row.lines.forEach { Summary(it) }
+                    }
+                }
+            }
+        }
+    }
+
     // Round 32 part A: what the operator states on its own pages; shown, never used as a setting (except an MMS end).
     if (ui.statementLines.isNotEmpty()) {
         SectionTitle("What the operator states")

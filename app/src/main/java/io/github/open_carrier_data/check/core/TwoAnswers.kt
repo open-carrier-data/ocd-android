@@ -60,4 +60,13 @@ object TwoAnswers {
         }
         return if (words.isEmpty()) null else "Not one value: ${words.joinToString("; ")}"
     }
+
+    /**
+     * The lines under [profile]'s value for [key], as the check screen and the owner screen show them: why it
+     * is not one value, then what the brand states; empty when the profile has neither (or only unknown ones).
+     */
+    fun lines(profile: OcdProfile, key: String): List<String> = listOfNotNull(
+        profile.dependsOn[key]?.let { dependsOnLine(it) },
+        profile.forYou[key]?.let { forYouLine(it) }?.let { "$FOR_YOU_LABEL: $it" },
+    )
 }

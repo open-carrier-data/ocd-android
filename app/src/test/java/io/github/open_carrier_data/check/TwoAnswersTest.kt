@@ -36,6 +36,13 @@ class TwoAnswersTest {
         // An entry without them (every lookup.json before round 45) still decodes.
         val old = json.decodeFromString(OcdProfile.serializer(), """{"profile_id":"open.26201.13528695fee7","display_name":"Telekom","match":{"mccmnc":["26201"]}}""")
         assertTrue(old.forYou.isEmpty() && old.dependsOn.isEmpty())
+        // The lines under a value, as both screens show them: depends_on first, then what the brand states.
+        assertEquals(listOf("Not one value: it differs by phone model; the sources disagree"), TwoAnswers.lines(profile, "volte"))
+        assertEquals(
+            listOf("What the brand states: depends on the brand and the plan: this phone can't tell BILDmobil, LIDL Connect, Vodafone Deutschland SIMs apart; your plan is not checked"),
+            TwoAnswers.lines(profile, "vowifi"),
+        )
+        assertTrue(TwoAnswers.lines(old, "vowifi").isEmpty())
     }
 
     @Test

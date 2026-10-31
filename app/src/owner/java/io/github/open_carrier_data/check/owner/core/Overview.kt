@@ -1,6 +1,11 @@
 package io.github.open_carrier_data.check.owner.core
 
+import io.github.open_carrier_data.check.core.Capabilities
 import io.github.open_carrier_data.check.core.IwlanReading
+import io.github.open_carrier_data.check.core.Matcher
+import io.github.open_carrier_data.check.core.OcdBundle
+import io.github.open_carrier_data.check.core.SimIdentity
+import io.github.open_carrier_data.check.core.TwoAnswers
 import java.time.Instant
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
@@ -425,6 +430,35 @@ object SettingsSummary {
         val ladders = sims.orEmpty().flatMap { Ladders.of(state, it, calls) }
         val headline = StatusSentence.of(state, sims, ladders).headline
         return if (privileged) headline else "$headline. Can't change settings"
+    }
+}
+
+/**
+ * OCD's rule round 45, item 4, in Details: a SIM's most specific profile in the data the owner build
+ * uses ([heading]), its capability values as what the phone is set up to try ([note]), and under a value
+ * what the brand states and why it is not one value. The words are the check screen's ([TwoAnswers]);
+ * none says a feature works or is booked.
+ */
+data class ProfileAnswers(val heading: String, val rows: List<Row>) {
+    /** One capability: its label and value as the check screen's field shows them, then the lines under it. */
+    data class Row(val label: String, val value: String, val lines: List<String>)
+
+    val note: String get() = TwoAnswers.CONFIGURE_NOTE
+
+    /** Every text of the block, in screen order. */
+    val texts: List<String> get() = listOf(heading, note) + rows.flatMap { listOf(it.label, it.value) + it.lines }
+
+    companion object {
+        /** The block of the SIM [identity] in [bundle]; null when no profile matches. [name]: the SIM's name, given only with two SIMs. */
+        fun of(bundle: OcdBundle, identity: SimIdentity, name: String? = null): ProfileAnswers? {
+            val resolution = Matcher.resolve(bundle, identity)
+            val most = resolution.mostSpecific ?: return null
+            val rows = Capabilities.ordered(bundle.capabilityKeys).map { key ->
+                Row(Capabilities.label(key), resolution.answer(key).wire, TwoAnswers.lines(most, key))
+            }
+            val heading = TwoAnswers.configureHeading(most.displayName)
+            return ProfileAnswers(name?.let { "$it: $heading" } ?: heading, rows)
+        }
     }
 }
 
