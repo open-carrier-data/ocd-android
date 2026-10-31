@@ -65,7 +65,7 @@ class PrivateDnsTest {
     fun `a factor with no verdict still shows, and a clean read shows nothing`() {
         // A refusal code beside it: both.
         val coded = Diagnoses.of(DiagnosisInputs(defaultDataCause = 33, privateDnsStrict = true, privateDnsFails = true))
-        assertEquals("Refused for mobile data, probably the tariff (code 33); $factor", coded.summary)
+        assertEquals("Refused for mobile data (code 33): not in the plan, or an access point name the network does not know for this SIM; $factor", coded.summary)
         assertNull(Diagnoses.of(DiagnosisInputs()).summary)
     }
 

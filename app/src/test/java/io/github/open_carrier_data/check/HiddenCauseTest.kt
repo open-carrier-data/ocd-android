@@ -228,12 +228,16 @@ class HiddenCauseTest {
         assertTrue(HiddenLines.shown(refusals, 3, mobileDataDown = false, imsRegistered = true).isEmpty())
         assertTrue(HiddenLines.shown(refusals, 3, mobileDataDown = null, imsRegistered = true).isEmpty())
         assertTrue(HiddenLines.shown(refusals, 4, mobileDataDown = true, imsRegistered = true).isEmpty())
-        // VoLTE only while IMS is not registered; a readable code is not the read-only part.
+        // VoLTE only while IMS is not registered.
         val volte = SetupRefusal(VerdictFeature.VOLTE, 65536, subId = 3)
         assertTrue(HiddenLines.shown(listOf(volte), 3, null, imsRegistered = true).isEmpty())
         assertTrue(HiddenLines.shown(listOf(volte), 3, null, imsRegistered = null).isEmpty())
         assertEquals(listOf(volte), HiddenLines.shown(listOf(volte), 3, null, imsRegistered = false))
-        assertTrue(HiddenLines.shown(listOf(SetupRefusal(VerdictFeature.MOBILE_DATA, 27, subId = 3)), 3, true, true).isEmpty())
+        // Round 44: a readable code is shown too, under the same filter, with round 42's words (Code33Test).
+        val coded = SetupRefusal(VerdictFeature.MOBILE_DATA, 27, subId = 3)
+        assertEquals(listOf(coded), HiddenLines.shown(listOf(coded), 3, true, true))
+        assertTrue(HiddenLines.shown(listOf(coded), 3, false, true).isEmpty())
+        assertEquals("The network refused the access point name (code 27): probably wrong settings", HiddenLines.line(coded))
         assertEquals("Mobile data refused by the network; this phone's modem software hides the reason", HiddenLines.line(refusals.single()))
         // After the restore nothing is found.
         assertTrue(HiddenLines.fromRegistry(lines(), 0).isEmpty())

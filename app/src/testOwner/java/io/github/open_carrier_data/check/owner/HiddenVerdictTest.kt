@@ -91,7 +91,11 @@ class HiddenVerdictTest {
     @Test
     fun `a readable code or an attach reject ranks first, the ladder and the phone side below`() {
         // A live code first, then a code from the log's refused setup (the S20 once the RIL passes the real cause).
-        assertEquals("Refused for mobile data, probably the tariff (code 33)", Diagnoses.of(case2.copy(defaultDataCause = 33)).line)
+        // Round 44: a live #33 that is not the log's refused setup does not tell the row.
+        assertEquals(
+            "Refused for mobile data (code 33): not in the plan, or an access point name the network does not know for this SIM",
+            Diagnoses.of(case2.copy(defaultDataCause = 33)).line,
+        )
         assertEquals(
             "The network refused the access point name (code 27): probably wrong settings",
             Diagnoses.of(case2.copy(dataSetup = hidden.copy(cause = 27))).line,

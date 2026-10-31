@@ -90,8 +90,9 @@ class CausesTest {
 
     @Test
     fun `the fixed wordings match the ruling`() {
+        // Round 44: the line names the feature, never "this SIM".
         assertEquals(
-            "Refused for this SIM, probably the tariff (code 33)",
+            "Refused for VoLTE, probably the tariff (code 33)",
             CauseVerdicts.of(VerdictFeature.VOLTE, Refusal(CauseClass.NOT_BOOKED, code = 33), AccountState.UNKNOWN)!!.line,
         )
         assertEquals(

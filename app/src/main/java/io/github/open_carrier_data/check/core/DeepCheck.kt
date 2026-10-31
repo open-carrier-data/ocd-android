@@ -417,9 +417,10 @@ data class DeepCheckReading(
      */
     val volteByUser: Boolean? = null,
     /**
-     * OCD rule round 43 (read-only part): the newest refused WWAN setups whose cause the modem software
-     * hides, from the registry dump this check already reads; the cause number only, never a row field
-     * or a row class. The app shows a line only while the feature is still down ([HiddenLines.shown]).
+     * OCD rules rounds 43 and 44 (read-only part): the newest refused WWAN setups, whose cause the modem
+     * software hides (round 43) or a code names (round 44), from the registry dump this check already
+     * reads; the cause number only, never a row field or a row class. The app shows a line only while
+     * the feature is still down ([HiddenLines.shown]).
      */
     val refusals: List<SetupRefusal> = emptyList(),
 ) {
@@ -444,7 +445,7 @@ object DeepCheck {
         val samsung = runner.run(ShellCommand.SAMSUNG_IMS, target) { SamsungImsParser.parse(it, target.slot) }
             ?: ImsReading(ImsSource.UNREADABLE)
         // Read for both stacks: VoPS is the network's, and Android's IMS takes its transport from here. Round 43 also
-        // reads its dated local log, in memory, for a refused setup whose cause the modem software hides.
+        // reads its dated local log, in memory, for a refused setup whose cause the modem software hides or (round 44) a code names.
         val registryLines = runner.run(ShellCommand.TELEPHONY_REGISTRY, target) { lines -> lines.toList() }
         val registry = registryLines?.let { Optional(RegistryParser.parse(it.asSequence(), target.slot)) }
         val attempts = registryLines?.let { HiddenLines.fromRegistry(RegistryDataLog.parse(it.asSequence()), target.slot.index) }.orEmpty()
