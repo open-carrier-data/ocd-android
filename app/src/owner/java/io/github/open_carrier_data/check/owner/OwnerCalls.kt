@@ -38,6 +38,7 @@ import io.github.open_carrier_data.check.owner.core.OwnerFeature
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.PointerLedger
 import io.github.open_carrier_data.check.owner.core.SimKey
+import io.github.open_carrier_data.check.owner.core.TrialRefusal
 import io.github.open_carrier_data.check.owner.core.ImsStack
 import io.github.open_carrier_data.check.owner.core.provisionalSettled
 import io.github.open_carrier_data.check.owner.core.update
@@ -99,10 +100,11 @@ object OwnerTester {
     fun policy(context: Context) = policy(FileStateStore(context).read())
 
     /**
-     * Whether the round 29 setting trials (a non-persistent override, a temporary access point row, and the restart
-     * check's override) may start: always on the owner build, on rom only after the person's opt-in (SM9).
+     * Why the round 29 setting trials (a non-persistent override, a temporary access point row, and the restart
+     * check's override) may not start, or null: only on an IMS stack the tests are calibrated on (SM8, both builds),
+     * and on rom only after the person's opt-in (SM9). The stack is the one [CallBuild] names for the reports and the calls.
      */
-    fun trialsAllowed(state: io.github.open_carrier_data.check.owner.core.OwnerState): Boolean = policy(state).activeTests
+    fun trialRefusal(context: Context, state: OwnerState): TrialRefusal? = policy(state).trialRefusal(CallBuild.stack(context))
 }
 
 /**

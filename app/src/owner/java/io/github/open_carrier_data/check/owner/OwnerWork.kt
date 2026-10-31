@@ -228,12 +228,12 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     }
 
     /**
-     * Round 31 (SM9): a trial step (the night's chain, "Test now" without the dataset installer, the restart check) starts
-     * nothing on a rom build whose person has not turned the active tests on, also for a chain queued before they went off.
-     * Reverts and cleanups never ask: they only take a change back.
+     * Round 31 (SM8, SM9): a trial step (the night's chain, "Test now" without the dataset installer, the restart check) starts
+     * nothing on an IMS stack the tests are not calibrated on, nor on a rom build whose person has not turned the active tests
+     * on, also for a chain queued before either changed. Reverts and cleanups never ask: they only take a change back.
      */
     private fun requireTrials(store: FileStateStore) {
-        if (!OwnerTester.trialsAllowed(store.read())) throw SafetyException(TesterPolicy.OPT_IN_OFF, "the active tests are off on this phone; only the passive checks run")
+        OwnerTester.trialRefusal(applicationContext, store.read())?.let { throw SafetyException(it.code, it.plain) }
     }
 
     /** Leftover cleanup and the per-SIM re-apply; retried while a refusal holds (in a call, a call just before a restart, Shizuku not up yet). */
@@ -388,11 +388,12 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, store.read().datasetLine ?: "checked")) }
                 return Result.success()
             }
-            // From here on the round 29 trials, which change carrier settings for a short while. A rom build runs none before the
-            // person's opt-in (SM9); the light check and the passive reads above have run.
-            if (!OwnerTester.trialsAllowed(store.read())) {
-                store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, "checked; nothing tested: the active tests are off on this phone")) }
-                quietLog(store, "check", "light check: no tests: the active tests are off on this phone; only the passive checks run")
+            // From here on the round 29 trials, which change carrier settings for a short while. None runs on an IMS stack the tests
+            // are not calibrated on (SM8), and a rom build runs none before the person's opt-in (SM9); the light check and the
+            // passive reads above have run.
+            OwnerTester.trialRefusal(context, store.read())?.let { why ->
+                store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, "checked; nothing tested: ${why.plain}")) }
+                quietLog(store, "check", "light check: no tests: ${why.plain}")
                 return Result.success()
             }
             // Round 29: settled results go out as report issues when the owner set a token (its own work, with a network).
@@ -1248,10 +1249,11 @@ object OwnerScheduler {
             FileStateStore(context).update { it.copy(undone = emptyList()).logged(System.currentTimeMillis(), "run", "test now: pull, hand over, install and test, now") }
             return "queued: pull, install and test"
         }
-        // The round 29 chain below changes carrier settings for a short while: a rom build runs it only after the person's opt-in (SM9).
-        if (!OwnerTester.trialsAllowed(FileStateStore(context).read())) {
-            FileStateStore(context).update { it.logged(System.currentTimeMillis(), "run", "test now refused: the active tests are off on this phone") }
-            return "off: the active tests are off on this phone"
+        // The round 29 chain below changes carrier settings for a short while: only on an IMS stack the tests are calibrated on
+        // (SM8), and a rom build runs it only after the person's opt-in (SM9).
+        OwnerTester.trialRefusal(context, FileStateStore(context).read())?.let { why ->
+            FileStateStore(context).update { it.logged(System.currentTimeMillis(), "run", "test now refused: ${why.plain}") }
+            return if (why.code == TesterPolicy.NOT_CALIBRATED) why.plain else "off: ${why.plain}"
         }
         val sims = OwnerData.sims(context)
         val runId = UUID.randomUUID().toString().take(8)
