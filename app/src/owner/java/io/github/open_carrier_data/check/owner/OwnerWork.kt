@@ -17,14 +17,22 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import io.github.open_carrier_data.check.core.DataFailCauseClass
 import io.github.open_carrier_data.check.core.DeviceInfo
 import io.github.open_carrier_data.check.core.EpdgW1
 import io.github.open_carrier_data.check.core.Matcher
 import io.github.open_carrier_data.check.core.OcdBundle
+import io.github.open_carrier_data.check.core.RegistryDataLog
 import io.github.open_carrier_data.check.core.RomFamily
+import io.github.open_carrier_data.check.core.SetupAttempts
+import io.github.open_carrier_data.check.core.SetupRefusal
+import io.github.open_carrier_data.check.core.VerdictFeature
 import io.github.open_carrier_data.check.owner.core.ApnResult
+import io.github.open_carrier_data.check.owner.core.ApnRows
 import io.github.open_carrier_data.check.owner.core.DataBasis
 import io.github.open_carrier_data.check.owner.core.Diagnoses
+import io.github.open_carrier_data.check.owner.core.DiagnosisInputs
+import io.github.open_carrier_data.check.owner.core.DiagnosisMark
 import io.github.open_carrier_data.check.owner.core.EpdgRunMark
 import io.github.open_carrier_data.check.owner.core.OcdApnRow
 import io.github.open_carrier_data.check.owner.core.PlanWhy
@@ -496,6 +504,9 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                     imsReasonCode = reason.imsReasonCode,
                     sipResponseCode = reason.sipResponseCode,
                 )
+                // Round 43: the newest refused setups of this SIM from telephony.registry's dated local log, which the
+                // passive listener cannot see (Android drops a DISCONNECTED state from the states it replays).
+                passive = refusedSetups(passive, phone, sim, store.read().apns)
                 // Items 2 and 4 run only after a measured cellular failure, never under a safety refusal (an
                 // emergency state, an active call, roaming). The balance USSD is also home-network only and capped.
                 // A measured failure is a non-zero cause, an attach reject, or the SIM's cellular network up but not
@@ -553,12 +564,34 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                     .fresh(store.read().accountReads, sim.key, now, zone)
                 Diagnoses.of(passive.copy(account = account, balance = balance))
             }.getOrNull() ?: continue
+            // Round 43: the screen's current verdict and Details for this SIM, replaced at every check.
+            store.update { it.copy(diagnoses = DiagnosisMark.put(it.diagnoses, sim.slot, sim.subId, diagnosis, now)) }
             // The verdict and its phone-side factors (strict Private DNS that cannot reach its server), in one line.
             val line = diagnosis.summary ?: continue
             val tag = "diagnosis:${sim.slot}"
             if (store.read().log.lastOrNull { it.kind == tag }?.text == line) continue
             quietLog(store, tag, line)
         }
+    }
+
+    /**
+     * OCD round 43: each WWAN feature's newest refused setup for [sim] in telephony.registry's dated local log
+     * ([SetupAttempts]), with a refusal cause only (a classified code or a hidden one, never AOSP's -1 to -6),
+     * and which access point it was by its row ID in OCD's own record ([ApnRows]). The dump is the one the
+     * owner build already reads (DUMP); it is parsed in memory and only the cause and the class are kept.
+     */
+    private suspend fun refusedSetups(passive: DiagnosisInputs, phone: OwnerPhone, sim: OwnerSim, apns: List<io.github.open_carrier_data.check.owner.core.LiveApn>): DiagnosisInputs {
+        val lines = RegistryDataLog.parse(runCatching { phone.registryText() }.getOrNull())
+        if (lines.isEmpty()) return passive
+        fun refusal(feature: VerdictFeature): SetupRefusal? =
+            SetupAttempts.newest(lines, sim.slot, sim.subId, feature)?.takeIf { DataFailCauseClass.refusal(it.cause) }?.let { a ->
+                SetupRefusal(feature, a.cause, ApnRows.classOf(a.rowId, a.edited, apns, sim.subId), subId = sim.subId)
+            }
+        return passive.copy(
+            dataSetup = refusal(VerdictFeature.MOBILE_DATA),
+            imsSetup = refusal(VerdictFeature.VOLTE),
+            mmsSetup = refusal(VerdictFeature.MMS),
+        )
     }
 
     /** The ladder's D2c as the verdict reads it: the strict Private DNS server did not answer; null when it was not asked. */

@@ -725,6 +725,22 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         }
     }
 
+    // Round 43: each SIM's current verdict as the last check read it, with its Details (a hidden refusal's raw
+    // value and which access point it was; an unknown Wi-Fi calling value, which gets no line).
+    if (state.diagnoses.isNotEmpty()) {
+        SectionTitle("Why a feature fails")
+        Group {
+            item {
+                Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    state.diagnoses.forEach { mark ->
+                        mark.shown()?.let { Summary("Slot ${mark.slot + 1}: $it") }
+                        mark.details.forEach { Summary("Details: $it") }
+                    }
+                }
+            }
+        }
+    }
+
     // Round 42 items 4 and 5: the two account-state reads, opt-in and off by default. On the rom build
     // they also ride on the active-tests opt-in (SM9); shown there only once that is on.
     if (owner || state.activeTests.on) {

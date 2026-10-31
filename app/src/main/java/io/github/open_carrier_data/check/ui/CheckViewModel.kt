@@ -24,6 +24,7 @@ import io.github.open_carrier_data.check.core.Matcher
 import io.github.open_carrier_data.check.core.OcdBundle
 import io.github.open_carrier_data.check.core.PhoneReadings
 import io.github.open_carrier_data.check.core.PhoneSwitches
+import io.github.open_carrier_data.check.core.HiddenLines
 import io.github.open_carrier_data.check.core.ProbeLadder
 import io.github.open_carrier_data.check.core.ProbeNet
 import io.github.open_carrier_data.check.core.ProbePolicy
@@ -224,6 +225,8 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
             null
         }
         val status = if (deep == null) shizuku.status() else null
+        // Round 43: whether mobile data is still down for the SIM on screen, read once, outside the state update.
+        val dataDown = if (deep != null && deep.refusals.isNotEmpty()) reader.mobileDataDown(start.selectedSubId) else null
         _state.update { current ->
             when {
                 // A new check replaced the readings meanwhile; this result belongs to the old ones.
@@ -234,7 +237,9 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
                     shizuku = status,
                 )
                 else -> {
-                    val updated = readings.copy(deep = deep)
+                    // Round 43: a hidden refusal shows only while its feature is still down for the SIM on screen.
+                    val shown = HiddenLines.shown(deep.refusals, start.selectedSubId, dataDown, deep.ims.registered)
+                    val updated = readings.copy(deep = deep.copy(refusals = shown))
                     current.copy(
                         deepRunning = false,
                         readings = updated,

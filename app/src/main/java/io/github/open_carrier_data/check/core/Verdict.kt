@@ -44,6 +44,19 @@ enum class AccountState(val wire: String) {
     UNKNOWN("unknown"),
 }
 
+/**
+ * OCD rule round 43: which access point a refused setup used, told only by its APN row ID matching
+ * OCD's own record (the test row of a running trial, or a row OCD inserted and keeps), never by its
+ * name or values. Only this class is kept, never the row's name or any other field. The read-only
+ * builds write no rows and never name one.
+ */
+@Serializable
+enum class ApnRowClass(val wire: String, val plain: String) {
+    TEST("test", "OCD test row"),
+    OCD("ocd", "OCD's row"),
+    OTHER("other", "other"),
+}
+
 /** A refusal read, from a code or from user-plane behaviour. [code] is printed only when it is a 3GPP cause number. */
 @Serializable
 data class Refusal(
@@ -56,6 +69,8 @@ data class Refusal(
     val userPlane: UserPlaneClass? = null,
     /** The W1 ePDG-name comparison's finding, when the Wi-Fi-calling refusal came from it ([EpdgW1]). */
     val epdg: EpdgClass? = null,
+    /** Round 43, owner and rom: which access point a refused setup used ([ApnRowClass]); null when not told. */
+    val apnRow: ApnRowClass? = null,
 )
 
 /** The verdict shown and reported: the plain line, the class, and whether two signals agreed. */
@@ -84,6 +99,9 @@ object CauseVerdicts {
         if (mmsEnded && feature == VerdictFeature.MMS) {
             return CauseVerdict(feature, "MMS ended on this network", CauseClass.NETWORK_WIDE, confident = true)
         }
+        // Round 43: a hidden refusal keeps its own words. The account-block branch below never takes it over;
+        // a fresh blocked account read is added after them.
+        if (refusal?.cause == CauseClass.HIDDEN) return hidden(feature, refusal, account, balance)
         if (refusal == null && account == AccountState.UNKNOWN) return null
 
         val accountBlocks = account == AccountState.BLOCKED
@@ -114,11 +132,35 @@ object CauseVerdicts {
             CauseClass.NETWORK_WIDE -> "Shut down network-wide$code"
             CauseClass.PHONE_SIDE -> phoneSide(refusal)
             CauseClass.AMBIGUOUS -> "An ambiguous refusal$code; re-test with credit"
-            CauseClass.UNKNOWN -> return null
+            CauseClass.HIDDEN, CauseClass.UNKNOWN -> return null
         }
         // Temporary and phone-side lines are a single plain signal; the tariff/settings lines stay hedged by the word "probably".
         val confident = refusal.cause in setOf(CauseClass.TEMPORARY, CauseClass.PHONE_SIDE, CauseClass.DEVICE_NOT_ALLOWED, CauseClass.ROAMING)
         return CauseVerdict(feature, line, refusal.cause, confident)
+    }
+
+    /** The features a hidden refusal can name: the WWAN ones. Wi-Fi calling's causes come from AOSP's IWLAN service, not the modem. */
+    val HIDDEN_FEATURES = setOf(VerdictFeature.MOBILE_DATA, VerdictFeature.VOLTE, VerdictFeature.MMS)
+
+    /**
+     * Round 43's words, never with "(code N)": "Mobile data refused by the network; this phone's modem
+     * software hides the reason", "... for the access point under test; ..." or "... for OCD's access
+     * point; ..." (VoLTE and MMS alike), and for mobile data with a fresh blocked account read
+     * "; the account also reads as blocked (balance 0.10 EUR)" after them. Never confident.
+     */
+    private fun hidden(feature: VerdictFeature, refusal: Refusal, account: AccountState, balance: String?): CauseVerdict? {
+        if (feature !in HIDDEN_FEATURES) return null
+        val where = when (refusal.apnRow) {
+            ApnRowClass.TEST -> " for the access point under test"
+            ApnRowClass.OCD -> " for OCD's access point"
+            ApnRowClass.OTHER, null -> ""
+        }
+        val accountToo = if (feature == VerdictFeature.MOBILE_DATA && account == AccountState.BLOCKED) {
+            "; the account also reads as blocked" + (balance?.let { " (balance $it)" } ?: "")
+        } else {
+            ""
+        }
+        return CauseVerdict(feature, "${feature.label} refused by the network$where; this phone's modem software hides the reason$accountToo", CauseClass.HIDDEN, confident = false)
     }
 
     private fun phoneSide(refusal: Refusal): String = refusal.epdg?.line ?: when (refusal.userPlane) {
@@ -140,6 +182,8 @@ object CauseVerdicts {
  */
 object TestBlame {
     fun notCounted(refusal: Refusal?, account: AccountState): Boolean {
+        // Round 43: a hidden refusal is a measured failure; it can be OCD's own wrong access point.
+        if (refusal?.cause == CauseClass.HIDDEN) return false
         if (refusal?.temporaryDefinite == true) return true
         val accountBlocks = account == AccountState.BLOCKED
         val refusalPointsAtAccount = refusal?.cause == CauseClass.BARRED

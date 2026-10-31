@@ -326,6 +326,8 @@ data class OwnerState(
     val balanceHalts: List<BalanceHalt> = emptyList(),
     /** Round 42 (item 5): the person's opt-in for reading the carrier's own plan SMS; off by default, and on rom behind SM9's opt-in. */
     val carrierSmsOn: Boolean = false,
+    /** Round 43: each SIM's current verdict and its Details, for the screen ([DiagnosisMark]); classes and plain words only. */
+    val diagnoses: List<DiagnosisMark> = emptyList(),
 ) {
     val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
 
