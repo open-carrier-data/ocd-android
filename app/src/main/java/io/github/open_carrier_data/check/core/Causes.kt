@@ -33,6 +33,14 @@ enum class CauseClass(val letter: String, val wire: String, val plain: String) {
     /** The code or behaviour is known but does not sort cleanly (for example an ESM #30/#31 OCS/PCRF refusal to re-test with credit). */
     AMBIGUOUS("?", "ambiguous", "an ambiguous refusal; re-test"),
 
+    /**
+     * OCD rule round 43: the network refused a data, VoLTE or MMS setup and the phone's modem software
+     * hid its cause ([DataFailCauseClass.hidden]). Never mapped to [BARRED], [WRONG_SETTINGS] or
+     * [NOT_BOOKED], never confident, never "not counted" ([TestBlame]): the hidden causes include the
+     * wrong-settings ones (#27, #28, #29, #50, #51) that a wrong OCD access point produces.
+     */
+    HIDDEN("", "hidden", "refused by the network; the phone's modem software hides the reason"),
+
     /** Nothing readable named a cause. */
     UNKNOWN("", "unknown", "the cause could not be read");
 
@@ -69,6 +77,26 @@ object DataFailCauseClass {
             else -> CauseClass.UNKNOWN
         }
     }
+
+    /** DataFailCause.UNKNOWN: what Android makes of a modem value it does not know (the Shannon RIL's -7 and -8). */
+    const val UNKNOWN_CAUSE = 65536
+
+    /**
+     * OCD rule round 43: a cause the phone's modem software hid. Samsung's prebuilt RIL on Exynos
+     * (CustomizeFailCause) turns the permanent 3GPP causes #8, #27 to #30, #32 to #35, #50, #51 and
+     * #111 into -7 (some setups end -8), and Android shows any value it does not know as UNKNOWN
+     * (65536); a raw value below -6 is one Android passed through. AOSP's own -1 to -6
+     * (REGISTRATION_FAIL, GPRS_REGISTRATION_FAIL, SIGNAL_LOST, PREF_RADIO_TECH_CHANGED,
+     * RADIO_POWER_OFF, TETHERED_CALL_ACTIVE) are phone or radio states and never hidden refusals.
+     */
+    fun hidden(cause: Int): Boolean = cause == UNKNOWN_CAUSE || cause < -6
+
+    /**
+     * A refused setup's cause that names something: a code [of] classifies, or a hidden one. Any
+     * other value (0, AOSP's -1 to -6, LOST_CONNECTION and the other Android-internal causes) is
+     * no refusal line and opens no gate.
+     */
+    fun refusal(cause: Int): Boolean = hidden(cause) || of(cause) != CauseClass.UNKNOWN
 
     /**
      * AOSP's own carrier-config retry rule marks these permanent, so a privileged app

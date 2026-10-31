@@ -63,6 +63,8 @@ import io.github.open_carrier_data.check.core.Capabilities
 import io.github.open_carrier_data.check.core.CapabilityValue
 import io.github.open_carrier_data.check.core.CarrierKeys
 import io.github.open_carrier_data.check.core.DeepCheckReading
+import io.github.open_carrier_data.check.core.HiddenDetails
+import io.github.open_carrier_data.check.core.HiddenLines
 import io.github.open_carrier_data.check.core.DeviceInfo
 import io.github.open_carrier_data.check.core.EpdgName
 import io.github.open_carrier_data.check.core.Findings
@@ -505,6 +507,10 @@ private fun DeepResults(deep: DeepCheckReading) {
             ims.lastDisconnect?.let { Field("Last sign-out reason", "${it.code}${it.name?.let { name -> " ($name)" }.orEmpty()}") }
             ims.mno?.let { Field("Samsung's carrier table", it) }
         }
+    }
+    // Round 43: a refused setup whose cause this phone's modem software hides; the raw value as the note.
+    deep.refusals.forEach { refusal ->
+        HiddenLines.line(refusal)?.let { line -> Field("Refused", line, HiddenDetails.line(refusal.feature, refusal.cause, refusal.modemValue), emphasize = true) }
     }
     deep.networkOffer?.let { offer ->
         Field(

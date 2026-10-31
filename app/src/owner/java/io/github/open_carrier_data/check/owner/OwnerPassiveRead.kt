@@ -61,6 +61,7 @@ object OwnerPassiveRead {
             vpnActive = vpnActive(context),
             dataSaver = dataSaver(context),
             dataOffReason = dataOffReason(tm),
+            dataOnAllReasons = dataOnAllReasons(tm),
             account = account,
             balance = balance,
             mmsEnded = mmsEnded,
@@ -155,6 +156,28 @@ object OwnerPassiveRead {
     fun privateDnsBroken(caps: NetworkCapabilities): Boolean = runCatching {
         NetworkCapabilities::class.java.getMethod("isPrivateDnsBroken").invoke(caps) as? Boolean ?: false
     }.getOrDefault(false)
+
+    /**
+     * Round 43: mobile data is on for every reason (user, policy, carrier, thermal), each one read; false
+     * when one is off; null when one could not be read. A hidden refusal is shown only while this is true.
+     */
+    @RequiresApi(Build.VERSION_CODES.S)
+    @SuppressLint("MissingPermission")
+    private fun dataOnAllReasons(tm: TelephonyManager?): Boolean? {
+        tm ?: return null
+        val reasons = listOf(
+            TelephonyManager.DATA_ENABLED_REASON_USER,
+            TelephonyManager.DATA_ENABLED_REASON_POLICY,
+            TelephonyManager.DATA_ENABLED_REASON_CARRIER,
+            TelephonyManager.DATA_ENABLED_REASON_THERMAL,
+        )
+        var all = true
+        for (reason in reasons) {
+            val on = runCatching { tm.isDataEnabledForReason(reason) }.getOrNull() ?: return null
+            if (!on) all = false
+        }
+        return all
+    }
 
     /** The first data-off reason (user/policy/carrier/thermal), or null when mobile data is on for all reasons. */
     @RequiresApi(Build.VERSION_CODES.S)

@@ -294,6 +294,37 @@ class PhoneReader(private val context: Context) {
      * the APN name (NetworkInfo extra info) and the APN types the network
      * serves. An emergency connection is skipped entirely.
      */
+    /**
+     * OCD rule round 43 (read-only part): mobile data is still down for [subId], both read: on for every
+     * reason (user, policy, carrier, thermal; READ_PHONE_STATE, which this build already holds, and
+     * Android 12) and no cellular internet network up for this SIM. Null when either cannot be read,
+     * so no hidden-refusal line is shown on a guess.
+     */
+    @SuppressLint("MissingPermission")
+    fun mobileDataDown(subId: Int?): Boolean? {
+        if (subId == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !hasPhonePermission()) return null
+        val tm = telephony?.createForSubscriptionId(subId) ?: return null
+        val reasons = listOf(
+            TelephonyManager.DATA_ENABLED_REASON_USER,
+            TelephonyManager.DATA_ENABLED_REASON_POLICY,
+            TelephonyManager.DATA_ENABLED_REASON_CARRIER,
+            TelephonyManager.DATA_ENABLED_REASON_THERMAL,
+        )
+        for (reason in reasons) {
+            val on = runCatching { tm.isDataEnabledForReason(reason) }.getOrNull() ?: return null
+            if (!on) return false
+        }
+        val cm = connectivity ?: return null
+        @Suppress("DEPRECATION")
+        val networks = runCatching { cm.allNetworks.toList() }.getOrNull() ?: return null
+        val up = networks.any { network ->
+            val caps = runCatching { cm.getNetworkCapabilities(network) }.getOrNull() ?: return@any false
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                (caps.networkSpecifier as? TelephonyNetworkSpecifier)?.subscriptionId.let { it == null || it == subId }
+        }
+        return !up
+    }
+
     private fun readDataConnections(subId: Int?): List<DataConnection> {
         val cm = connectivity ?: return emptyList()
         return runCatching { cm.allNetworks.toList() }.getOrDefault(emptyList()).mapNotNull { network ->
