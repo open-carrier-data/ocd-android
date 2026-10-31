@@ -5,7 +5,8 @@ Data's public repository.
 Reads, and never writes, these files of the public checkout:
 
 - generated/android/lookup.json: per profile, profile_id, display_name,
-  match, capabilities and newest_entry are kept; everything else is dropped.
+  match, capabilities, newest_entry, depends_on and for_you are kept;
+  everything else is dropped.
 - generated/android/metadata.json: the snapshot's checks_through,
   stale_after and data_digest.
 - README.md, section "Limits to read before you ship": the plain meanings of
@@ -52,7 +53,10 @@ INPUTS = (
     "generated/devices/android.json",
 )
 
-PROFILE_KEYS = ("profile_id", "display_name", "match", "capabilities", "newest_entry")
+PROFILE_KEYS = ("profile_id", "display_name", "match", "capabilities", "newest_entry", "depends_on", "for_you")
+# Rule round 45, item 4: the two answers' sibling maps, kept where lookup.json has them.
+DEPENDS_ON_REASONS = {"sources_disagree", "device", "firmware", "ims_stack"}
+FOR_YOU_STATES = {"included", "free_option", "paid_option", "not_offered", "ended", "depends_on_plan"}
 STRING_MATCH_KEYS = (
     "mccmnc",
     "spn",
@@ -179,6 +183,13 @@ def compact_profile(profile: dict[str, Any], capability_keys: list[str]) -> dict
         if value not in CAPABILITY_VALUES:
             raise BundleError(f"{profile_id}: capability {key} has value {value!r}")
 
+    for key, reasons in (profile.get("depends_on") or {}).items():
+        if capabilities.get(key) != "conditional" or not isinstance(reasons, list) or not reasons \
+                or not set(reasons) <= DEPENDS_ON_REASONS:
+            raise BundleError(f"{profile_id}: depends_on.{key} is not a list of reasons for a conditional value")
+    for key, item in (profile.get("for_you") or {}).items():
+        if key not in capabilities or not isinstance(item, dict) or item.get("state") not in FOR_YOU_STATES:
+            raise BundleError(f"{profile_id}: for_you.{key} has no known state")
     kept = {key: profile[key] for key in PROFILE_KEYS if key in profile and profile[key] is not None}
     kept["match"] = kept_match
     newest = kept.get("newest_entry")

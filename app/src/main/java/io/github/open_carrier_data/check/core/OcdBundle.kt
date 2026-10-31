@@ -95,6 +95,10 @@ data class OcdProfile(
     val match: OcdMatch,
     val capabilities: Map<String, String> = emptyMap(),
     @SerialName("newest_entry") val newestEntry: String? = null,
+    /** Rule round 45, item 4: why a conditional capability is not single (TwoAnswers). */
+    @SerialName("depends_on") val dependsOn: Map<String, List<String>> = emptyMap(),
+    /** Rule round 45, item 4: what an admitted statement says about availability, per feature (TwoAnswers). */
+    @SerialName("for_you") val forYou: Map<String, ForYou> = emptyMap(),
 ) {
     fun capability(key: String): CapabilityValue = CapabilityValue.fromWire(capabilities[key])
 }
