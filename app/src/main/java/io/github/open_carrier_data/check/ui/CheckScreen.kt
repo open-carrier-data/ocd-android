@@ -83,6 +83,7 @@ import io.github.open_carrier_data.check.core.SwitchSteps
 import io.github.open_carrier_data.check.core.T2Feature
 import io.github.open_carrier_data.check.core.T2Status
 import io.github.open_carrier_data.check.core.ToggleAnswer
+import io.github.open_carrier_data.check.core.TwoAnswers
 import io.github.open_carrier_data.check.core.UserToggleRecord
 import io.github.open_carrier_data.check.phone.SettingsScreens
 import io.github.open_carrier_data.check.phone.ShizukuStatus
@@ -964,7 +965,8 @@ private fun OcdSection(state: UiState, bundle: OcdBundle) {
             }
             HorizontalDivider()
             val most = resolution.mostSpecific!!
-            Label("Answers from the most specific profile (${most.displayName})")
+            Label(TwoAnswers.configureHeading(most.displayName))
+            Note(TwoAnswers.CONFIGURE_NOTE)
             for (key in Capabilities.ordered(bundle.capabilityKeys)) {
                 val value = resolution.answer(key)
                 val broader = resolution.broaderValues(key).filter { it.second != value }
@@ -976,6 +978,8 @@ private fun OcdSection(state: UiState, bundle: OcdBundle) {
                     }
                 }
                 Field(Capabilities.label(key), value.wire, note, emphasize = true)
+                most.dependsOn[key]?.let { TwoAnswers.dependsOnLine(it) }?.let { Note(it) }
+                most.forYou[key]?.let { TwoAnswers.forYouLine(it) }?.let { Note("${TwoAnswers.FOR_YOU_LABEL}: $it") }
                 DeviceRecordLine(state, bundle, most.profileId, key)
             }
             bundle.limits.deviceRecords?.takeIf { bundle.records != null }?.let { Note("From OCD's README: $it") }
