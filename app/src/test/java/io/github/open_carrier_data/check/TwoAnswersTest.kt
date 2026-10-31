@@ -27,9 +27,11 @@ class TwoAnswersTest {
                "depends_on":{"volte":["device","sources_disagree"]},
                "for_you":{"vowifi":{"state":"depends_on_plan","statements":["de.lidl-connect.wifi_calling","de.vodafone.wifi_calling"],
                  "reason":"brand_not_tellable","brands":["BILDmobil","LIDL Connect","Vodafone Deutschland"]}},
-               "weight":1}""",
+               "weight":{"26202":256}}""",
         )
         assertEquals(listOf("device", "sources_disagree"), profile.dependsOn["volte"])
+        // lookup.json's weight (rule round 45, item 3) is a map of network codes.
+        assertEquals(mapOf("26202" to 256), profile.weight)
         assertEquals("brand_not_tellable", profile.forYou["vowifi"]?.reason)
         // An entry without them (every lookup.json before round 45) still decodes.
         val old = json.decodeFromString(OcdProfile.serializer(), """{"profile_id":"open.26201.13528695fee7","display_name":"Telekom","match":{"mccmnc":["26201"]}}""")
