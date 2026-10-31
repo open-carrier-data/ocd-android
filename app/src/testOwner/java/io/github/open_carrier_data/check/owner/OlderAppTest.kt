@@ -47,7 +47,8 @@ class OlderAppTest {
         "5f93349 (#49, 0.4.7; vendor/extra main 3077346, the update on the S20 since 2026-10-30)" to 11,
         "495f8b0 (#54, 0.4.8; vendor/extra main bbe5d8f, the update on the S20 since 2026-10-30)" to 12,
         "55b57d8 (#55, 0.4.9; vendor/extra main cbe8fcb, in the S20's ROM since build H of 2026-10-30)" to 13,
-        "a8d40c9 (#58, 0.4.10; vendor/extra main e4446cd, the adb update on the S20 since 2026-10-31)" to 14,
+        "a8d40c9 (#58, 0.4.10; vendor/extra main e4446cd, the adb update on the S20 since 2026-10-31, in its ROM since build I)" to 14,
+        "f8fdc5c (#61, 0.4.11; vendor/extra main a7c81c6, the adb update on the S20 since 2026-10-31)" to 15,
     )
 
     @Test
