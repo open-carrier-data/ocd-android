@@ -97,6 +97,12 @@ object OwnerTester {
         io.github.open_carrier_data.check.owner.core.TesterPolicy(build, state.activeTests.on)
 
     fun policy(context: Context) = policy(FileStateStore(context).read())
+
+    /**
+     * Whether the round 29 setting trials (a non-persistent override, a temporary access point row, and the restart
+     * check's override) may start: always on the owner build, on rom only after the person's opt-in (SM9).
+     */
+    fun trialsAllowed(state: io.github.open_carrier_data.check.owner.core.OwnerState): Boolean = policy(state).activeTests
 }
 
 /**

@@ -68,6 +68,7 @@ import io.github.open_carrier_data.check.owner.core.RunOptions
 import io.github.open_carrier_data.check.owner.core.RunResult
 import io.github.open_carrier_data.check.owner.core.RunSummary
 import io.github.open_carrier_data.check.owner.core.SafetyException
+import io.github.open_carrier_data.check.owner.core.TesterPolicy
 import io.github.open_carrier_data.check.owner.core.recorded
 import io.github.open_carrier_data.check.owner.core.update
 import kotlinx.coroutines.CancellationException
@@ -155,10 +156,13 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                     // Round 30: a new dataset is handed over soon and activated in the next idle moment ("Test now" chains its own step).
                     if (!inputData.getBoolean(KEY_IN_RUN, false) && store.read().datasetStatus?.available == true) OwnerScheduler.dataset(applicationContext, delayMs = TimeUnit.MINUTES.toMillis(5))
                 }
-                STEP_PROBE -> withPhone(store) { runner, sims, _ ->
-                    val sim = sims.firstOrNull() ?: throw SafetyException("no_sim", "no SIM, nothing to test")
-                    runner.rebootProbe(sim)
-                    Result.success()
+                STEP_PROBE -> {
+                    requireTrials(store)
+                    withPhone(store) { runner, sims, _ ->
+                        val sim = sims.firstOrNull() ?: throw SafetyException("no_sim", "no SIM, nothing to test")
+                        runner.rebootProbe(sim)
+                        Result.success()
+                    }
                 }
                 STEP_FEATURE -> feature(store)
                 STEP_APN -> apn(store)
@@ -223,6 +227,15 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         }
     }
 
+    /**
+     * Round 31 (SM9): a trial step (the night's chain, "Test now" without the dataset installer, the restart check) starts
+     * nothing on a rom build whose person has not turned the active tests on, also for a chain queued before they went off.
+     * Reverts and cleanups never ask: they only take a change back.
+     */
+    private fun requireTrials(store: FileStateStore) {
+        if (!OwnerTester.trialsAllowed(store.read())) throw SafetyException(TesterPolicy.OPT_IN_OFF, "the active tests are off on this phone; only the passive checks run")
+    }
+
     /** Leftover cleanup and the per-SIM re-apply; retried while a refusal holds (in a call, a call just before a restart, Shizuku not up yet). */
     private suspend fun cleanup(store: FileStateStore): Result {
         val summary = withPhone(store) { runner, listed, phone ->
@@ -256,8 +269,9 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     /**
      * The hourly quiet job: nothing while the screen is on or a call is up;
      * the light check every [CHECK_EVERY_MS] (and each hour of the night); the
-     * night's one feature when the silent window is open. Writes the log only
-     * when something is new, so a quiet phone keeps a quiet log.
+     * night's one feature when the silent window is open (on the rom build only
+     * after the person's active-tests opt-in). Writes the log only when
+     * something is new, so a quiet phone keeps a quiet log.
      */
     private suspend fun quiet(store: FileStateStore): Result {
         val context = applicationContext
@@ -372,6 +386,13 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 }
                 OwnerScheduler.autoReport(context)
                 store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, store.read().datasetLine ?: "checked")) }
+                return Result.success()
+            }
+            // From here on the round 29 trials, which change carrier settings for a short while. A rom build runs none before the
+            // person's opt-in (SM9); the light check and the passive reads above have run.
+            if (!OwnerTester.trialsAllowed(store.read())) {
+                store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, "checked; nothing tested: the active tests are off on this phone")) }
+                quietLog(store, "check", "light check: no tests: the active tests are off on this phone; only the passive checks run")
                 return Result.success()
             }
             // Round 29: settled results go out as report issues when the owner set a token (its own work, with a network).
@@ -788,6 +809,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     }
 
     private suspend fun feature(store: FileStateStore): Result {
+        requireTrials(store)
         val feature = OwnerFeature.ofWire(inputData.getString(KEY_FEATURE).orEmpty()) ?: return Result.failure()
         val slot = inputData.getInt(KEY_SLOT, -1)
         val runId = inputData.getString(KEY_RUN) ?: return Result.failure()
@@ -821,6 +843,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     }
 
     private suspend fun apn(store: FileStateStore): Result {
+        requireTrials(store)
         val slot = inputData.getInt(KEY_SLOT, -1)
         val runId = inputData.getString(KEY_RUN) ?: return Result.failure()
         val data = OwnerData(applicationContext, store)
@@ -1224,6 +1247,11 @@ object OwnerScheduler {
             if (!dataset(context, testNow = true)) return "queued already: a test is under way"
             FileStateStore(context).update { it.copy(undone = emptyList()).logged(System.currentTimeMillis(), "run", "test now: pull, hand over, install and test, now") }
             return "queued: pull, install and test"
+        }
+        // The round 29 chain below changes carrier settings for a short while: a rom build runs it only after the person's opt-in (SM9).
+        if (!OwnerTester.trialsAllowed(FileStateStore(context).read())) {
+            FileStateStore(context).update { it.logged(System.currentTimeMillis(), "run", "test now refused: the active tests are off on this phone") }
+            return "off: the active tests are off on this phone"
         }
         val sims = OwnerData.sims(context)
         val runId = UUID.randomUUID().toString().take(8)

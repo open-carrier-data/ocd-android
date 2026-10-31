@@ -858,7 +858,8 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         }
     }
 
-    if (!state.rebootCleared) {
+    // The restart check leaves a test override live until the restart: a rom build offers it once the opt-in is on (SM9).
+    if (!state.rebootCleared && (owner || state.activeTests.on)) {
         SectionTitle("Restart check")
         Group {
             item {
