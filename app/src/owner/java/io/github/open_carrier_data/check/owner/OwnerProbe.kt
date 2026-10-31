@@ -19,6 +19,7 @@ import io.github.open_carrier_data.check.core.ProbeResults
 import io.github.open_carrier_data.check.core.UserPlaneClass
 import io.github.open_carrier_data.check.owner.core.EpdgRunMark
 import io.github.open_carrier_data.check.owner.core.OwnerSim
+import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.ProbeRunMark
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
@@ -42,20 +43,24 @@ import kotlinx.coroutines.withTimeoutOrNull
  * [io.github.open_carrier_data.check.owner.core.Refusals] before this runs). An automatic W1 asks the
  * cellular resolver only when cellular data itself fails or is the default network; the owner's
  * "check now" compares both. D5 (the carrier self-care page) is in; the D6 throughput sample never is.
+ * On the rom build the ladder and W1 run only behind SM9's opt-in ([allowed]), the way the balance read does.
  */
 @RequiresApi(Build.VERSION_CODES.Q)
 object OwnerProbe {
     private const val NETWORK_MS = 20_000L
     private const val WIFI_MS = 2_000L
 
+    /** Whether the ladder and W1 may run in this build: always on the owner build, on rom only after the person's active-tests opt-in (SM9). */
+    fun allowed(state: OwnerState): Boolean = OwnerTester.policy(state).activeTests
+
     /**
      * Runs the ladder for [sim] on a freshly requested cellular network and returns each step's
      * outcome, or null when the network did not come up. The network's own LinkProperties give its
      * DNS servers, [ProbeNet.privateDnsStrict] its Private DNS mode and its own capabilities the
      * Private DNS broken bit; the default network (the Wi-Fi while Wi-Fi is on) is never read for
-     * them. D5 runs (owner and rom only path).
+     * them. D5 runs (owner and rom only path). Only [runIfDue] calls it, behind [allowed].
      */
-    suspend fun run(context: Context, sim: OwnerSim): ProbeResults? =
+    private suspend fun run(context: Context, sim: OwnerSim): ProbeResults? =
         onCellular(context, sim) { network ->
             val cm = context.getSystemService(ConnectivityManager::class.java)
             val link = runCatching { cm?.getLinkProperties(network) }.getOrNull()
@@ -136,9 +141,10 @@ object OwnerProbe {
      * The ladder for the light check: automatic only after a measured cellular failure and only when
      * the last run of this SIM was at least 6 hours ago; on the owner's "check now" ([checkNow]) on
      * demand, once the short cooldown since the SIM's last run has passed ([ProbePolicy.due]). Never
-     * roaming or with mobile data off; the caller has checked the emergency and call refusals. Records
-     * the run (its time, class and each step's outcome) and returns it, or null when it did not run
-     * or the network did not come up.
+     * roaming or with mobile data off, and on the rom build never before the person's active-tests
+     * opt-in ([allowed]); the caller has checked the emergency and call refusals. Records the run (its
+     * time, class and each step's outcome) and returns it, or null when it did not run or the network
+     * did not come up.
      */
     @SuppressLint("MissingPermission")
     suspend fun runIfDue(
@@ -151,6 +157,7 @@ object OwnerProbe {
         dataOff: Boolean,
         nowMs: Long,
     ): ProbeRunMark? {
+        if (!allowed(store.read())) return null
         if (ProbePolicy.refusal(roaming, dataOff) != null) return null
         val last = ProbeRunMark.last(store.read().probeRuns, sim.key)
         if (!ProbePolicy.due(measuredFailure, checkNow, last?.atMs, nowMs)) return null
@@ -165,8 +172,8 @@ object OwnerProbe {
      * resolver and, where [EpdgPolicy.plan] allows, the cellular resolver. [checkNow] is the owner's
      * "check now"; otherwise only after a measured Wi-Fi-calling failure ([imsRegistered],
      * [iwlanCause]), at most once per SIM per 6 hours. [safe] reads the emergency and call refusals
-     * once a run is due. Records and returns the run, or null when it did not run. A resolver whose
-     * network does not come up counts as "fails".
+     * once a run is due. Not before the rom build's active-tests opt-in ([allowed]). Records and returns
+     * the run, or null when it did not run. A resolver whose network does not come up counts as "fails".
      */
     @RequiresApi(Build.VERSION_CODES.R)
     suspend fun epdgIfDue(
@@ -182,6 +189,7 @@ object OwnerProbe {
         nowMs: Long,
         safe: suspend () -> Boolean,
     ): EpdgRunMark? {
+        if (!allowed(store.read())) return null
         if (ProbePolicy.refusal(roaming, dataOff) != null) return null
         val home = HomeNetwork.of(sim.identity.mccmnc) ?: return null
         val wifi = wifiNetwork(context)

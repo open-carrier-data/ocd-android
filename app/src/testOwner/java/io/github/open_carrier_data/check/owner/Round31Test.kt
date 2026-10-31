@@ -203,7 +203,7 @@ class Round31Test {
     @Test
     fun `SM9 - the opt-in says in plain words what the app does`() {
         val text = OptInWords.explain(emergencyDataTest = true)
-        for (part in listOf("mailbox", "at most 10 times a day", "SMS to your SIM's own number", "changes carrier settings", "emergency data connection, without making a call", "free", "never calls an emergency number", "nothing is sent")) {
+        for (part in listOf("mailbox", "at most 10 times a day", "SMS to your SIM's own number", "changes carrier settings", "emergency data connection, without making a call", "free", "never calls an emergency number", "nothing is sent", "a few kilobytes of test requests", "at most once every 6 hours")) {
             assertTrue(part, part.lowercase() in text.lowercase())
         }
         assertFalse("emergency data" in OptInWords.explain(emergencyDataTest = false))

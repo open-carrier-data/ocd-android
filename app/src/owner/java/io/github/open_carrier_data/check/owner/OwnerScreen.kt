@@ -895,8 +895,8 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
 
 /**
  * Round 31 (SM9), ROM builds only: the person's opt-in for the active tests (dialled test calls,
- * test SMS, setting trials, and the emergency data test where the ROM builder turned it on). Off by
- * default; the words say what the app then does before the switch goes on.
+ * test SMS, setting trials, the probe ladder and W1, and the emergency data test where the ROM builder
+ * turned it on). Off by default; the words say what the app then does before the switch goes on.
  */
 @Composable
 private fun ActiveTestsOptIn(ui: OwnerUi, actions: OwnerActions) {
