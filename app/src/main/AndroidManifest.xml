@@ -2,17 +2,92 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- The only three permissions. Read-only.
-         READ_PHONE_STATE (asked at run time): GID1, carrier settings, network type, active SIM list.
-         ACCESS_NETWORK_STATE: the APN name and types of the mobile data connections, and whether the network is metered.
-         INTERNET: two tapped uses, each with no identifier. OCD's round 32 (U1): the data pull the person
-         taps, to GitHub's API and raw hosts for OCD's public repository (core/PublicPull.kt,
-         phone/PublicDataPhone.kt). OCD's round 42 (item 2): the mobile-data path check the person taps,
-         a few kilobytes to fixed test hosts over the cellular link (core/ProbeNet.kt, bound to the
-         active cellular Network). No automatic use; the app sends nothing by itself. -->
+    <!--
+        One build for every install (rule rounds 46 and 47). READ_PHONE_STATE, ACCESS_NETWORK_STATE and INTERNET are
+        all a hand install uses: it holds no privileged permission and stays passive plus the checks the person taps.
+        The rest of the list works only in a ROM that ships the app as a privileged system app.
+    -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The notice when calls were lost or the person must act. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The leftover cleanup and the background job after a boot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!--
+        Runtime permissions, not privileged; granted by
+        priv-app/default-permissions-ocd-check.xml in a ROM build and by `pm grant`
+        on a hand install. Round 47: all on the person's tap. CALL_PHONE: the test call to the
+        SIM's own allowlisted mailbox, and the balance USSD. SEND_SMS, RECEIVE_SMS: the data SMS
+        to the phone's own number on the app's port.
+    -->
+    <uses-permission
+        android:name="android.permission.CALL_PHONE"
+        tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
+    <uses-permission
+        android:name="android.permission.SEND_SMS"
+        tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
+    <uses-permission
+        android:name="android.permission.RECEIVE_SMS"
+        tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
+    <!-- Normal permissions: the SIM's MMS network for the MMSC probe. -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!--
+        No CHANGE_WIFI_STATE and no READ_LOGS since 2026-10-20: the app never
+        switches Wi-Fi (VoLTE is measured inside a non-persistent Wi-Fi-calling-off
+        override) and never reads the device log (the IWLAN and QNS dumps instead).
+    -->
+
+    <!--
+        The privileged route: granted only when the app is installed as a priv-app
+        with priv-app/privapp-permissions-ocd-check.xml. Installed by hand,
+        none of them is granted and the app stays passive.
+    -->
+    <uses-permission
+        android:name="android.permission.MODIFY_PHONE_STATE"
+        tools:ignore="ProtectedPermissions,PermissionImpliesUnsupportedChromeOsHardware" />
+    <uses-permission
+        android:name="android.permission.READ_PRIVILEGED_PHONE_STATE"
+        tools:ignore="ProtectedPermissions,PermissionImpliesUnsupportedChromeOsHardware" />
+    <!--
+        Round 42 (entitlement note): Android 16's new SIM-auth permission, declared next to
+        READ_PRIVILEGED_PHONE_STATE so the EAP-AKA getIccAuthentication path keeps working once
+        Google removes the READ_PRIVILEGED_PHONE_STATE fallback (signature|privileged, behind
+        com.android.internal.telephony.flags.new_sim_auth_permission). Nothing uses it yet; a TS.43
+        entitlement client is on round 42's do-not-build list.
+    -->
+    <uses-permission
+        android:name="android.permission.USE_ICC_AUTH"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission
+        android:name="android.permission.READ_PRECISE_PHONE_STATE"
+        tools:ignore="ProtectedPermissions,PermissionImpliesUnsupportedChromeOsHardware" />
+    <uses-permission
+        android:name="android.permission.WRITE_APN_SETTINGS"
+        tools:ignore="ProtectedPermissions,PermissionImpliesUnsupportedChromeOsHardware" />
+    <uses-permission
+        android:name="android.permission.DUMP"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!--
+        Round 30: the emergency data test requests NET_CAPABILITY_EIMS, a restricted network.
+        signature|privileged: denied by default in priv-app/privapp-permissions-ocd-check.xml; a builder grants it after his first use (SM10).
+    -->
+    <uses-permission
+        android:name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!--
+        Round 30: the writer permission of CarrierSettings's dataset installer
+        (content://com.android.carriersettings.ocddata). signature|knownSigner, pinned to this
+        ROM's own certificate of this app (SM5); not
+        a privileged permission, so it needs no privapp entry. On a ROM without the installer the
+        permission does not exist and is ignored. Round 29's WRITE_OCD_LAYER is gone with the layer.
+    -->
+    <uses-permission android:name="com.android.carriersettings.permission.WRITE_OCD_DATASET" />
 
     <!-- androidx.core adds this signature permission for runtime receivers; the app registers none. -->
     <permission
@@ -26,27 +101,161 @@
         android:name="android.hardware.telephony"
         android:required="false" />
 
-    <!-- Only to tell the user whether the Shizuku app is installed. -->
+    <!-- Whether the Shizuku app is installed; which IMS stack the phone runs, for video calling's static check; the dataset installer's provider. -->
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
+        <intent>
+            <action android:name="android.telephony.ims.ImsService" />
+        </intent>
+        <provider android:authorities="com.android.carriersettings.ocddata" />
     </queries>
 
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:largeHeap="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.OcdCheck">
         <activity
             android:name=".ui.MainActivity"
-            android:exported="true">
+            android:exported="false" />
+
+        <!--
+            The launcher icon of a hand install. A ROM's privileged system app has no icon (the owner's form of
+            2026-10-19): its screen is the Settings entry below, and OwnerHook turns this alias off at boot.
+        -->
+        <activity-alias
+            android:name=".ui.Launcher"
+            android:exported="true"
+            android:targetActivity=".ui.MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity-alias>
+
+        <!--
+            The Settings entry. Settings lists activities for IA_SETTINGS only from system
+            apps (TileUtils: ResolveInfo.system) and puts this one on the Network & internet
+            screen (CategoryKey.CATEGORY_NETWORK, NetworkDashboardFragment), after the SIMs
+            (order -15) and before Airplane mode (-5). Guarded by MODIFY_PHONE_STATE: Settings
+            (the system uid), Settings search (SettingsIntelligence holds it) and adb open it;
+            a normal app cannot.
+        -->
+        <!--
+            singleTop (2026-10-26): an `am start` with an extra (test_now, self_sms_now, ...) reaches
+            the page in onNewIntent when its task is already open; otherwise Android only brings the
+            task to the front and the extra is lost.
+        -->
+        <activity
+            android:name=".owner.OwnerActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:icon="@drawable/ic_settings_ocd"
+            android:label="@string/owner_tools"
+            android:permission="android.permission.MODIFY_PHONE_STATE">
+            <intent-filter>
+                <action android:name="com.android.settings.action.IA_SETTINGS" />
+            </intent-filter>
+            <meta-data
+                android:name="com.android.settings.category"
+                android:value="com.android.settings.category.ia.wireless" />
+            <meta-data
+                android:name="com.android.settings.title"
+                android:resource="@string/settings_entry_title" />
+            <meta-data
+                android:name="com.android.settings.summary_uri"
+                android:value="content://${applicationId}.settings/getDynamicSummary" />
+            <meta-data
+                android:name="com.android.settings.icon"
+                android:resource="@drawable/ic_settings_ocd" />
+            <meta-data
+                android:name="com.android.settings.icon_tintable"
+                android:value="true" />
+            <meta-data
+                android:name="com.android.settings.order"
+                android:value="-10" />
+            <meta-data
+                android:name="com.android.settings.keyhint"
+                android:value="open_carrier_data" />
         </activity>
 
-        <!-- OCD's round 32 (U1): the daily data check a ROM that bundles this build may switch on
+        <!-- The entry's live summary; answers only the system, root, the shell and the app. -->
+        <provider
+            android:name=".owner.OwnerSettingsProvider"
+            android:authorities="${applicationId}.settings"
+            android:exported="true"
+            tools:ignore="ExportedContentProvider" />
+
+        <!-- The revert alarm armed before each background change: queues the cleanup if a step died. -->
+        <receiver
+            android:name=".owner.RevertAlarmReceiver"
+            android:exported="false" />
+
+        <!--
+            Round 26's passive call watch: the system's PHONE_STATE broadcast (protected; sent to
+            holders of READ_PHONE_STATE, waking them) starts the watch of a real call. It reads
+            the call from the registry and never keeps a number. Direct-boot aware (2026-10-25):
+            it also notes when each call starts and ends, in device-protected storage, before the
+            first unlock too, so a restart refuses changes only when a call ended just before it.
+        -->
+        <receiver
+            android:name=".owner.PhoneStateReceiver"
+            android:directBootAware="true"
+            android:exported="true"
+            android:permission="android.permission.READ_PRIVILEGED_PHONE_STATE"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name=".owner.CallWatchService"
+            android:exported="false" />
+
+        <!--
+            The optional data SMS on the app's own port: only the system (BROADCAST_SMS) delivers
+            it; the send result comes back to the same receiver through its own PendingIntent.
+        -->
+        <receiver
+            android:name=".owner.SelfSmsReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.intent.action.DATA_SMS_RECEIVED" />
+                <data android:scheme="sms" android:host="localhost" android:port="16123" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            Round 42 item 5: reads the carrier's own plan SMS as a passive account-state signal. Only
+            the system (BROADCAST_SMS) delivers SMS_RECEIVED. Off by default; it classifies only
+            messages from the SIM carrier's own senders, keeps only a class, and never sends or
+            replies. It never aborts the broadcast, so the default SMS app still receives every SMS.
+        -->
+        <receiver
+            android:name=".owner.CarrierSmsReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Boot, the app's own update and carrier-config changes (all exempt from the implicit-broadcast limits). -->
+        <receiver
+            android:name=".owner.OwnerBootReceiver"
+            android:exported="true"
+            tools:ignore="ExportedReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.telephony.action.CARRIER_CONFIG_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- OCD's round 32 (U1): the daily data check a ROM that bundles an unprivileged copy may switch on
              (ocd_daily_data_check, off by default). Only the system's job scheduler binds it. -->
         <service
             android:name=".phone.DailyDataJob"

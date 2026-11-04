@@ -1,0 +1,185 @@
+package io.github.open_carrier_data.check.owner
+
+import io.github.open_carrier_data.check.BuildConfig
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeFalse
+import org.junit.Test
+import org.w3c.dom.Document
+import org.w3c.dom.Element
+import java.io.File
+import java.util.Properties
+import javax.xml.parsers.DocumentBuilderFactory
+
+/** The owner build's merged manifest: exactly the permissions it needs, and nothing exported without a guard. */
+class OwnerManifestTest {
+    private val android = "http://schemas.android.com/apk/res/android"
+    private val tools = "http://schemas.android.com/tools"
+
+    private val merged: Document by lazy {
+        val config = Properties()
+        javaClass.getResourceAsStream("/com/android/tools/test_config.properties")!!.use(config::load)
+        DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
+            .parse(File(config.getProperty("android_merged_manifest")))
+    }
+
+    private fun elements(tag: String): List<Element> {
+        val nodes = merged.getElementsByTagName(tag)
+        return (0 until nodes.length).map { nodes.item(it) as Element }
+    }
+
+    @Test
+    fun `the one build asks for exactly this list`() {
+        val requested = elements("uses-permission").filter { it.getAttributeNS(tools, "node") != "remove" }.map { it.getAttributeNS(android, "name") }.toSet()
+        val own = setOf(
+            "android.permission.INTERNET", "android.permission.POST_NOTIFICATIONS", "android.permission.RECEIVE_BOOT_COMPLETED",
+            "android.permission.MODIFY_PHONE_STATE", "android.permission.READ_PRIVILEGED_PHONE_STATE", "android.permission.READ_PRECISE_PHONE_STATE",
+            "android.permission.WRITE_APN_SETTINGS", "android.permission.DUMP", "android.permission.PACKAGE_USAGE_STATS",
+            // Round 30: the dataset installer's writer permission (signature|knownSigner in CarrierSettings, not privileged),
+            // and the emergency data test's restricted network (privileged, in the privapp file).
+            "com.android.carriersettings.permission.WRITE_OCD_DATASET", "android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS",
+            // Round 42 (entitlement note): declared for the EAP-AKA getIccAuthentication path, nothing uses it yet.
+            "android.permission.USE_ICC_AUTH",
+        ) + ROUND_26_RUNTIME + ROUND_26_NORMAL
+        val readOnly = setOf("android.permission.READ_PHONE_STATE", "android.permission.ACCESS_NETWORK_STATE", "moe.shizuku.manager.permission.API_V23")
+        // WorkManager's own: wake lock and its foreground service (never started by the app).
+        val work = setOf("android.permission.WAKE_LOCK", "android.permission.FOREGROUND_SERVICE")
+        assertEquals(emptySet<String>(), requested - own - readOnly - work)
+        assertTrue((own + readOnly).all { it in requested })
+        // 2026-10-20: no device log, no Wi-Fi switching. Round 30: the round 29 layer's permission is gone.
+        assertTrue("com.android.carriersettings.permission.WRITE_OCD_LAYER" !in requested)
+        assertTrue("android.permission.READ_LOGS" !in requested)
+        assertTrue("android.permission.CHANGE_WIFI_STATE" !in requested)
+        // Round 47: no call log access, no audio change, no location.
+        for (never in listOf("android.permission.READ_CALL_LOG", "android.permission.WRITE_CALL_LOG", "android.permission.MODIFY_AUDIO_SETTINGS", "android.permission.ACCESS_FINE_LOCATION", "android.permission.READ_SMS")) assertTrue(never, never !in requested)
+    }
+
+    @Test
+    fun `exported components are the Settings entry, the system-guarded ones and the boot receiver for protected broadcasts`() {
+        val exported = listOf("activity", "provider", "receiver", "service").flatMap { elements(it) }
+            .filter { it.getAttributeNS(android, "exported") == "true" }
+            .associate { it.getAttributeNS(android, "name") to it.getAttributeNS(android, "permission") }
+        // The activity itself is not exported; a hand install's icon is the alias, and a ROM's system app has none.
+        assertTrue("io.github.open_carrier_data.check.ui.MainActivity" !in exported)
+        assertEquals("android.permission.MODIFY_PHONE_STATE", exported["io.github.open_carrier_data.check.owner.OwnerActivity"])
+        assertEquals("android.permission.INTERACT_ACROSS_USERS_FULL", exported["rikka.shizuku.ShizukuProvider"])
+        // Settings' summary provider: guarded by the calling uid in code, as call() checks no manifest permission.
+        assertEquals("", exported["io.github.open_carrier_data.check.owner.OwnerSettingsProvider"])
+        assertTrue("io.github.open_carrier_data.check.owner.OwnerBootReceiver" in exported)
+        assertTrue("io.github.open_carrier_data.check.owner.RevertAlarmReceiver" !in exported)
+        // Round 26: only the system sends these (PHONE_STATE to privileged phone-state holders, the data SMS with BROADCAST_SMS).
+        assertEquals("android.permission.READ_PRIVILEGED_PHONE_STATE", exported["io.github.open_carrier_data.check.owner.PhoneStateReceiver"])
+        assertEquals("android.permission.BROADCAST_SMS", exported["io.github.open_carrier_data.check.owner.SelfSmsReceiver"])
+        // Round 42 item 5: the carrier-SMS reader; only the system (BROADCAST_SMS) delivers SMS_RECEIVED.
+        assertEquals("android.permission.BROADCAST_SMS", exported["io.github.open_carrier_data.check.owner.CarrierSmsReceiver"])
+        assertTrue("io.github.open_carrier_data.check.owner.CallWatchService" !in exported)
+        // 2026-10-25: only the call watch's receiver runs before the first unlock (it notes call times in device-protected storage).
+        val directBoot = listOf("activity", "provider", "receiver", "service").flatMap { elements(it) }
+            .filter { it.getAttributeNS(android, "directBootAware") == "true" }.map { it.getAttributeNS(android, "name") }
+            .filterNot { it.startsWith("androidx.") }
+        assertEquals(listOf("io.github.open_carrier_data.check.owner.PhoneStateReceiver"), directBoot)
+        assertEquals(
+            setOf(
+                "io.github.open_carrier_data.check.owner.OwnerActivity", "rikka.shizuku.ShizukuProvider",
+                "io.github.open_carrier_data.check.owner.OwnerSettingsProvider", "io.github.open_carrier_data.check.owner.OwnerBootReceiver",
+                "io.github.open_carrier_data.check.owner.PhoneStateReceiver", "io.github.open_carrier_data.check.owner.SelfSmsReceiver",
+                "io.github.open_carrier_data.check.owner.CarrierSmsReceiver",
+            ),
+            exported.keys.filterNot { it.startsWith("androidx.work") || it.startsWith("androidx.profileinstaller") }.toSet(),
+        )
+        for ((name, permission) in exported) {
+            if (name.startsWith("androidx.work") || name.startsWith("androidx.profileinstaller")) {
+                assertTrue("$name unguarded", permission.isNotEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun `the release build is not debuggable`() {
+        assumeFalse(BuildConfig.DEBUG)
+        // 0.4.9: it ships in the ROM as a privileged app; a debuggable one lets anyone with adb `run-as` its uid and
+        // use MODIFY_PHONE_STATE, READ_PRIVILEGED_PHONE_STATE and USE_ICC_AUTH (a SIM authentication oracle).
+        val application = elements("application").single()
+        assertFalse("android:debuggable=\"true\" in the packaged manifest", application.getAttributeNS(android, "debuggable").toBoolean())
+        assertFalse("BuildConfig.DEBUG", BuildConfig.DEBUG)
+    }
+
+    @Test
+    fun `the Settings entry sits under Network and internet with title, live summary and icon`() {
+        val activity = elements("activity").single { it.getAttributeNS(android, "name") == "io.github.open_carrier_data.check.owner.OwnerActivity" }
+        val actions = activity.getElementsByTagName("action").let { n -> (0 until n.length).map { (n.item(it) as Element).getAttributeNS(android, "name") } }
+        assertEquals(listOf("com.android.settings.action.IA_SETTINGS"), actions)
+        // The adb extras reach an open page in onNewIntent (2026-10-26: `am start` only brought the task to the front).
+        assertEquals("singleTop", activity.getAttributeNS(android, "launchMode"))
+        val meta = activity.getElementsByTagName("meta-data").let { n -> (0 until n.length).map { n.item(it) as Element } }
+            .associate { it.getAttributeNS(android, "name") to (it.getAttributeNS(android, "value").ifEmpty { it.getAttributeNS(android, "resource") }) }
+        // CategoryKey.CATEGORY_NETWORK in AOSP 16 / LineageOS 23.2 SettingsLib.
+        assertEquals("com.android.settings.category.ia.wireless", meta["com.android.settings.category"])
+        assertEquals("content://io.github.open_carrier_data.check.settings/getDynamicSummary", meta["com.android.settings.summary_uri"])
+        assertTrue(meta.toString(), meta["com.android.settings.title"]!!.isNotEmpty())
+        assertTrue(meta.toString(), meta["com.android.settings.icon"]!!.isNotEmpty())
+        val provider = elements("provider").single { it.getAttributeNS(android, "name") == "io.github.open_carrier_data.check.owner.OwnerSettingsProvider" }
+        assertEquals("io.github.open_carrier_data.check.settings", provider.getAttributeNS(android, "authorities"))
+    }
+
+    @Test
+    fun `the privapp allowlist names exactly the privileged permissions the build asks for`() {
+        // On an enforcing ROM (ro.control_privapp_permissions=enforce) a missing entry stops system_server at boot.
+        val xml = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(File("src/main/priv-app/privapp-permissions-ocd-check.xml"))
+        val block = xml.getElementsByTagName("privapp-permissions").item(0) as Element
+        assertEquals("io.github.open_carrier_data.check", block.getAttribute("package"))
+        val listed = block.getElementsByTagName("permission").let { n -> (0 until n.length).map { (n.item(it) as Element).getAttribute("name") } }.toSet()
+        val restricted = "android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS"
+        assertEquals(OwnerAccess.PRIVILEGED_PERMISSIONS.toSet() - restricted, listed)
+        // Every requested permission is either one of those or one that is not signature|privileged.
+        val notPrivileged = setOf(
+            "android.permission.INTERNET", "android.permission.POST_NOTIFICATIONS", "android.permission.RECEIVE_BOOT_COMPLETED",
+            "android.permission.READ_PHONE_STATE", "android.permission.ACCESS_NETWORK_STATE",
+            "moe.shizuku.manager.permission.API_V23", "android.permission.WAKE_LOCK", "android.permission.FOREGROUND_SERVICE",
+            // signature|knownSigner in the ROM's CarrierSettings, pinned to the owner certificate: no privapp entry.
+            "com.android.carriersettings.permission.WRITE_OCD_DATASET",
+        ) + ROUND_26_RUNTIME + ROUND_26_NORMAL
+        val requested = elements("uses-permission").filter { it.getAttributeNS(tools, "node") != "remove" }.map { it.getAttributeNS(android, "name") }.toSet()
+        assertEquals(emptySet<String>(), requested - notPrivileged - listed - restricted)
+        // Round 26 added no privileged permission: the XML on the phone stays as it is (a mismatch would stop the ROM at boot).
+        assertTrue(ROUND_26_RUNTIME.none { it in listed } && ROUND_26_NORMAL.none { it in listed })
+        // SM10: the emergency data test's restricted network is denied by default; a builder grants it after his first use.
+        assertTrue(restricted !in listed && restricted in requested)
+        // Round 42 added USE_ICC_AUTH, signature|privileged; the XML and the APK go together into vendor/extra.
+        assertTrue("android.permission.USE_ICC_AUTH" in listed && "android.permission.USE_ICC_AUTH" in requested)
+        assertEquals(7, listed.size)
+    }
+
+    @Test
+    fun `the queries name the dataset installer, not the round 29 layer`() {
+        val providers = elements("provider").filter { (it.parentNode as? Element)?.tagName == "queries" }.map { it.getAttributeNS(android, "authorities") }
+        assertEquals(listOf("com.android.carriersettings.ocddata"), providers)
+    }
+
+    @Test
+    fun `round 26's runtime permissions are granted by the default-permissions file, and nothing else is`() {
+        val xml = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(File("src/main/priv-app/default-permissions-ocd-check.xml"))
+        val exception = xml.getElementsByTagName("exception").item(0) as Element
+        assertEquals("io.github.open_carrier_data.check", exception.getAttribute("package"))
+        val granted = exception.getElementsByTagName("permission").let { n -> (0 until n.length).map { n.item(it) as Element } }
+        assertEquals(setOf("android.permission.READ_PHONE_STATE", "android.permission.POST_NOTIFICATIONS") + ROUND_26_RUNTIME, granted.map { it.getAttribute("name") }.toSet())
+        // The owner can take each one back.
+        assertTrue(granted.all { it.getAttribute("fixed") == "false" })
+    }
+
+    companion object {
+        /** Round 47: the tapped mailbox call and the tapped data SMS; runtime, granted by default-permissions or pm grant. No call log access. */
+        val ROUND_26_RUNTIME = setOf("android.permission.CALL_PHONE", "android.permission.SEND_SMS", "android.permission.RECEIVE_SMS")
+
+        /** Normal permissions: the SIM's MMS network for the MMSC probe. */
+        val ROUND_26_NORMAL = setOf("android.permission.CHANGE_NETWORK_STATE")
+    }
+
+    @Test
+    fun `the power-save allowlist names the one package`() {
+        val xml = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(File("src/main/priv-app/sysconfig-ocd-check.xml"))
+        val entry = xml.getElementsByTagName("allow-in-power-save").item(0) as Element
+        assertEquals("io.github.open_carrier_data.check", entry.getAttribute("package"))
+    }
+}

@@ -1,0 +1,111 @@
+package io.github.open_carrier_data.check.owner
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.telephony.CarrierConfigManager
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.work.ExistingWorkPolicy
+import io.github.open_carrier_data.check.R
+import io.github.open_carrier_data.check.owner.core.Hold
+import io.github.open_carrier_data.check.owner.core.Notice
+import io.github.open_carrier_data.check.owner.core.Notices
+import io.github.open_carrier_data.check.owner.core.OwnerState
+import io.github.open_carrier_data.check.owner.core.StatusSentence
+
+/**
+ * Round 47: an automatic run shows nothing, and there is no ongoing notification. A notification comes
+ * only where calls were lost or the person must act: the voice-loss and stop events with Resume. The way
+ * back is disabling this app in Android's Settings, after which CarrierSettings serves the ROM's own data
+ * without it.
+ */
+object OwnerNotifications {
+    private const val LIVE_CHANNEL = "owner_live_quiet"
+    private const val EVENTS_CHANNEL = "owner_events"
+
+    /** The channel of the builds before 2026-10-20 (low importance, with an icon); removed. */
+    private const val OLD_LIVE_CHANNEL = "owner_live"
+    private const val LIVE_ID = 4712
+    private const val EVENT_ID = 4714
+
+    private fun allowed(context: Context): Boolean =
+        Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    private fun channels(context: Context) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        runCatching { manager.deleteNotificationChannel(OLD_LIVE_CHANNEL) }
+        runCatching { manager.deleteNotificationChannel(LIVE_CHANNEL) }
+        manager.createNotificationChannel(
+            NotificationChannel(EVENTS_CHANNEL, "Changes and failures", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "When a setting is changed or a test fails"
+            },
+        )
+    }
+
+    private fun open(context: Context) = PendingIntent.getActivity(
+        context, 0, Intent(context, OwnerActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
+    /** Round 47: no ongoing notification. This only takes away one an older build left. */
+    fun refresh(context: Context, state: OwnerState) {
+        NotificationManagerCompat.from(context).cancel(LIVE_ID)
+    }
+
+    /** A change or a failure; replaces the previous one. */
+    @SuppressLint("MissingPermission")
+    fun notice(context: Context, notice: Notice) {
+        if (!allowed(context)) return
+        channels(context)
+        val notification = NotificationCompat.Builder(context, EVENTS_CHANNEL)
+            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            .setContentTitle(notice.title)
+            .setContentText(notice.text.take(120))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(notice.text.take(600)))
+            .setAutoCancel(true)
+            .setContentIntent(open(context))
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(EVENT_ID, notification) }
+    }
+}
+
+/**
+ * The background service's triggers, with no screen open (the owner's
+ * "system service that does all of this in the background"). Boot and SIM
+ * changes: the cleanup pass reverts leftovers, clears a keep of
+ * a SIM that left its slot, and applies again the keeps of the SIM now in
+ * the slot (the owner's "re-apply per matching SIM at boot or SIM change").
+ * The carrier config broadcast also follows the owner build's own writes;
+ * the pass is idempotent, so that ends at once.
+ */
+class OwnerBootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        // A hand install has no background work: it stays passive plus the checks the person taps.
+        if (!OwnerAccess.privilegedGranted(context)) return
+        when (intent.action) {
+            // A boot, a soft restart (BOOT_COMPLETED comes again), or the app's own update (an adb install over the system copy). The
+            // cleanup runs at once and waits for the SIM, CarrierSettings's config and IMS itself (no fixed 10 minutes since 2026-10-25).
+            Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                // The call watch's record: it covers from now on after the app's own update; a boot only reads it (it ran before the unlock).
+                runCatching { if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) CallSightings.restart(context) else CallSightings.read(context) }
+                io.github.open_carrier_data.check.OwnerHook.hideLauncher(context)
+                OwnerScheduler.cleanup(context)
+                OwnerScheduler.ensureQuiet(context, FileStateStore(context).read().scheduleOn)
+            }
+            CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED -> {
+                val state = FileStateStore(context).read()
+                // KEEP: a pass already queued or running is never cancelled by its own writes.
+                if (state.anyLive) OwnerScheduler.cleanup(context, policy = ExistingWorkPolicy.KEEP)
+                // Round 30's voice-loss trigger: a few minutes after any carrier config change while an installed dataset serves.
+                if (state.datasetStatus?.available == true && state.trial30 == null) OwnerScheduler.voiceCheck(context)
+            }
+        }
+    }
+}

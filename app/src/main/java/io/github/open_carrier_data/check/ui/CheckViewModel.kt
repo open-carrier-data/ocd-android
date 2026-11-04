@@ -7,6 +7,7 @@ import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.open_carrier_data.check.BuildConfig
+import io.github.open_carrier_data.check.OwnerHook
 import io.github.open_carrier_data.check.core.AudioAnswer
 import io.github.open_carrier_data.check.core.CallDirection
 import io.github.open_carrier_data.check.core.CallTargets
@@ -93,10 +94,9 @@ data class UiState(
     val probing: Boolean = false,
     /** Round 42 item 2 (read-only tap): the last probe's plain line, or a note why it could not run. */
     val probeLine: String? = null,
+    /** A hand install pulls with a tap (U1); a ROM's privileged app pulls through its own background path. */
+    val canPull: Boolean = true,
 ) {
-    /** The read-only builds pull with a tap (U1); the owner and ROM builds pull through their own tester. */
-    val canPull: Boolean get() = BuildConfig.TESTER.isEmpty()
-
     /** What the deep check would run for: the selected SIM's slot and home network. */
     val deepTarget: DeepCheckTarget?
         get() {
@@ -170,7 +170,8 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
     private val callTargets by lazy { callPhone.targets() }
     private var callSession: ShizukuAccess.CallWatchSession? = null
     private var callPoll: Job? = null
-    private val _state = MutableStateFlow(UiState())
+    private val tester = OwnerHook.tester(application)
+    private val _state = MutableStateFlow(UiState(canPull = !tester))
     val state: StateFlow<UiState> = _state
 
     /** Round 42 item 2: when the probe ladder last ran on a tap, for the short cooldown. In memory only. */
@@ -637,13 +638,13 @@ class CheckViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** The bundled snapshot, and in the read-only builds the last good pull when one is in place (round 32 U1). */
+    /** The bundled snapshot, and on a hand install the last good pull when one is in place (round 32 U1). */
     private suspend fun loadBundle(): OcdBundle? = try {
         withContext(Dispatchers.IO) {
             val base = getApplication<Application>().assets.open(OcdBundle.ASSET_NAME).use(OcdBundle::readGzip)
             bundled = base
-            val pulled = if (BuildConfig.TESTER.isEmpty()) publicData.current() else null
-            val line = if (BuildConfig.TESTER.isEmpty()) publicData.state().lastLine else null
+            val pulled = if (!tester) publicData.current() else null
+            val line = if (!tester) publicData.state().lastLine else null
             _state.update { it.copy(pulled = pulled, pullLine = line) }
             pulled?.bundle ?: base
         }.also { bundle -> _state.update { it.copy(bundle = bundle) } }

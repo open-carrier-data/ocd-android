@@ -2,17 +2,36 @@
 
 > **Early development.** Open Carrier Data is in early development. Data, formats, tools and apps change often, and values can be wrong or missing. Don't rely on it for anything important yet. Feedback and reports are welcome.
 >
-> OCD Android is a work in progress, version 0.4.14. It has no releases, is not on any app store and is not meant for general use yet.
+> OCD Android is a work in progress, version 0.5.0. It has no releases, is not on any app store and is not meant for general use yet.
 
-OCD Android is an Android app that reads a phone's SIM, network and carrier settings and compares them with [Open Carrier Data](https://github.com/open-carrier-data/open-carrier-data) (OCD). Its debug and release builds are read-only: they change nothing on the phone and send nothing by themselves; they make a network request only when you tap for it (OCD's public data with "Get newest data", round 32 U1; the mobile-data path check with "Why is mobile data not working?", round 42 item 2). A separate `owner` build, only for the owner's own phones, tests, applies and reverts carrier settings; see [The owner build](#the-owner-build).
+OCD Android is an Android app that reads a phone's SIM, network and carrier settings and compares them with [Open Carrier Data](https://github.com/open-carrier-data/open-carrier-data) (OCD). There is one build and one package, `io.github.open_carrier_data.check`, the same for everyone. Installed by hand it holds no privileged permission and only reads, with the checks you tap. A ROM ships the same APK as a privileged system app, signed with that ROM's own key; see [One build](#one-build-and-what-runs-by-itself).
 
 This repository holds two apps, never one APK (OCD's rule round 37, item 6): OCD Android, the Gradle app in `app/`, and **OcdCarrierSettings** in [`carriersettings/`](carriersettings/README.md), the dataset provider a ROM builds into its image with Soong (package `com.android.carriersettings`, platform-signed by the ROM builder, no INTERNET). The app is the provider's only writer; their protocol and its contract tests are in [`protocol/`](protocol/README.md). A ROM adds the provider with one manifest project and `PRODUCT_PACKAGES += OcdCarrierSettingsDataset`, pinned to a `carriersettings/v*` tag.
 
 **Status: early; source public, no releases.**
-- **The read-only builds** (debug and release) are stage 2 of the plan (view only, normal app) plus stage 2b (the optional read-only Shizuku deep check); since OCD's round 17 the device records; since rounds 18, 19 and 22 the IMS reader for Android's own IMS (stage 2c), the guided call test (stage 2d) and the hint for a `supported` summary next to `off` device records; and since round 23 the incoming call of the guided call test with a local T2 status, and the guided switch step (AP3). They first ran on a phone on 2026-10-13 (Galaxy A50, Android 14, LIDL Connect SIM). They stay read-only. OCD's round 31 (2026-10-28) ended trigger AV2: the build other ROMs ship is the separate `rom` build type (see **Round 31** under "The owner build").
-- **The owner build** (OCD's round 25 and the owner's direction of 2026-10-19 evening; #9 to #15) has run on the owner's S20 since 2026-10-19 as a privileged system app (`/system_ext/priv-app/OcdCheckOwner`), with its page under Settings > Network & internet > Open Carrier Data. It pulls OCD's newest validated `main` commit, pinned by its SHA (OCD's rule round 29, "freshness", 2026-10-24), and tests the carrier settings on and off. It keeps what works and reverts with proof. Its tests run automatically and silently in the background, and it opens a prefilled report issue for the person to read and submit under their own GitHub login, the only way a result leaves the phone (OCD's round 47). Since OCD's round 30 (2026-10-25) it keeps no value itself: it pulls OCD's whole dataset and hands it to the ROM's CarrierSettings, which installs it, and it tests every changed value together and records what it measured (see **Round 30** below). Since OCD's round 31 (2026-10-28) there is no safe mode: the way back is disabling the app in Android's Settings, and the voice-loss hold keeps the ROM's own data while the values at fault are found (see **Round 31** below). On 2026-10-19 and 2026-10-20 its tests on the S20 with a LIDL Connect SIM kept nothing, because the phone already matches OCD, and every IMS trial was reverted with proof. The first APN trial's revert hid three stock Vodafone rows; "Reset to default" restored them, and #11 fixed the cause. Since OCD's round 26 (2026-10-20) it measures calls itself, so nobody dials or listens: the ladder "signed in → calls out → works", a passive watch of real calls, its own muted mailbox call at night as the fallback (installed in dry-run mode, which only logs what it would dial), the provisional keep of changed voice values, and MMS checked only where the network still offers it, by an access point probe. It is never distributed.
+- **One build** (OCD's rounds 46 and 47): the owner, rom and read-only build types are merged. Nothing depends on who signed the APK or which device it runs on. The owner's S20 still runs the older owner build until its next ROM build.
 
 The app is not on any store. The JVM tests pass and the debug build assembles. Only the owner's builds use it. That makes it a named consumer of OCD's data, not a public release. Its first public release fires OCD's trigger T1, and so does a public ROM that bundles it.
+
+## One build, and what runs by itself
+
+Rule rounds 46 and 47 set this. It is the same on every phone, the owner's included.
+
+**Automatic:** passive reads, IMS registration state, watching real calls and SMS, the failure-only data and DNS probes (at most once per SIM per 6 hours, never roaming or with mobile data off), dataset installs, and repair after a measured failure. Nothing automatic rings, shows, leaves a trace or can cost money, and an automatic run posts no notification unless calls were lost or you must act.
+
+**Only on your tap:** a test call, a test SMS, the balance USSD, Test now's setting trials, the voice-loss hold's split and the MMS access point candidates.
+
+**Never by itself and never on a tap:** the emergency data test. Only a ROM builder's manual first use over adb runs it (SM10).
+
+- A test call goes only to the SIM's own allowlisted mailbox, for a SIM whose own brand is listed. An unlisted or empty SPN gets no call. The call is not muted, uses the normal call screen, and stays in the call log. It may cost a call and may mark a new message as heard, and the row says so.
+- No phone declares a tester, so OcdCarrierSettings applies SM7 on every phone. An automatic trial never applies an SM7 kind.
+- A healthy phone gets no trials: a run starts as the passive check, and only a measured failure on that phone turns it into a repair.
+- **The real-call watch.** After an install that changes a voice, Wi-Fi calling or SMS value, two outgoing real calls that fail with a code on a closed list bring back the ROM's own data until you tap Resume. It only watches and never dials.
+- An automatic result stops at "signed in". Only a real or tapped call can say a feature works.
+- Nothing leaves the phone by itself. There is no token. To share a result, tap Open report on GitHub, read it and submit it under your own account.
+- **Data:** on an unmetered network the app checks main every 15 minutes and takes new validated data. On mobile data it checks every 6 hours, pulls at most once a day, and never while roaming or with Data Saver on. A ROM without protocol 4 keeps the daily pull.
+
+Much of the history below describes earlier rounds, including the build types, the opt-in and the automatic calls they had. Where it differs, this section is what holds.
 
 ## What it does
 
@@ -29,6 +48,8 @@ The app is not on any store. The JVM tests pass and the debug build assembles. O
 7. **Offers a guided switch step** (see below): where OCD's value for this phone is on and the phone has VoLTE or Wi-Fi calling off, it shows both values side by side and opens the right Settings screen. You flip your own switch; the app reads the phone again and offers the call test.
 
 ## Permissions, and why
+
+This section lists what a hand install uses. The merged manifest also lists the permissions a ROM's privileged install needs, which a hand install never holds; `app/src/main/AndroidManifest.xml` and `app/src/main/priv-app/` name each one and why.
 
 | Permission | Kind | Used for |
 |---|---|---|
@@ -380,7 +401,7 @@ OCD publishes what operators, brands and MVNOs state on their own pages (`genera
 
 The SIM's identity entry is the one whose selector maps to the SIM's most specific OCD profile, else the operator of the network's plain selector (`core/OperatorStatements.kt`, `OperatorStatementsTest`). The read-only builds show the statements after a pull; the owner build reads them at its pinned commit and shows them under Details, "What the operator states".
 
-## The owner build
+## The tester, rounds 25 to 45 (history)
 
 The `owner` build type is the owner's part 2, built as he directed on 2026-10-19 evening ("develop it exactly like this"; OCD's private `research/rule-decisions-20261006/README.md`, "Owner direction, 2026-10-19 evening" and round 25). It is for the owner's S20 (LineageOS 23.2 userdebug, PHH IMS) only. It is never a release asset, a CI artifact (the build refuses to package it when `CI` is set), a store build or part of a ROM anyone else runs.
 
@@ -642,81 +663,13 @@ How the entry works: Settings lists activities with the action `com.android.sett
 - **`observed/summary.json`.** The app's schema asset no longer requires `retested_by_ocd`, so a summary without it reads. The key stays declared and optional, because `additionalProperties` is false: without it the summary of today's main would be refused. A non-null value in a cell is still refused.
 - **Tests.** `MessagesTest` covers Telephony's inbound record (the S20's own `dumpsys isms` lines), the way out from the send's answer, and when SMS both ways holds. `SettledTest` covers L2 and L3 from the call ledger, the measured failures, the build and the time a level holds, SMS both ways, where a level attaches, and the report against the public schema. `SameForEveryoneTest` covers the token path's absence, an old state file, the words and the Reports section. `GuardTest` allows no HTTP POST and no credential in the owner build.
 
-**Build.**
-```bash
-# local.properties (never committed): ocd.owner.storeFile, ocd.owner.storePassword, ocd.owner.keyAlias, ocd.owner.keyPassword
-./gradlew testOwnerUnitTest lintOwner assembleOwner
-```
-The APK is `io.github.open_carrier_data.check.owner`, so it sits next to the read-only app. Without the signing properties it stays unsigned; it never takes the debug key. Its extra permissions are `INTERNET`, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED` and the seven privileged ones (round 30 adds `CONNECTIVITY_USE_RESTRICTED_NETWORKS` for the emergency data test, so the privapp file must be installed with this APK before the reboot), which an adb install never gets; round 30's `com.android.carriersettings.permission.WRITE_OCD_DATASET` is CarrierSettings's `signature|knownSigner` permission and needs no privapp entry; WorkManager adds `WAKE_LOCK` and `FOREGROUND_SERVICE`. Round 26 adds the runtime permissions `CALL_PHONE`, `READ_CALL_LOG`, `WRITE_CALL_LOG`, `SEND_SMS` and `RECEIVE_SMS` (granted by the default-permissions file in a ROM build, by `pm grant` on a hand install) and the normal `MODIFY_AUDIO_SETTINGS` and `CHANGE_NETWORK_STATE`. None of them is privileged, so the privapp-permissions file is unchanged and the copy on the phone needs no update. Its native library (`libandroidx.graphics.path.so`) is stored uncompressed (`extractNativeLibs=false`), so it runs from a system partition as it is.
-
-**Install by hand as a privileged system app** (what runs on the owner's S20 since 2026-10-19; the record and a rollback script are in the S20 workspace, `reports/ocd-systemapp-<timestamp>/`). The ROM enforces the privapp allowlist (`ro.control_privapp_permissions=enforce`): a privileged permission the APK asks for and the XML lacks stops `system_server` at boot, which `OwnerManifestTest` guards against.
-```bash
-adb -s <S20 serial> root && adb -s <S20 serial> remount    # once: adb disable-verity and a reboot, if remount asks for it
-adb -s <S20 serial> uninstall io.github.open_carrier_data.check.owner   # a user-app copy first (export its files/ before)
-adb -s <S20 serial> shell mkdir -p /system_ext/priv-app/OcdCheckOwner
-adb -s <S20 serial> push app/build/outputs/apk/owner/app-owner.apk /system_ext/priv-app/OcdCheckOwner/OcdCheckOwner.apk
-adb -s <S20 serial> push app/src/owner/priv-app/privapp-permissions-ocd-check-owner.xml /system_ext/etc/permissions/
-adb -s <S20 serial> push app/src/owner/priv-app/sysconfig-ocd-check-owner.xml /system_ext/etc/sysconfig/
-adb -s <S20 serial> shell 'chmod 644 /system_ext/priv-app/OcdCheckOwner/OcdCheckOwner.apk /system_ext/etc/permissions/privapp-permissions-ocd-check-owner.xml /system_ext/etc/sysconfig/sysconfig-ocd-check-owner.xml; restorecon -R /system_ext/priv-app/OcdCheckOwner /system_ext/etc/permissions/privapp-permissions-ocd-check-owner.xml /system_ext/etc/sysconfig/sysconfig-ocd-check-owner.xml'
-adb -s <S20 serial> reboot
-adb -s <S20 serial> shell pm grant io.github.open_carrier_data.check.owner android.permission.READ_PHONE_STATE
-adb -s <S20 serial> shell pm grant io.github.open_carrier_data.check.owner android.permission.POST_NOTIFICATIONS
-# round 26: the mailbox call, its call log entry, and the optional data SMS (runtime permissions, not privileged)
-for p in CALL_PHONE READ_CALL_LOG WRITE_CALL_LOG SEND_SMS RECEIVE_SMS; do adb -s <S20 serial> shell pm grant io.github.open_carrier_data.check.owner android.permission.$p; done
-```
-Files copied into the app's data folder by hand need its SELinux categories (`chcon -R "$(stat -c %C /data/data/<pkg>/files)" /data/data/<pkg>/files`), or the app cannot write its state. A later build can go over the system copy with `adb install -r` (it becomes an updated system app and keeps its privileges); a new privileged permission needs the XML first.
-
-**In a full ROM build.** The same two files, as part of the owner's own LineageOS tree (never a ROM for anyone else):
-- a prebuilt module, for example `vendor/ocd/Android.bp`, with the APK as built here (signed with the owner key):
-  ```
-  android_app_import {
-      name: "OcdCheckOwner",
-      apk: "OcdCheckOwner.apk",
-      presigned: true,
-      privileged: true,
-      system_ext_specific: true,
-      dex_preopt: { enabled: false },
-      required: ["privapp-permissions-ocd-check-owner.xml", "default-permissions-ocd-check-owner.xml", "sysconfig-ocd-check-owner.xml"],
-  }
-  prebuilt_etc {
-      name: "privapp-permissions-ocd-check-owner.xml",
-      src: "privapp-permissions-ocd-check-owner.xml",
-      sub_dir: "permissions",
-      system_ext_specific: true,
-  }
-  prebuilt_etc {
-      name: "default-permissions-ocd-check-owner.xml",
-      src: "default-permissions-ocd-check-owner.xml",
-      sub_dir: "default-permissions",
-      system_ext_specific: true,
-  }
-  prebuilt_etc {
-      name: "sysconfig-ocd-check-owner.xml",
-      src: "sysconfig-ocd-check-owner.xml",
-      sub_dir: "sysconfig",
-      system_ext_specific: true,
-  }
-  ```
-- `PRODUCT_PACKAGES += OcdCheckOwner` in the device's product makefile, behind a switch the owner sets for his own builds (for the S20: `device/samsung/x1s/lineage_x1s_phhims_common.mk`, next to `PhhImsX1s` and `SamsungCarrierBridge`, inside `ifeq ($(OCD_OWNER_APP),true)`);
-- `app/src/owner/priv-app/default-permissions-ocd-check-owner.xml` grants `READ_PHONE_STATE`, `POST_NOTIFICATIONS` and round 26's `CALL_PHONE`, `READ_CALL_LOG`, `WRITE_CALL_LOG`, `SEND_SMS` and `RECEIVE_SMS` on the first boot (`DefaultPermissionGrantPolicy`, revocable), in place of the `pm grant` lines.
-
-The S20 workspace has the device-tree note for this (`notes/ocd-system-app-in-rom.md` there), with the step from the hand install to the ROM (roll the overlay copy back first, or it shadows the ROM's files).
-
-**Kept apart from the read-only builds.** The owner code is in `app/src/owner/` only. Debug and release compile the no-op `OwnerHook` from `app/src/readonly/` instead, and `ReadOnlyBuildTest` (run by `testDebugUnitTest` and `testReleaseUnitTest`) proves they hold no owner class and no WorkManager, while `ManifestTest` and `AllowlistTest` keep their meaning for them. The owner build's own tests are in `app/src/testOwner/`, with OCD Lab's fixtures (`tools/ocd_lab/fixtures/`): the key guard and the command list, the dump parser and the revert proof, the session against a fake phone (register first, revert keeps the kept values, an unprovable revert stops, the guards stop before any change, the revert waits for a call), the refusals, the loop (best value, smart revert, a keep kept through a trial of its other value, voice offs and the voice path, VoNR, video calling's static check, cleanup, re-apply, check 3, revert all, VoLTE inside the Wi-Fi-calling-off override with the fresh REGISTER, the baseline coming back, a cancelled or interrupted trial reverted at once), the APN test row (carrier ID, edited, read back, deleted by its ID, the table hash, a null insert as a stop, no delete by marker), the silent window, the night plan (triggers, rotation, one feature a night, on values only after a ROM flash or new data values, triggers on a SIM's own values and not on the commit, the pause after two failures, the revert of a failing keep, an undone change skipped), the notices, the soft-restart window and the kept emergency sighting, the IWLAN and QNS dumps, the main pin (`DataTest`: one SHA for every file, validate only, the walk back, the schema guard, the digest cross-check, the data key per SIM), the pointer report against the public schema and form (`ReportSchemaTest`: entries, result classes, the IMS stack names, no value and no Markdown, the hash, the URL and login-URL limits, left-out APN results) and the pointer ledger (`PointersTest`), others' reports (`ObservedTest`, on a summary and report records the public `tools/observed_reports.py rebuild` wrote: the public schema, only this phone's cells and only works, signed in and contested, the AOSP ImsStack as a cell of its own, the owner's own reports taken out by their hash, a malformed or oversized summary ignored, offline keeping the old copy, a report that only changes the order and never the set of tests, the pauses, the undos or a kept value (600 random plans with and without reports), no effect on the ladders and the headline, and the Details lines), the Settings entry, the allowlists in the merged manifest (privapp and power save), the plain words of the page (headlines, including a feature that is off but would work, lines, notes, the Wi-Fi calling details, no retired words and no final full stops), the Settings summary with the call tests, and the retried service start; and that no owner source reads the log or switches Wi-Fi. Round 26 adds `CallsOutTest` (only the SIM's own allowlisted mailbox, poisoned tables with emergency and service numbers, Android's emergency answer, every LB6 refusal, the stop flag and the night before any dial, the mute and its return, an emergency mark that aborts without touching a call, PHH's default 13 on Wi-Fi not counted, thin RTP not counted, no ACTIVE, AOSP's 5 s reports with the hold until 3 reports and the 25 s cap, the mailbox call as DTX and with nothing received, another call ringing, a pulled charger, VoLTE moved to LTE inside the override and reverted, the dry run, one call per feature and bearer a night), `MediaLevelsTest` (round 28 in the ladder: the silent far end as the incoming leg on AOSP ImsStack and not on PHH, the mailbox call at full rate, as DTX, thin and with nothing received, "no stream" once and twice on separate days, SIP and media ends, records made before round 28, the Details lines, the ledger's wire form), `ProvisionalTest` (the L2 and L3 rules, real calls equal to the mailbox call, measured incoming failures and declined or missed calls, the provisional keep's night end, 7 days and reverts, passive first with the 3-day and weekly fallbacks, the local "measured on this phone" line and its 90 days), `MessagesTest` (MMS ended on every German network, one GET and nothing else, the data SMS off by default and on its port), and `GuardTest`'s single dial and end in `OwnerCalls.kt` after the mailbox guard, no DTMF, no text or multimedia message. Round 30 removes `LayerWriterTest` with the layer and adds:
-- `DatasetTest`: the whole dataset at the pin, `pin.json` naming exactly the manifest's files with their git blobs, git's blob SHA-1, `dataset_digest`, a blob, SHA-256 or dataset digest that differs, a second data digest (F1), an unknown schema version, format or member (F3), main without a dataset, the Google lane absent, unchanged files copied by their blob, the strict reader's refusals and its capture of one network's slice;
-- `RecordsTest`: the S20's five `record_key`s from the spec, the 24 members and the 90-day expiry, the SIM key for `default` and fill-only profiles, the cell from CarrierSettings, groups A (with the owner's eight) and B never recorded, the candidate check, expiry and the privacy scan, emergency data records without a value or a word about calls, the issue form and when a record is sent again;
-- `OcdDataTest`: `status`, `install_status` with its `changes` in list and map form, `explain`, the absent provider (degrading cleanly), a round 29 state file, and the screen's words;
-- `TestsDecideTest`: the candidates' order, the trial guard, the judge (not counted is never a failure), a batch that passes, the split to the value at fault and the first passing candidate, the outage rule, not counted waiting for the next idle moment, 600 random campaigns (culprit found, first passing candidate wins, never a group A override), X5, the voice-loss trigger and the build's bundle, the caps, the idle moment, and when tests are due;
-- `EmergencyDataTest`: every never-run condition and precondition, the due rules, the verdicts, the stop list, the results (never a word about calls working), the phone service's dump, and that the EIMS request lives in one file that never dials or sends;
-- `TestNowTest`: the restart check as an event (a boot or soft restart refuses only for a call just before it, a call open at the restart, a watch that did not cover the window, an emergency call the watch saw; the app's own calls never), the idle moment kept for background runs, "Test now" stopped only by a call, an emergency mode or roaming (and the screen no longer hiding a call from that check), the emergency data test's hour as an event, the readiness rules and their 2.5-minute bound, CarrierSettings's served config from the dump, and the retry of a refused install once per CarrierSettings and on every "Test now";
-- in `RunnerTest`, that the owner build reports the better value but keeps no override; in `GuardTest`, that typed override bundles pass the trial guard on the privileged route only and that the layer client is gone; in `OwnerManifestTest`, the new privileged permission in the merged manifest and the privapp file, and the queries naming the installer.
+**Installing in a ROM.** Build `assembleRelease`, sign the unsigned APK with your own key, set `OCD_WRITER_PACKAGE` to `io.github.open_carrier_data.check` and `OCD_WRITER_CERT` to your certificate (SM5), and ship it as a privileged system app with the three files in `app/src/main/priv-app/`: `privapp-permissions-ocd-check.xml`, `default-permissions-ocd-check.xml` and `sysconfig-ocd-check.xml`. The restricted-networks permission is denied there by default; grant it only after your first use of the emergency data test on that device family (SM10). Raise `versionCode` for every build that goes onto a phone: Android drops an adb-installed update of a system app only for a system copy with a higher versionCode.
 
 ## Planned
 
 These steps follow OCD's rule decisions. Each stays read-only and adds no permission.
 - **The rest of the guided call test** (round 19). The outgoing and incoming calls and the local T2 status are built (see above). Still to come: the call state on the normal tier, without Shizuku; and, in debug builds, a ledger draft for the owner, which would carry `config_origin: user_toggle` from the guided switch step.
 
-Round 25 and the owner's direction of 2026-10-19 bring the owner's loop into the `owner` build type (above). The debug and release builds stay read-only. Round 31 adds the `rom` build type, the tester build other ROMs ship (`./gradlew testRomUnitTest assembleRom`; unsigned, the ROM builder signs it).
 
 ## Build
 
@@ -734,7 +687,7 @@ echo "sdk.dir=/path/to/android-sdk" > local.properties
 python3 -m unittest discover -s tools -p 'test_*.py'
 ```
 
-The APK is `app/build/outputs/apk/debug/app-debug.apk`. CI (`.github/workflows/test.yml`) runs the unit tests (debug, release, owner and rom), the debug build, lint of every build type that ships (debug, release, owner and rom) and the bundle script's tests on every pull request; it never builds the owner APK. `.github/workflows/provider.yml` runs OcdCarrierSettings's tests, the contract test and its layout checks ([carriersettings/README.md](carriersettings/README.md#tests-and-ci)).
+The APK is `app/build/outputs/apk/debug/app-debug.apk`. CI (`.github/workflows/test.yml`) runs the unit tests (debug and release), the debug build, lint of both, and the bundle script tests. It signs nothing, and no key or token is in the repository or CI.
 
 **Version pins.** The project uses Android Gradle Plugin 8.7.3, the newest line that still builds with build-tools 34.0.0; AGP 8.8 and later need build-tools 35. `gradle.properties` silences AGP 8.7's warning about compileSdk 36, and `android.builder.sdkDownload=false` stops the build from fetching SDK packages on its own. The androidx versions match that AGP:
 - Compose BOM 2025.06.00
@@ -779,15 +732,14 @@ To move to newer libraries, install build-tools 35 or later, raise AGP, and then
 | `app/src/main/assets/ocd-lookup.json.gzip` | the bundled OCD data |
 | `app/src/main/assets/call-targets.json` | OCD Lab's mailbox table, copied unchanged |
 | `tools/build_bundle.py` | builds the asset from OCD's public checkout |
-| `app/src/readonly/java/.../OwnerHook.kt` | the no-op owner hook that debug and release compile |
-| `app/src/owner/java/.../owner/core/` | the owner build's plain Kotlin: the write list and key guard, the dump and revert proof, the refusals, the evidence, the session and the loop, the main pin and its checks, the APN rows, the issue URL, others' reports with the schema check, and the state |
-| `app/src/owner/java/.../owner/` | the two routes (`OwnerAccess.kt`), the Shizuku service, the data pull, WorkManager jobs, the boot and revert-all receivers, the notification and the owner screen; round 26's mailbox call and passive call watch (`OwnerCalls.kt`) and the MMS probe and data SMS (`OwnerMessages.kt`) |
-| `app/src/owner/assets/` | the owner build's copy of OCD's public `schemas/observed-summary.schema.json`, and `mms-ended.json` (round 26; since round 32 only the MMS-ended networks OCD's published list does not cover yet, shrink-only) |
-| `app/src/owner/priv-app/` | the privapp-permissions allowlist (with the hidden-API entry) for the privileged route, and the default-permissions file for a ROM build |
-| `app/src/owner/java/.../owner/core/ApnCandidates.kt`, `ApnCandidateTrials.kt`, `ApnCandidateData.kt`, `owner/OwnerApnCandidates.kt` | round 32: the APN candidates after a measured failure (D8 and D7 rule 4, rounds 33, 34 and 36) and their trial through CarrierSettings's temporary set |
-| `app/src/owner/java/.../owner/core/Tester.kt` | round 31: the owner build's and the ROM build's policy (the opt-in, the free flags, the emergency data test's switch) and the calibrated IMS stacks |
-| `app/src/rom/priv-app/` | round 31: the ROM build's privapp-permissions (the restricted network denied until the builder turns the emergency data test on), default-permissions and sysconfig files; the build type `rom` compiles `app/src/owner/` |
-| `app/src/testRom/` | the ROM build's own tests (`testRomUnitTest`) |
+| `app/src/main/java/.../OwnerHook.kt` | where the check screen meets the background work; what runs depends on how the app is installed |
+| `app/src/main/java/.../owner/core/` | the tester's plain Kotlin: the write list and key guard, the dump and revert proof, the refusals, the evidence, the session and the loop, the main pin and its checks, the APN rows, the issue URL, others' reports with the schema check, and the state |
+| `app/src/main/java/.../owner/` | the privileged route (`OwnerAccess.kt`), the data pull, WorkManager jobs, the boot and revert-all receivers, the notification and the owner screen; round 26's mailbox call and passive call watch (`OwnerCalls.kt`) and the MMS probe and data SMS (`OwnerMessages.kt`) |
+| `app/src/main/assets/` | the copy of OCD's public `schemas/observed-summary.schema.json`, and `mms-ended.json` (round 26; since round 32 only the MMS-ended networks OCD's published list does not cover yet, shrink-only) |
+| `app/src/main/priv-app/` | the one set of ROM files: privapp-permissions (the restricted network denied until the builder turns the emergency data test on), default-permissions and the power-save allowlist |
+| `app/src/main/java/.../owner/core/ApnCandidates.kt`, `ApnCandidateTrials.kt`, `ApnCandidateData.kt`, `owner/OwnerApnCandidates.kt` | round 32: the APN candidates after a measured failure (D8 and D7 rule 4, rounds 33, 34 and 36) and their trial through CarrierSettings's temporary set |
+| `app/src/main/java/.../owner/core/Tester.kt` | what may start by itself (the provider and the calibrated stack), the SM7 kinds, the static line |
+| `app/src/main/java/.../owner/core/RealCallWatch.kt` | round 47: the real-call watch and its closed list of failure codes |
 | `app/.find-ignore` | keeps Soong's file finder out of the Gradle app when this repository is a project of an Android tree |
 | `carriersettings/` | round 37: OcdCarrierSettingsDataset, the second app, built by Soong from its own `Android.bp` (see its README) |
 | `protocol/` | round 37: the writer-to-provider protocol spec and status vectors both apps' tests read |

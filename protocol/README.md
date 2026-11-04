@@ -8,7 +8,7 @@ OCD Android (`../app`, the writer) hands datasets, records and test steps to Ocd
 | Side | Test | What it holds to the spec |
 |---|---|---|
 | Provider | `carriersettings/ocd/test/src/ProtocolContractTest.kt` (`run.sh`, CI `provider.yml`) | `Protocol`'s version, names and method sets; every method and extra handled by `OcdDataProvider`; the errors, states and outcomes present in the engine; `status()` writes exactly the vectors' members |
-| App | `app/src/testOwner/.../ProviderProtocolContractTest.kt` (`testOwnerUnitTest`, CI `test.yml`) | `OcdDataProtocol`'s version, names and the methods it calls; `InstallState`; every error code the app's code branches on; the vectors read into the app's status with every member it uses |
+| App | `app/src/test/.../ProviderProtocolContractTest.kt` (`testDebugUnitTest`, CI `test.yml`) | `OcdDataProtocol`'s version, names and the methods it calls; `InstallState`; every error code the app's code branches on; the vectors read into the app's status with every member it uses |
 
 A pull request that changes one side's names, method sets or status members fails its side's test until this spec says the same, and then fails the other side's test until that side matches. Both run on every pull request.
 

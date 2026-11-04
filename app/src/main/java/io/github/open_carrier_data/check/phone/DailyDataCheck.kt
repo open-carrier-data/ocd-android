@@ -6,23 +6,23 @@ import android.app.job.JobScheduler
 import android.app.job.JobService
 import android.content.ComponentName
 import android.content.Context
-import io.github.open_carrier_data.check.BuildConfig
+import io.github.open_carrier_data.check.OwnerHook
 import io.github.open_carrier_data.check.R
 import io.github.open_carrier_data.check.core.OcdBundle
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /**
- * OCD's rule round 32, U1: a ROM that bundles a read-only build may set a daily check instead of the
- * person's tap (the overlayable `ocd_daily_data_check`, false by default). Only in the read-only
- * builds; the owner and ROM tester builds pull through their own path. The job runs the same pull
+ * OCD's rule round 32, U1: a ROM that bundles the app without privileges may set a daily check instead of
+ * the person's tap (the overlayable `ocd_daily_data_check`, false by default). A privileged install
+ * pulls through its own path. The job runs the same pull
  * ([PublicDataPhone.pull]), at most one download a day on metered data, and writes nothing but the
  * app's own files.
  */
 object DailyDataCheck {
     const val JOB_ID = 4_032_001
 
-    fun enabled(context: Context): Boolean = BuildConfig.TESTER.isEmpty() && runCatching { context.resources.getBoolean(R.bool.ocd_daily_data_check) }.getOrDefault(false)
+    fun enabled(context: Context): Boolean = !OwnerHook.tester(context) && runCatching { context.resources.getBoolean(R.bool.ocd_daily_data_check) }.getOrDefault(false)
 
     /** Schedules the daily check when the ROM set it, and cancels it otherwise. */
     fun schedule(context: Context) {

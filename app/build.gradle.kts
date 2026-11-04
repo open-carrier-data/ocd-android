@@ -1,16 +1,10 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
-}
-
-// The owner build's signing key lives outside the repository, in local.properties (round 25 OB1).
-val localProperties = Properties().apply {
-    rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use { load(it) }
 }
 
 android {
@@ -25,76 +19,15 @@ android {
         // Every build that goes onto a phone raises it (OlderAppTest): Android drops an adb-installed update of a
         // system app only for a system copy with a higher versionCode, so a ROM's newer copy of the same code
         // stays shadowed by the older update (the S20 on 2026-10-28: round 30's e5240ec ran instead of round 31's 64e559c).
-        versionCode = 18
-        versionName = "0.4.14"
-        // True only in the owner build type; debug and release stay read-only.
-        buildConfigField("boolean", "OWNER", "false")
-        // Round 31: which tester build this is: "" (read-only), "owner", or "rom" (the build other ROMs ship).
-        buildConfigField("String", "TESTER", "\"\"")
+        versionCode = 19
+        versionName = "0.5.0"
     }
 
-    signingConfigs {
-        val store = localProperties.getProperty("ocd.owner.storeFile")
-        if (store != null) {
-            create("owner") {
-                storeFile = file(store)
-                storePassword = localProperties.getProperty("ocd.owner.storePassword")
-                keyAlias = localProperties.getProperty("ocd.owner.keyAlias")
-                keyPassword = localProperties.getProperty("ocd.owner.keyPassword")
-            }
-        }
-    }
-
+    // Round 46 and 47: one build and one package for everyone. Release stays unsigned: every ROM builder signs it with his
+    // own key and sets CarrierSettings's writer certificate to it (SM5). Debug and release are the same code.
     buildTypes {
         release {
             isMinifyEnabled = false
-        }
-        // The owner's own build (round 25 B, the owner direction of 2026-10-19): it tests and
-        // applies carrier settings on the owner's S20 through Shizuku as root. Its code is in
-        // src/owner only; debug and release get the no-op hook from src/readonly. Never a
-        // release asset, a CI artifact or a store build. Since round 31 it ships in the owner's
-        // own ROM as a privileged system app (vendor/extra ocd/OcdCheckOwner.apk, in
-        // /system_ext/priv-app); a newer build can still go over it with adb install -r.
-        create("owner") {
-            initWith(getByName("debug"))
-            // 0.4.9: not debuggable, everything else as debug. A debuggable privileged app lets
-            // anyone with adb `run-as` its uid and use its privileged permissions (MODIFY_PHONE_STATE,
-            // READ_PRIVILEGED_PHONE_STATE, USE_ICC_AUTH's SIM authentication), and ART runs it slower.
-            isDebuggable = false
-            applicationIdSuffix = ".owner"
-            versionNameSuffix = "-owner"
-            buildConfigField("boolean", "OWNER", "true")
-            buildConfigField("String", "TESTER", "\"owner\"")
-            // Its own key, never the debug key: without local.properties the APK stays unsigned.
-            signingConfig = signingConfigs.findByName("owner")
-            matchingFallbacks += "debug"
-        }
-        // OCD round 31 (scope, SM1 to SM12): the build another ROM ships in its own image. The same
-        // tester code as the owner build (src/owner), with the person's opt-in for the active tests
-        // (off by default), and calls and SMS only where the allowlist marks them free; results stay on
-        // the phone. Unsigned here: the ROM builder signs it with
-        // his own key and sets CarrierSettings's writer certificate to it (SM5). Never the owner key.
-        // Its package is the read-only app's (io.github.open_carrier_data.check), which a ROM ships instead of it; it is
-        // CarrierSettings's OCD_WRITER_PACKAGE choice beside the owner's (spec R31.11).
-        create("rom") {
-            initWith(getByName("release"))
-            versionNameSuffix = "-rom"
-            buildConfigField("boolean", "OWNER", "false")
-            buildConfigField("String", "TESTER", "\"rom\"")
-            signingConfig = null
-            matchingFallbacks += "release"
-        }
-    }
-
-    sourceSets {
-        getByName("debug").java.srcDir("src/readonly/java")
-        getByName("release").java.srcDir("src/readonly/java")
-        // The ROM build runs the owner build's tester code under the ROM build's policy (owner/core/Tester.kt).
-        getByName("rom") {
-            java.srcDir("src/owner/java")
-            res.srcDir("src/owner/res")
-            assets.srcDir("src/owner/assets")
-            manifest.srcFile("src/owner/AndroidManifest.xml")
         }
     }
 
@@ -149,19 +82,7 @@ dependencies {
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
 
-    "ownerImplementation"(libs.work.runtime)
-    "romImplementation"(libs.work.runtime)
+    implementation(libs.work.runtime)
 
     testImplementation(libs.junit)
-}
-
-// Round 25 OB1: the owner APK is never a CI artifact. Only the tasks that produce or sign an
-// owner APK or bundle are blocked; packageOwnerResources and the other resource steps the owner
-// unit tests need still run.
-tasks.matching { task ->
-    task.name in setOf("assembleOwner", "packageOwner", "bundleOwner", "signOwnerBundle", "packageOwnerBundle")
-}.configureEach {
-    doFirst {
-        if (System.getenv("CI") != null) throw GradleException("The owner build is never built in CI (round 25 OB1).")
-    }
 }
