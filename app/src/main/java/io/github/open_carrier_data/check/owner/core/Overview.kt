@@ -421,7 +421,7 @@ object LeftoversLine {
 
 /** The summary of the "Test automatically" switch. */
 object ScheduleLine {
-    fun of(on: Boolean): String = if (on) "At night while charging; keeps what works better" else "Only when you tap Test now"
+    fun of(on: Boolean): String = if (on) "At night while charging; keeps what works better" else "Only when you tap Test now; new carrier data still comes in"
 }
 
 /** The Settings entry's summary: the screen's headline, built with the call tests as on the screen. */

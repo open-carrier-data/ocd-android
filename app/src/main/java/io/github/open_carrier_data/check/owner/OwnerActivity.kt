@@ -352,7 +352,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setSchedule(on: Boolean) = viewModelScope.launch {
-        store.update { it.copy(scheduleOn = on).logged(System.currentTimeMillis(), "schedule", if (on) "background checks and night tests on" else "background checks and night tests off") }
+        store.update { it.copy(scheduleOn = on).logged(System.currentTimeMillis(), "schedule", if (on) "background checks and night tests on" else "background checks and night tests off; data pulls continue") }
         OwnerScheduler.ensureQuiet(getApplication(), on)
         refresh()
     }

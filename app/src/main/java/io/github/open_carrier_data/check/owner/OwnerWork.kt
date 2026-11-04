@@ -938,13 +938,16 @@ object OwnerScheduler {
     /** A night step: idle and charging, as the silent window wants; no network constraint (an APN trial moves mobile data). */
     private fun nightConstraints(): Constraints = Constraints.Builder().setRequiresCharging(true).setRequiresDeviceIdle(true).build()
 
-    /** The hourly quiet job (replaces the weekly job of the builds before 2026-10-20). */
+    /**
+     * The hourly quiet job (replaces the weekly job of the builds before 2026-10-20), and the 15-minute data job.
+     * "Test automatically" is [on]: it holds the quiet job only. Round 47: data pulls continue, so the data job runs either way.
+     */
     fun ensureQuiet(context: Context, on: Boolean) {
         val wm = WorkManager.getInstance(context)
         wm.cancelUniqueWork(WEEKLY)
+        ensureMainCheck(wm)
         if (!on) {
             wm.cancelUniqueWork(QUIET)
-            wm.cancelUniqueWork(MAIN_CHECK)
             return
         }
         val request = PeriodicWorkRequestBuilder<OwnerWorker>(1, TimeUnit.HOURS)
@@ -953,7 +956,6 @@ object OwnerScheduler {
             .addTag(QUIET)
             .build()
         wm.enqueueUniquePeriodicWork(QUIET, ExistingPeriodicWorkPolicy.UPDATE, request)
-        ensureMainCheck(wm)
     }
 
     /** Round 47: the 15-minute job ([MainCheck]), at WorkManager's floor. It needs a network and nothing else; the flex window and the first delay are its jitter. */

@@ -360,7 +360,7 @@ class OverviewTest {
     @Test
     fun `the schedule line is plain`() {
         assertEquals("At night while charging; keeps what works better", ScheduleLine.of(on = true))
-        assertEquals("Only when you tap Test now", ScheduleLine.of(on = false))
+        assertEquals("Only when you tap Test now; new carrier data still comes in", ScheduleLine.of(on = false))
     }
 
     @Test

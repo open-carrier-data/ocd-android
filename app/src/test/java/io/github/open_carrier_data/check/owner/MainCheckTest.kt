@@ -298,7 +298,6 @@ class MainCheckTest {
         assertFalse(job.contains("Idle"))
         assertFalse(job.contains("Charging"))
         assertEquals(15L, MainCheck.PERIOD_MINUTES)
-        assertTrue(work.substringBefore("private fun ensureMainCheck(").contains("wm.cancelUniqueWork(MAIN_CHECK)"))
     }
 
     @Test
@@ -408,6 +407,20 @@ class MainCheckTest {
         assertEquals(state.mainCheck, io.github.open_carrier_data.check.owner.core.OwnerState.decode(state.encode()).mainCheck)
         // A state file from before round 47.
         assertEquals(MainCheckState(), io.github.open_carrier_data.check.owner.core.OwnerState.decode("{}").mainCheck)
+    }
+
+    @Test
+    fun `Test automatically off stops the quiet job and never the data job`() {
+        val work = source("OwnerWork.kt")
+        val ensure = work.substringAfter("fun ensureQuiet(context: Context, on: Boolean) {").substringBefore("private fun ensureMainCheck")
+        val off = ensure.substringAfter("if (!on) {").substringBefore("}")
+        // The data job is queued before the switch is read, and nothing cancels it on either side of it.
+        assertTrue(ensure.substringBefore("if (!on) {").contains("ensureMainCheck(wm)"))
+        assertTrue(off.contains("wm.cancelUniqueWork(QUIET)"))
+        assertFalse(work.contains("cancelUniqueWork(MAIN_CHECK)"))
+        // The job itself does not read the switch either.
+        val job = work.substringAfter("private suspend fun mainCheck(store: FileStateStore): Result {").substringBefore("The hourly quiet job")
+        assertFalse(job.contains("scheduleOn"))
     }
 
     private fun source(name: String) = File("src/main/java/io/github/open_carrier_data/check/owner/$name").readText()
