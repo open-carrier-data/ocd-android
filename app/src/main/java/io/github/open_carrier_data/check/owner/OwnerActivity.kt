@@ -393,6 +393,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         store.update { it.copy(stop = null).logged(System.currentTimeMillis(), "stop", "the owner tapped Resume") }
         withContext(Dispatchers.IO) { runCatching { OwnerDatasetStep.resume(getApplication(), store) } }
         datasetCache = null
+        OwnerNotifications.refresh(getApplication())
         say("Changes resumed")
         refresh()
     }
@@ -454,8 +455,8 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 /**
- * The owner screen, opened from Settings > Network & internet > Open Carrier
- * Data (the build has no launcher icon): the headline, the evidence ladder of
+ * The owner screen, opened from Settings > About phone > Open Carrier Data or
+ * Settings search (a ROM install has no launcher icon): the headline, the evidence ladder of
  * each feature, mobile data, the automatic tests, and in Details the test
  * options, the tools, the carrier data, the safety notes and the log
  * ([OwnerScreen]). Everything here also runs without it, in the background.

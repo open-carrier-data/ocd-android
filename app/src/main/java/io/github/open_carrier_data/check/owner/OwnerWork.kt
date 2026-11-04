@@ -183,7 +183,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 val now = store.read()
                 if (now.anyLive) OwnerScheduler.cleanup(applicationContext, policy = ExistingWorkPolicy.KEEP)
                 if (!now.trialsLive()) RevertAlarm.disarm(applicationContext)
-                OwnerNotifications.refresh(applicationContext, now)
+                OwnerNotifications.refresh(applicationContext)
             }
             throw e
         } catch (e: SafetyException) {
@@ -209,7 +209,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         val after = store.read()
         // Routine work is silent; a change or a failure is told. A chain's changes wait for its end (STEP_FINISH).
         if (step !in CHAIN_STEPS) Notices.of(before, after)?.takeIf { it.failed }?.let { OwnerNotifications.notice(applicationContext, it) }
-        OwnerNotifications.refresh(applicationContext, after)
+        OwnerNotifications.refresh(applicationContext)
         return result
     }
 

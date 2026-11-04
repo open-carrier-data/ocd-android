@@ -2,6 +2,17 @@
 <resources>
     <string name="app_name">OCD Android</string>
     <string name="owner_tools">Open Carrier Data</string>
-    <!-- The Settings entry under Network & internet (Settings injection). -->
+    <!-- The Settings entry, last on About phone (Settings injection). -->
     <string name="settings_entry_title">Open Carrier Data</string>
+    <!-- Round 48: what a person with broken calls types into Settings search. Settings joins them with commas, so none holds one. -->
+    <string-array name="settings_entry_keywords">
+        <item>calls</item>
+        <item>VoLTE</item>
+        <item>Wi-Fi calling</item>
+        <item>carrier</item>
+        <item>carrier settings</item>
+        <item>mobile network</item>
+        <item>access point names</item>
+        <item>Resume</item>
+    </string-array>
 </resources>

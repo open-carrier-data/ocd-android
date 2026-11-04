@@ -123,7 +123,8 @@
 
         <!--
             The launcher icon of a hand install. A ROM's privileged system app has no icon (the owner's form of
-            2026-10-19): its screen is the Settings entry below, and OwnerHook turns this alias off at boot.
+            2026-10-19; round 48): its screen is the Settings entry below, and OwnerHook turns this alias off at boot.
+            Nothing else hides the app: it stays in Settings > Apps and can be disabled there, the way back that needs no PC.
         -->
         <activity-alias
             android:name=".ui.Launcher"
@@ -137,9 +138,14 @@
 
         <!--
             The Settings entry. Settings lists activities for IA_SETTINGS only from system
-            apps (TileUtils: ResolveInfo.system) and puts this one on the Network & internet
-            screen (CategoryKey.CATEGORY_NETWORK, NetworkDashboardFragment), after the SIMs
-            (order -15) and before Airplane mode (-5). Guarded by MODIFY_PHONE_STATE: Settings
+            apps (TileUtils: ResolveInfo.system). Round 48: it sits last on About phone
+            (CategoryKey.CATEGORY_MY_DEVICE_INFO, MyDeviceInfoFragment, whose highest order is 53; that
+            page has no tile placeholder, so Settings applies this order as it stands), where
+            regular users don't meet it, and Settings search finds it by its title and keywords.
+            The keywords must be a string-array resource (Tile.getKeywords). If the row does not
+            appear on a phone, use com.android.settings.category.ia.about_legal with the same order
+            and keywords; if that fails too, com.android.settings.category.ia.wireless, because an
+            unreachable entry is worse than a visible one. Guarded by MODIFY_PHONE_STATE: Settings
             (the system uid), Settings search (SettingsIntelligence holds it) and adb open it;
             a normal app cannot.
         -->
@@ -160,7 +166,7 @@
             </intent-filter>
             <meta-data
                 android:name="com.android.settings.category"
-                android:value="com.android.settings.category.ia.wireless" />
+                android:value="com.android.settings.category.ia.my_device_info" />
             <meta-data
                 android:name="com.android.settings.title"
                 android:resource="@string/settings_entry_title" />
@@ -175,7 +181,10 @@
                 android:value="true" />
             <meta-data
                 android:name="com.android.settings.order"
-                android:value="-10" />
+                android:value="1000" />
+            <meta-data
+                android:name="com.android.settings.keywords"
+                android:resource="@array/settings_entry_keywords" />
             <meta-data
                 android:name="com.android.settings.keyhint"
                 android:value="open_carrier_data" />

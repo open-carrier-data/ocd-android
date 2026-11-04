@@ -1,12 +1,47 @@
 package io.github.open_carrier_data.check.owner.core
 
+import kotlinx.serialization.Serializable
+import java.util.concurrent.TimeUnit
+
 /*
  * The owner build's background as plain functions: what the notifications
  * say about it, and when the owner hears of it at all.
  */
 
-/** A notification the owner gets: only when a value changed on the phone or something failed. */
-data class Notice(val title: String, val text: String, val failed: Boolean)
+/**
+ * A notification the owner gets: only when a value changed on the phone or something failed.
+ * [hold]: the person must act (a voice-loss hold or a stop event), so it has its own ID and comes back ([HoldNotices]).
+ */
+data class Notice(val title: String, val text: String, val failed: Boolean, val hold: Boolean = false)
+
+/** The hold notice last shown: its words for the daily return, and when. */
+@Serializable
+data class HoldMark(val title: String, val text: String, val atMs: Long)
+
+/**
+ * OCD rule round 48, item 1: a swiped hold notice must not strand the person on the hold. Its ID is its own, so no other
+ * notice replaces it, and it comes back at most once a day until the hold ends. setOngoing would not do: recent Android
+ * lets people dismiss those too. Settings search reaches the same page without any notice.
+ */
+object HoldNotices {
+    val EVERY_MS: Long = TimeUnit.DAYS.toMillis(1)
+    const val TITLE = "Carrier data is on hold"
+    const val TEXT = "Open Settings > About phone > Open Carrier Data to go on."
+
+    /** The person still has to act: a stop event waits for Resume, and a voice-loss hold for Resume or Test now. */
+    fun waiting(state: OwnerState): Boolean = state.stop != null || state.datasetStatus?.voiceLoss?.hold == true
+
+    /** The notice comes back now. A clock that went back never holds it up. */
+    fun due(state: OwnerState, nowMs: Long): Boolean {
+        if (!waiting(state)) return false
+        val last = state.holdNotice?.atMs ?: return true
+        return nowMs - last >= EVERY_MS || nowMs < last
+    }
+
+    /** What it says when it comes back: the last hold notice's own words. */
+    fun again(state: OwnerState): Notice =
+        state.holdNotice?.let { Notice(it.title, it.text, failed = true, hold = true) } ?: Notice(TITLE, TEXT, failed = true, hold = true)
+}
 
 /**
  * When the owner hears of the background (the owner, 2026-10-20: "so the
@@ -53,7 +88,7 @@ object Notices {
 
     /** Null for routine work. */
     fun of(before: OwnerState, after: OwnerState): Notice? {
-        if (after.stop != null && after.stop != before.stop) return Notice(PAUSED_TITLE, "See the log in Details before resuming", failed = true)
+        if (after.stop != null && after.stop != before.stop) return Notice(PAUSED_TITLE, "See the log in Details before resuming", failed = true, hold = true)
         val failed = newFailures(before, after).map { e -> e.feature?.label ?: "Access point name" }.distinct()
         if (failed.isNotEmpty()) return Notice(FAILED_TITLE, joinAnd(failed), failed = true)
         val changed = changes(before, after)

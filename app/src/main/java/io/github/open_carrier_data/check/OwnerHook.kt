@@ -37,7 +37,7 @@ object OwnerHook {
         val state = FileStateStore(context).read()
         OwnerScheduler.ensureQuiet(context, state.scheduleOn)
         OwnerScheduler.cleanup(context, policy = ExistingWorkPolicy.KEEP)
-        OwnerNotifications.refresh(context, state)
+        OwnerNotifications.refresh(context)
     }
 
     /** A ROM's system app has no launcher icon: its screen is the Settings entry. */

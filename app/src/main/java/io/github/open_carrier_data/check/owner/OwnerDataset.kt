@@ -408,7 +408,7 @@ object OwnerDatasetStep {
         val now = System.currentTimeMillis()
         val line = "two real calls failed after new values for calls or SMS; the ROM's own data serves until Resume"
         store.update { it.copy(realCallHoldDue = false, callWatches = emptyList(), heldByCalls = !second, stop = if (second) "voice_loss_stop" else "real_call_hold").logged(now, "voice_loss", line) }
-        OwnerNotifications.notice(context, Notice("Calls could not go out", "Two calls failed after new carrier data, so the ROM's own data is back. Tap Resume to try the new data again.", failed = true))
+        OwnerNotifications.notice(context, Notice("Calls could not go out", "Two calls failed after new carrier data, so the ROM's own data is back. Tap Resume to try the new data again.", failed = true, hold = true))
         return line
     }
 
@@ -418,7 +418,7 @@ object OwnerDatasetStep {
         if (store.read().stop == null) {
             val reason = "calls stopped again under the same values: the ROM's own data stays until you tap Resume or a newer ROM build"
             store.update { it.copy(stop = "voice_loss_stop").logged(System.currentTimeMillis(), "stop", "${status.voiceLoss.stopReason ?: "voice-loss stop"}; $reason") }
-            OwnerNotifications.notice(context, Notice("Calls stopped again", "Calls stopped working again with the same new values, so the ROM's own data stays. Tap Resume when you want Open Carrier Data to try again, or wait for a newer ROM build.", failed = true))
+            OwnerNotifications.notice(context, Notice("Calls stopped again", "Calls stopped working again with the same new values, so the ROM's own data stays. Tap Resume when you want Open Carrier Data to try again, or wait for a newer ROM build.", failed = true, hold = true))
         }
         return "voice-loss stop: the build's dataset serves until Resume or a newer build"
     }
@@ -712,7 +712,7 @@ object OwnerDatasetStep {
             val reason = "voice lost on slot ${sim.slot + 1} and no candidate, not even the build's dataset, restored it; the newest dataset stays (the cause is the network)"
             client.stop(reason)
             store.update { it.copy(stop = "voice_loss_not_restored").logged(System.currentTimeMillis(), "stop", reason) }
-            OwnerNotifications.notice(context, Notice("Tests paused: no calls", "$reason. Tap Resume when calls work again.", failed = true))
+            OwnerNotifications.notice(context, Notice("Tests paused: no calls", "$reason. Tap Resume when calls work again.", failed = true, hold = true))
             return "STOP: $reason"
         }
         // Only the build's dataset restored voice: CarrierSettings holds it (both parts) before the overrides go, so voice stays.
@@ -724,20 +724,20 @@ object OwnerDatasetStep {
         val line = when {
             a.ok && held == "stop" -> {
                 store.update { it.copy(stop = "voice_loss_stop").logged(System.currentTimeMillis(), "stop", "slot ${sim.slot + 1}: voice lost again under the same values; CarrierSettings keeps the build's dataset until Resume or a newer build") }
-                OwnerNotifications.notice(context, Notice("Calls stopped again", "Calls stopped working again with the same new values, so the ROM's own data stays. Tap Resume when you want Open Carrier Data to try again, or wait for a newer ROM build.", failed = true))
+                OwnerNotifications.notice(context, Notice("Calls stopped again", "Calls stopped working again with the same new values, so the ROM's own data stays. Tap Resume when you want Open Carrier Data to try again, or wait for a newer ROM build.", failed = true, hold = true))
                 "voice loss on slot ${sim.slot + 1}: the second loss under the same values; the build's dataset stays (stop event)"
             }
             a.ok -> {
                 val legacy = a.bool("round30_rom") == true
                 store.update { it.logged(System.currentTimeMillis(), "voice_loss", "the build's dataset restored voice; CarrierSettings holds it" + if (legacy) " (a round 30 ROM: until a newer ROM build)" else "; the split runs at the next idle moment at home") }
-                OwnerNotifications.notice(context, Notice("Calls are back with the ROM's own data", "Calls stopped working with Open Carrier Data's newest data and came back with the ROM's own data, which now serves. When the phone is next idle at home, Open Carrier Data finds the values at fault and then serves the newest data with working values in their place.", failed = true))
+                OwnerNotifications.notice(context, Notice("Calls are back with the ROM's own data", "Calls stopped working with Open Carrier Data's newest data and came back with the ROM's own data, which now serves. Tap Test now on the Open Carrier Data page to find the values at fault and serve the newest data with working values in their place.", failed = true, hold = true))
                 "voice loss on slot ${sim.slot + 1}: the build's dataset restored voice; held${a.str("values_digest")?.let { " (values ${it.take(19)})" } ?: ""}"
             }
             else -> {
                 val reason = "voice came back only with the build's dataset on slot ${sim.slot + 1}, and CarrierSettings did not hold it (${a.line})"
                 client.stop(reason)
                 store.update { it.copy(stop = "voice_loss_hold_refused").logged(System.currentTimeMillis(), "stop", reason) }
-                OwnerNotifications.notice(context, Notice("Tests paused: no calls", "$reason. Disable Open Carrier Data in Android's Settings to go back to the ROM's own data.", failed = true))
+                OwnerNotifications.notice(context, Notice("Tests paused: no calls", "$reason. Disable Open Carrier Data in Android's Settings to go back to the ROM's own data.", failed = true, hold = true))
                 "STOP: $reason"
             }
         }
@@ -811,7 +811,7 @@ object OwnerDatasetStep {
             val reason = if (keys.isEmpty()) "the split could not decide which newest value removed calls" else "no other value works in place of ${keys.joinToString()}"
             client.stop("voice-loss split: $reason; the build's dataset stays held")
             store.update { it.copy(stop = "voice_loss_split_no_winner").logged(System.currentTimeMillis(), "stop", "voice-loss split: $reason; the build's dataset stays held until Resume") }
-            OwnerNotifications.notice(context, Notice("The ROM's own data stays", "Calls stopped working with Open Carrier Data's newest data, and $reason. The ROM's own data keeps serving. Tap Resume to try again.", failed = true))
+            OwnerNotifications.notice(context, Notice("The ROM's own data stays", "Calls stopped working with Open Carrier Data's newest data, and $reason. The ROM's own data keeps serving. Tap Resume to try again.", failed = true, hold = true))
             return notes + "split: $reason; held, stop event"
         }
         val outcome = if (winners.isEmpty()) OcdDataProtocol.OUTCOME_NO_FAILING_VALUE else OcdDataProtocol.OUTCOME_WINNERS

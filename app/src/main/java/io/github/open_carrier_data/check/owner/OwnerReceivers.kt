@@ -16,15 +16,16 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.work.ExistingWorkPolicy
 import io.github.open_carrier_data.check.R
 import io.github.open_carrier_data.check.owner.core.Hold
+import io.github.open_carrier_data.check.owner.core.HoldMark
+import io.github.open_carrier_data.check.owner.core.HoldNotices
 import io.github.open_carrier_data.check.owner.core.Notice
 import io.github.open_carrier_data.check.owner.core.Notices
-import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.StatusSentence
 
 /**
  * Round 47: an automatic run shows nothing, and there is no ongoing notification. A notification comes
- * only where calls were lost or the person must act: the voice-loss and stop events with Resume. The way
- * back is disabling this app in Android's Settings, after which CarrierSettings serves the ROM's own data
+ * only where calls were lost or the person must act: the voice-loss and stop events with Resume, on an ID
+ * of their own and back once a day until the hold ends (round 48, [HoldNotices]). The way back is disabling this app in Android's Settings, after which CarrierSettings serves the ROM's own data
  * without it.
  */
 object OwnerNotifications {
@@ -35,6 +36,7 @@ object OwnerNotifications {
     private const val OLD_LIVE_CHANNEL = "owner_live"
     private const val LIVE_ID = 4712
     private const val EVENT_ID = 4714
+    private const val HOLD_ID = 4715
 
     private fun allowed(context: Context): Boolean =
         Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -54,16 +56,37 @@ object OwnerNotifications {
         context, 0, Intent(context, OwnerActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
-    /** Round 47: no ongoing notification. This only takes away one an older build left. */
-    fun refresh(context: Context, state: OwnerState) {
+    /**
+     * Round 47: no ongoing notification, so this takes away one an older build left. Round 48: every worker step and app
+     * start ends here, so a swiped hold notice comes back from here, and one whose hold ended goes.
+     */
+    fun refresh(context: Context) {
         NotificationManagerCompat.from(context).cancel(LIVE_ID)
+        val state = FileStateStore(context).read()
+        if (!HoldNotices.waiting(state) && state.holdNotice != null) {
+            NotificationManagerCompat.from(context).cancel(HOLD_ID)
+            FileStateStore(context).updateLocked { it.copy(holdNotice = null) }
+        }
+        if (HoldNotices.due(state, System.currentTimeMillis())) notice(context, HoldNotices.again(state))
     }
 
-    /** A change or a failure; replaces the previous one. */
-    @SuppressLint("MissingPermission")
+    /** A change or a failure replaces the previous one. A hold notice has its own ID: nothing else replaces it. */
     fun notice(context: Context, notice: Notice) {
         if (!allowed(context)) return
         channels(context)
+        if (!notice.hold) {
+            post(context, EVENT_ID, notice)
+            return
+        }
+        val store = FileStateStore(context)
+        // The step that set a stop told why in its own words; the generic line at the step's end does not replace them.
+        if (notice.title == Notices.PAUSED_TITLE && store.read().holdNotice != null) return
+        post(context, HOLD_ID, notice)
+        store.updateLocked { it.copy(holdNotice = HoldMark(notice.title, notice.text, System.currentTimeMillis())) }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun post(context: Context, id: Int, notice: Notice) {
         val notification = NotificationCompat.Builder(context, EVENTS_CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
             .setContentTitle(notice.title)
@@ -72,7 +95,7 @@ object OwnerNotifications {
             .setAutoCancel(true)
             .setContentIntent(open(context))
             .build()
-        runCatching { NotificationManagerCompat.from(context).notify(EVENT_ID, notification) }
+        runCatching { NotificationManagerCompat.from(context).notify(id, notification) }
     }
 }
 
