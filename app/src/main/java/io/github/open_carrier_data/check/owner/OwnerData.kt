@@ -315,10 +315,8 @@ class OwnerData(private val context: Context, private val store: StateStore) {
         if (WeekReports.mainHeld(week, nowMs) !== week) store.update { it.copy(week = WeekReports.mainHeld(it.week, nowMs)) }
     }
 
-    /** Round 48: main's stop-only flag, read by the weekly step. Anything but a clear true is closed. */
-    suspend fun relayOpen(): Boolean = withContext(Dispatchers.IO) {
-        runCatching { Relay.open(get(Relay.FLAG_URL, Relay.MAX_FLAG_BYTES).decodeToString()) }.getOrDefault(false)
-    }
+    /** Round 48: main's stop-only flag in the pinned metadata.json. No pin, no file or anything but a clear true is closed. */
+    fun relayOpen(): Boolean = runCatching { currentDir()?.let { Relay.open(File(it, "metadata.json").readText()) } == true }.getOrDefault(false)
 
     /** The pull's GET (GitHub's hosts only, no identifier), for the APN candidates' reads of the installed commit. */
     fun fetch(): io.github.open_carrier_data.check.owner.core.Fetch = io.github.open_carrier_data.check.owner.core.Fetch { url, max -> get(url, max) }

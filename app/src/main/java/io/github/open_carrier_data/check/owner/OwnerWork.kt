@@ -59,6 +59,7 @@ import io.github.open_carrier_data.check.owner.core.DataException
 import io.github.open_carrier_data.check.owner.core.HeldSet
 import io.github.open_carrier_data.check.owner.core.MainCheck
 import io.github.open_carrier_data.check.owner.core.MainNet
+import io.github.open_carrier_data.check.owner.core.NoCallChecks
 import io.github.open_carrier_data.check.owner.core.ManifestHint
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.Plan
@@ -420,6 +421,14 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             }
             messageChecks(store, phone, sims, look, night)
             diagnoseCauses(store, phone, sims)
+            // Round 49: the checks without a call only read, and a failure of them holds up nothing.
+            try {
+                OwnerNoCall.check(context, store, phone, sims)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                quietLog(store, "no_call_checks", "the checks without a call could not read: ${e.javaClass.simpleName}")
+            }
             // The owner's tap with the screen on (or with "Test automatically" off) is the check only: the dataset step, the
             // emergency data test and the night's tests stay with the background run. lastCheckAtMs stays, so that run is not put off.
             if (checkOnly) {
@@ -494,6 +503,8 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             val diagnosis = runCatching {
                 val roamingNow = QuietReader.roaming(context)
                 val reason = ImsReasonReader.read(context, sim.subId)
+                // Round 49: registration per bearer, for the entry only.
+                reason.wifi?.let { wifi -> store.update { s -> s.copy(noCall = s.noCall.copy(signedIn = NoCallChecks.seen(s.noCall.signedIn, sim.key, if (wifi) NoCallChecks.WIFI else NoCallChecks.MOBILE, now))) } }
                 val mmsEnded = MmsProbe.ended(ended, sim.identity.mccmnc) != null
                 var passive = OwnerPassiveRead.read(context, sim.subId, roamingNow == true, mmsEnded = mmsEnded).copy(
                     imsRegistered = reason.registered,

@@ -29,6 +29,7 @@ enum class OwnerCommand(val timeoutSeconds: Long, val writes: Boolean) {
     POWER(20, false),
     IWLAN_DUMP(30, false),
     QNS_DUMP(30, false),
+    IMS_STACK_DUMP(30, false),
     SMS_DUMP(10, false),
     CC_SET(60, true),
     CC_CLEAR(60, true),
@@ -53,6 +54,7 @@ enum class OwnerCommand(val timeoutSeconds: Long, val writes: Boolean) {
         POWER -> listOf("dumpsys", "power")
         IWLAN_DUMP -> listOf("dumpsys", "activity", "service", "com.google.android.iwlan/.IwlanDataService")
         QNS_DUMP -> listOf("dumpsys", "activity", "service", "com.android.telephony.qns")
+        IMS_STACK_DUMP -> listOf("dumpsys", "activity", "service", "com.android.imsstack")
         SMS_DUMP -> listOf("dumpsys", "isms")
         CC_SET -> {
             val key = a.key ?: return null

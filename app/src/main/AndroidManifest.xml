@@ -105,6 +105,9 @@
     <!-- Whether the Shizuku app is installed; which IMS stack the phone runs, for video calling's static check; the dataset installer's provider. -->
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
+        <!-- Round 49: the crash counter tells a package this phone lacks from one with no crash. -->
+        <package android:name="com.google.android.iwlan" />
+        <package android:name="com.android.imsstack" />
         <intent>
             <action android:name="android.telephony.ims.ImsService" />
         </intent>

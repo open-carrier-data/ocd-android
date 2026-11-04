@@ -30,7 +30,8 @@ import java.util.concurrent.TimeUnit
  * This file decides; OwnerWeekReport.kt only reads the phone and the network. The report's fields are closed
  * (assets/ocd-week-report.schema.json, schema ocd-week-report v1), and anything else is refused whole. It never holds a
  * plan, bearer, codename, build, firmware, SPN, GID1, Android carrier ID, data commit or digest, report hash, reason,
- * method, day, call count, direction, duration, disconnect code, serving network, roaming state or any ID.
+ * method, day, call count, direction field, duration, disconnect code, serving network, roaming state or any ID. Round 49
+ * adds the rung calls_out, which shows that a week's passing call was outgoing, and packet counts never leave.
  */
 
 /** The ROM builder's switch: ask or off, and no on state. Only the person's own yes starts a send. */
@@ -55,13 +56,6 @@ object Relay {
     const val USER_AGENT = "ocd-android"
     const val MAX_BODY_BYTES = 4096
 
-    /**
-     * Read once per week at the branch name, as [MainCheck.MANIFEST_URL] is: a flip changes no dataset digest, so a pull by
-     * SHA would never see it. It can only stop a send, so an unvalidated commit gains nothing.
-     */
-    const val FLAG_URL = "${DataSource.RAW}/${DataSource.BRANCH}/community/relay.json"
-    const val MAX_FLAG_BYTES = 1024L
-
     /** The phone held main's newest data this long ago at most; older means no send, so nobody has to renew the flag. */
     val MAX_MAIN_AGE_MS: Long = TimeUnit.DAYS.toMillis(30)
 
@@ -70,9 +64,13 @@ object Relay {
         uri.scheme == "https" && uri.userInfo == null && !uri.host.isNullOrEmpty() && !uri.host.endsWith(".invalid")
     }.getOrDefault(false)
 
-    /** Exactly `"relay_open": true` opens. Absent, false, another type or a broken file stays closed. */
-    fun open(text: String): Boolean = runCatching {
-        val flag = (Json.parseToJsonElement(text) as JsonObject)["relay_open"] as? JsonPrimitive
+    /**
+     * [metadata] is generated/android/metadata.json of the pinned commit, so the flag takes no request of its own: a flip
+     * changes the data digest, and the 15-minute job pulls it like any new data. Exactly `"relay_open": true` opens. Absent,
+     * false, another type or a broken file stays closed.
+     */
+    fun open(metadata: String): Boolean = runCatching {
+        val flag = (Json.parseToJsonElement(metadata) as JsonObject)["relay_open"] as? JsonPrimitive
         flag != null && !flag.isString && flag.booleanOrNull == true
     }.getOrDefault(false)
 }
@@ -121,7 +119,15 @@ data class WeekState(
     val last: WeekLast? = null,
     /** When the phone last held main's newest data. */
     val mainHeldAtMs: Long? = null,
+    /** Round 49: each SIM's last install that changed a voice or Wi-Fi calling class value, kept whatever the answer. */
+    val voiceInstalls: List<VoiceInstall> = emptyList(),
+    /** Round 49: the last hold after two failed real calls. */
+    val callHoldAtMs: Long? = null,
 )
+
+/** The last install that changed a voice or Wi-Fi calling class value on [sim]. */
+@Serializable
+data class VoiceInstall(val sim: SimKey, val commit: String, val atMs: Long)
 
 /** The phone's part of a report. */
 data class WeekCell(val model: String, val romFamily: String, val androidMajor: Int, val imsStack: String, val appVersion: String)
@@ -134,20 +140,25 @@ object WeekReports {
     const val LOG_KIND = "week_report"
     const val OTHER_MODEL = "other"
     const val MAX_RESULTS = 16
-    private const val MAX_MODEL = 96
 
-    val RESULTS = setOf(Pointers.WORKS, Pointers.SIGNED_IN, Pointers.SERVICE_OFF, Pointers.NOT_POSSIBLE, Pointers.FAILED)
+    /** Round 49: round 26's L2, outgoing only. Only a calibrated stack sends it. */
+    const val CALLS_OUT = "calls_out"
 
-    /** SM8: a stack whose results do not count claims neither works nor failed. */
+    val RESULTS = setOf(Pointers.WORKS, CALLS_OUT, Pointers.SIGNED_IN, Pointers.SERVICE_OFF, Pointers.NOT_POSSIBLE, Pointers.FAILED)
+
+    /** SM8: a stack whose results do not count claims neither works, calls_out nor failed. */
     val UNCALIBRATED_RESULTS = setOf(Pointers.SIGNED_IN, Pointers.SERVICE_OFF, Pointers.NOT_POSSIBLE)
 
     private val PROFILE = Regex("open\\.[0-9]{5,6}\\.[0-9a-f]{12}")
     private val MCCMNC = Regex("[0-9]{5,6}")
 
+    /** The relay's own limit. A model outside it reads as other, so the report is not refused. */
+    private val MODEL = Regex("[^\\u0000-\\u001f\\u007f]{1,96}")
+
     /** The emergency type, and the wildcard that covers it: no such row is ever sent. */
     private val NEVER_TYPES = setOf("emergency", "sos", "*")
 
-    /** The carrier field: the OCD profile, or the home network only when no profile matches. Null when neither has its shape. */
+    /** The carrier field: the OCD profile, or the home network code only when no profile matches. Null when neither has its shape. */
     fun carrier(profileId: String?, mccmnc: String): String? = profileId?.takeIf(PROFILE::matches) ?: mccmnc.takeIf(MCCMNC::matches)
 
     fun majorMinor(version: String): String = version.split('.').take(2).joinToString(".")
@@ -183,22 +194,43 @@ object WeekReports {
         return if (next == old) w else w.copy(buffers = w.buffers.filterNot { it === old } + next)
     }
 
+    /** A call the week may read at all: nothing from roaming, several calls at once, a mailbox notification or an uncalibrated stack. */
+    private fun countable(r: CallRecord, sim: SimKey): Boolean =
+        r.sim?.sameCard(sim) == true && r.roaming == false && !r.severalCalls && r.fromMailbox != true && StackCalibration.counted(r.stack)
+
+    /** An outgoing or incoming call of the week that passed its leg on [bearer], with the bearer proof counted. */
+    private fun passed(r: CallRecord, bearer: ProvenBearer): Boolean =
+        CallLevels.callsOut(r).let { it.passed && it.bearer == bearer } || CallLevels.incoming(r).let { it.passed && it.bearer == bearer }
+
     /**
-     * What this phone measured in [fromMs] until [toMs]: real and tapped calls, the tapped SMS and OCD's own rows inserted
-     * in a test. A level is a flag here: no count, bearer, method or day goes on. Only calls recorded at home count, and
-     * an emergency call never reaches the ledger ([CallRecord.of]). Calls out alone says nothing a passive signed_in does not.
+     * What this phone measured in the closed week [weekStartMs] until [weekEndMs]. The ladder, per SIM and bearer (round
+     * 49): LTE is volte:on and Wi-Fi is vowifi:on, never vonr or video calling. WORKS sends works, CALLS_OUT sends calls_out,
+     * and anything else leaves the entry as the light check saw it. A rung needs the current build, the values since the
+     * SIM's last install of a voice or Wi-Fi calling class value, and a passing real or tapped call on that entry in this
+     * week, after the yes: one old pass proves no new week. A failure or a real-call hold in the week replaces the rung,
+     * whatever came first. An emergency call never reaches the ledger ([CallRecord.of]). Only the rung leaves.
      */
-    fun measured(state: OwnerState, sim: SimKey, fromMs: Long, toMs: Long, rom: String): Map<String, String> = buildMap {
-        val calls = state.calls.filter { it.roaming == false && it.atMs >= fromMs && it.atMs < toMs }
+    fun measured(state: OwnerState, sim: SimKey, weekStartMs: Long, weekEndMs: Long, rom: String): Map<String, String> = buildMap {
+        val calls = state.calls.filter { countable(it, sim) }
+        val inWeek = calls.filter { it.atMs >= weekStartMs && it.atMs < weekEndMs }
+        val since = state.week.voiceInstalls.lastOrNull { it.sim.sameCard(sim) }?.atMs ?: 0L
+        val from = maxOf(since, state.week.yesAtMs ?: 0L)
+        val held = state.week.callHoldAtMs?.let { it >= weekStartMs && it < weekEndMs } == true
         for (feature in listOf(OwnerFeature.VOLTE, OwnerFeature.VOWIFI)) {
-            val level = Settled.voice(calls, sim, feature, rom, fromMs, toMs - 1, ZoneOffset.UTC) ?: continue
-            if (level.failed) put(QuietPlan.entry(feature, true), Pointers.FAILED)
-            else if (level.level == Settled.L3) put(QuietPlan.entry(feature, true), Pointers.WORKS)
+            val bearer = CallLevels.bearerOf(feature) ?: continue
+            val entry = QuietPlan.entry(feature, true)
+            val level = CallLevels.level(calls, sim, feature, rom, since, weekEndMs - 1).takeIf { inWeek.any { c -> c.atMs >= from && c.build == rom && passed(c, bearer) } }
+            when {
+                Settled.failure(inWeek, bearer, ZoneOffset.UTC) != null -> put(entry, Pointers.FAILED)
+                level != null && held -> put(entry, Pointers.FAILED)
+                level == CallsLevel.WORKS -> put(entry, Pointers.WORKS)
+                level == CallsLevel.CALLS_OUT -> put(entry, CALLS_OUT)
+            }
         }
-        val sms = state.selfSms.filter { (it.receivedAtMs ?: it.sentAtMs).let { at -> at >= fromMs && at < toMs } }
-        if (Settled.sms(sms, sim, rom, toMs - 1) != null) put(Settled.SMS_ON, Pointers.WORKS)
+        val sms = state.selfSms.filter { (it.receivedAtMs ?: it.sentAtMs).let { at -> at >= weekStartMs && at < weekEndMs } }
+        if (Settled.sms(sms, sim, rom, weekEndMs - 1) != null) put(Settled.SMS_ON, Pointers.WORKS)
         for (r in state.entries) {
-            if (!r.sim.sameCard(sim) || !r.entry.startsWith(EntryRecord.APN + ":") || r.outcome != "inserted" || r.atMs < fromMs || r.atMs >= toMs) continue
+            if (!r.sim.sameCard(sim) || !r.entry.startsWith(EntryRecord.APN + ":") || r.outcome != "inserted" || r.atMs < weekStartMs || r.atMs >= weekEndMs) continue
             when (r.works) {
                 true -> put(r.entry, Pointers.WORKS)
                 false -> put(r.entry, Pointers.FAILED)
@@ -206,6 +238,14 @@ object WeekReports {
             }
         }
     }
+
+    /** The week's results of one SIM: what was measured over what the light check saw. Only a calibrated stack reads the measured ones. */
+    fun merged(passive: Map<String, String>, measured: Map<String, String>, stack: String): Map<String, String> =
+        if (StackCalibration.counted(stack)) passive + measured else passive
+
+    /** Round 49: an install changed a voice or Wi-Fi calling class value on [sim]; earlier calls hold no rung from now on. */
+    fun voiceInstalled(w: WeekState, sim: SimKey, commit: String, nowMs: Long): WeekState =
+        w.copy(voiceInstalls = w.voiceInstalls.filterNot { it.sim.sameCard(sim) } + VoiceInstall(sim, commit, nowMs))
 
     /** An `apn:` entry for a row OCD's own data has for the SIM's network ([ocdRows]), and never one with the emergency type. */
     fun rowAllowed(entry: String, ocdRows: Set<String>): Boolean {
@@ -224,7 +264,7 @@ object WeekReports {
         val features = QuietPlan.FEATURE_ENTRIES.filter { it in kept }
         val rows = kept.keys.filter { rowAllowed(it, ocdRows) }.sorted()
         var entries = (features + rows).take(MAX_RESULTS)
-        val model = cell.model.takeIf { it.isNotEmpty() && it.length <= MAX_MODEL && onList(it) } ?: OTHER_MODEL
+        val model = cell.model.takeIf { MODEL.matches(it) && onList(it) } ?: OTHER_MODEL
         while (entries.isNotEmpty()) {
             val report = buildJsonObject {
                 put("schema", SCHEMA)
@@ -294,7 +334,9 @@ interface WeekDevice {
 
     /** The keys of OCD's own rows for the SIM's network; empty when the SIM left or nothing is pinned. */
     suspend fun ocdRows(sim: SimKey): Set<String>
-    suspend fun relayOpen(): Boolean
+
+    /** The pinned commit's `relay_open` ([Relay.open]). */
+    fun relayOpen(): Boolean
 
     /** One POST; true only on a 2xx. */
     suspend fun post(body: ByteArray): Boolean
@@ -321,11 +363,10 @@ class WeekStep(private val store: StateStore, private val device: WeekDevice, pr
         if (WeekReports.blocked(device.net(), device.inCall())) return null
 
         val to = WeekClock.startMs(nowMs)
-        val from = maxOf(to - WeekClock.WEEK_MS, w.yesAtMs ?: 0L)
         val cell = device.cell()
         val state = store.read()
         val reports = w.buffers.filter { it.week == closed }.mapNotNull { b ->
-            val results = b.results + WeekReports.measured(state, b.sim, from, to, device.rom)
+            val results = WeekReports.merged(b.results, WeekReports.measured(state, b.sim, to - WeekClock.WEEK_MS, to, device.rom), cell.imsStack)
             WeekReports.build(closed, cell, b.carrier, results, device.ocdRows(b.sim), device::onList)
                 ?.takeIf { WeekReports.clean(it, device.schema) }?.let(WeekReports::text)
         }
@@ -363,17 +404,24 @@ object WeekQuestion {
         "Results are published only for groups of phones and hold no ID, so what was sent cannot be taken back. " +
         "You can stop any time in Settings > About phone > Open Carrier Data."
     const val DETAILS = "Details"
+
+    /** Round 49: the words beside the result values, here and on the entry. */
+    const val MEANS = "\"Works\" means calls both ways by packet counts, and \"calls out\" means outgoing only. No sound was checked, nothing here speaks for emergency calls, " +
+        "and the flag shows that calls happened that week."
+    const val PRIVACY_PAGE = "${DataSource.REPOSITORY_URL}/blob/${DataSource.BRANCH}/docs/privacy.md"
     const val NO = "No"
     const val YES = "Yes"
     const val DETAILS_TEXT = "A report holds the week, the app version, your phone model (or \"other\" when it is not on OCD's public list), ROM family, Android version, IMS software and " +
         "your carrier as OCD names it (or its network code when OCD has no profile for it). Below that are at most 16 lines. Each says whether VoLTE, Wi-Fi calling, SMS over IMS, " +
-        "video calling, VoNR or one of OCD's own access point names worked, signed in, was off, was not possible or failed.\n\n" +
-        "It never holds your plan, ROM build, SPN or GID1, an ID of any kind, a day or time, or how many calls you made, in which direction or for how long. " +
+        "video calling, VoNR or one of OCD's own access point names worked, made calls out, signed in, was off, was not possible or failed.\n\n" +
+        "$MEANS\n\n" +
+        "It never holds your plan, ROM build, SPN or GID1, an ID of any kind, a day or time, or how many calls you made or for how long. " +
         "Results from roaming and from emergency calls never count. It goes only on a network that is not metered, never while roaming, with Data Saver on or during a call, " +
         "and it shows no notification.\n\n" +
         "OCD's relay only adds to counters. It keeps no report, address or log, and the counters are deleted after 8 weeks. A result is published only with at least 3 reports in one week, " +
         "shown by month, as automatic, reported by phones, not checked by OCD. It never sets a value on any phone.\n\n" +
-        "If you say No or ignore the question, nothing is sent and the question does not come back."
+        "If you say No or ignore the question, nothing is sent and the question does not come back.\n\n" +
+        "OCD's privacy page says who is responsible and how to reach them: $PRIVACY_PAGE"
 
     /** The person may answer here: a ROM install on a build that asks. */
     fun open(privileged: Boolean, switch: WeekSwitch): Boolean = privileged && switch == WeekSwitch.ASK
@@ -391,6 +439,7 @@ object WeekWords {
     const val BUILD_OFF = "This ROM's builder turned the weekly summary off. Nothing is sent by itself"
     const val LAST = "Last week report"
     const val NONE = "None yet"
+    const val MEANS = WeekQuestion.MEANS
 
     fun line(last: WeekLast): String = when {
         last.sent == last.reports.size -> "Week ${last.week}: sent"

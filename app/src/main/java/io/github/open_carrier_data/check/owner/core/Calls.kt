@@ -97,7 +97,7 @@ data class CallRecord(
     val stack: String,
     /** Old records only: the call ran muted (true) or at its lowest volume; a tapped call has normal sound (null). */
     val muted: Boolean? = null,
-    /** Round 48: the phone was roaming when the call ended; null: not read. Only a false counts toward a week report. */
+    /** Rounds 48 and 49: the phone was roaming when the call started; null: not read. Local only; only a false counts toward a week report. */
     val roaming: Boolean? = null,
 ) {
     companion object {

@@ -42,6 +42,7 @@ class ProbeGateTest {
                 "OwnerEmergencyData.kt", // the emergency data test: adb only (SM10)
                 "OwnerMessages.kt", // the test SMS: the person's tap only; the MMS probe is passive
                 "OwnerProbe.kt", // the probe ladder and W1: only after a measured failure, within their bounds
+                "OwnerWeekReport.kt", // the week report: after the person's yes, on its own limits (round 48)
             ),
             files,
         )

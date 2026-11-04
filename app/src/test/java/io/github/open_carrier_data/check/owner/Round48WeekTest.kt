@@ -31,6 +31,7 @@ import io.github.open_carrier_data.check.owner.core.WeekReports
 import io.github.open_carrier_data.check.owner.core.WeekState
 import io.github.open_carrier_data.check.owner.core.WeekStep
 import io.github.open_carrier_data.check.owner.core.WeekSwitch
+import io.github.open_carrier_data.check.owner.core.WeekWords
 import io.github.open_carrier_data.check.core.SimIdentity
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -96,7 +97,7 @@ class Round48WeekTest {
         override fun cell() = cellNow
         override fun onList(model: String) = model == "SM-G981B"
         override suspend fun ocdRows(sim: SimKey) = rows
-        override suspend fun relayOpen(): Boolean {
+        override fun relayOpen(): Boolean {
             flagReads++
             return flag
         }
@@ -181,6 +182,7 @@ class Round48WeekTest {
         val code = File("src/main/java/io/github/open_carrier_data/check/owner/core/WeekReport.kt").readText() + WeekQuestion.DETAILS_TEXT
         assertFalse(code.contains("anonym", ignoreCase = true))
         assertTrue("8 weeks" in WeekQuestion.DETAILS_TEXT && "not checked by OCD" in WeekQuestion.DETAILS_TEXT)
+        assertTrue(WeekQuestion.DETAILS_TEXT.endsWith("https://github.com/open-carrier-data/open-carrier-data/blob/main/docs/privacy.md"))
     }
 
     @Test
@@ -293,7 +295,7 @@ class Round48WeekTest {
 
     @Test
     fun `relay_open can only stop, and absent, false or a broken file means no send`() {
-        assertTrue(Relay.open("""{"relay_open": true}"""))
+        assertTrue(Relay.open("""{"schema_version": 1, "relay_open": true}"""))
         for (closedFlag in listOf("""{"relay_open": false}""", "{}", """{"relay_open": "true"}""", """{"relay_open": 1}""", "not json", "", "[true]", """{"relay_open": null}""")) {
             assertFalse(closedFlag, Relay.open(closedFlag))
         }
@@ -301,7 +303,7 @@ class Round48WeekTest {
         val store = state(yes())
         assertEquals("$closed: not sent, OCD's relay is closed", step(store, fake))
         assertEquals(0, fake.posts.size)
-        // The week is over for this phone: one read a week, no retry, and the report stays readable on the screen.
+        // The week is over for this phone: no retry, and the report stays readable on the screen.
         assertTrue(store.state.week.buffers.isEmpty())
         assertEquals(0, store.state.week.last!!.sent)
         assertEquals(1, store.state.week.last!!.reports.size)
@@ -329,7 +331,7 @@ class Round48WeekTest {
         val fake = Fake(relayUrl = Relay.URL)
         val store = state(yes())
         assertEquals("$closed: not sent, this build has no relay address yet", step(store, fake))
-        assertEquals("nothing goes out, the flag read included", 0, fake.posts.size + fake.flagReads)
+        assertEquals(0, fake.posts.size + fake.flagReads)
         val glue = File("src/main/java/io/github/open_carrier_data/check/owner/OwnerWeekReport.kt").readText()
         assertTrue(glue.contains("override val relayUrl: String get() = Relay.URL"))
         assertTrue(glue.contains("network.openConnection(URL(Relay.URL))"))
@@ -388,6 +390,13 @@ class Round48WeekTest {
         assertEquals("SM-G981B", report(mapOf("volte:on" to "signed_in"))!!.getValue("device").jsonObject.getValue("model").jsonPrimitive.content)
         val free = report(mapOf("volte:on" to "signed_in"), c = cell.copy(model = "Bob's phone"))!!
         assertEquals("other", free.getValue("device").jsonObject.getValue("model").jsonPrimitive.content)
+        assertEquals("Krüger&Matz _LIVE5_KM0450", report(mapOf("volte:on" to "signed_in"), c = cell.copy(model = "Krüger&Matz _LIVE5_KM0450")) { true }!!.getValue("device").jsonObject.getValue("model").jsonPrimitive.content)
+        // Outside the relay's shape: other too, so the report is not refused.
+        for (odd in listOf("two\nlines", "x".repeat(97), "")) {
+            val listed = report(mapOf("volte:on" to "signed_in"), c = cell.copy(model = odd)) { true }!!
+            assertEquals(odd, "other", listed.getValue("device").jsonObject.getValue("model").jsonPrimitive.content)
+            assertTrue(WeekReports.clean(listed, schema))
+        }
         val models = GZIPInputStream(File("src/main/assets/${WeekReports.MODELS_ASSET}").inputStream()).bufferedReader().readLines()
         assertTrue(models.size > 40_000)
         assertEquals(models.sorted(), models)
@@ -398,6 +407,8 @@ class Round48WeekTest {
     fun `the carrier is the OCD profile, or the home network only when no profile matches`() {
         assertEquals(profile, WeekReports.carrier(profile, "26203"))
         assertEquals("26203", WeekReports.carrier(null, "26203"))
+        assertEquals("310260", WeekReports.carrier(null, "310260"))
+        assertEquals("the relay takes open profiles only", "26203", WeekReports.carrier("fill.26203.8cebd7550c67", "26203"))
         assertEquals("26203", WeekReports.carrier("Lidl Connect", "26203"))
         assertNull(WeekReports.carrier(null, "x"))
         assertTrue(WeekReports.clean(report(mapOf("volte:on" to "signed_in"), carrier = "26203")!!, schema))
@@ -470,8 +481,7 @@ class Round48WeekTest {
     private fun reading(bearer: ProvenBearer) =
         if (bearer == ProvenBearer.IWLAN) BearerReading(bearer.callNetworkType, listOf(ImsTransport.IWLAN), "lte") else BearerReading(bearer.callNetworkType, listOf(ImsTransport.LTE), "lte")
 
-    private fun call(at: Long, direction: CallDirection, roaming: Boolean? = false, active: Boolean = true): CallRecord {
-        val bearer = ProvenBearer.LTE
+    private fun call(at: Long, direction: CallDirection, roaming: Boolean? = false, active: Boolean = true, bearer: ProvenBearer = ProvenBearer.LTE): CallRecord {
         val proof = BearerProof.of(active, reading(bearer), reading(bearer))
         val end = DisconnectReading(510, "CODE_USER_TERMINATED_BY_REMOTE")
         val window = MediaWindowBuilder().apply {
@@ -495,20 +505,87 @@ class Round48WeekTest {
     }
 
     private val from = monday - 7 * day
+    private val out = call(from + day, CallDirection.OUTGOING)
+    private val incoming = call(from + 2 * day, CallDirection.INCOMING)
 
-    private fun measured(calls: List<CallRecord>, sinceMs: Long = from) = WeekReports.measured(OwnerState(calls = calls), sim, sinceMs, monday, rom)
+    private fun measured(calls: List<CallRecord>, week: WeekState = WeekState()) = WeekReports.measured(OwnerState(calls = calls, week = week), sim, from, monday, rom)
 
     @Test
-    fun `calls both ways say works as one flag, and calls from roaming, from another week or before the yes never count`() {
-        val out = call(from + day, CallDirection.OUTGOING)
-        val incoming = call(from + 2 * day, CallDirection.INCOMING)
+    fun `the ladder gives the rung, one flag per bearer, and works needs both directions`() {
         assertEquals(mapOf("volte:on" to Pointers.WORKS), measured(listOf(out, incoming)))
-        assertTrue("calls out alone is no result", measured(listOf(out)).isEmpty())
-        assertTrue(measured(listOf(out, incoming.copy(roaming = true))).isEmpty())
-        assertTrue("not read counts as roaming", measured(listOf(out, incoming.copy(roaming = null))).isEmpty())
-        assertTrue(measured(listOf(out.copy(atMs = from - 1), incoming)).isEmpty())
-        assertTrue("the running week waits", measured(listOf(out, incoming.copy(atMs = monday))).isEmpty())
-        assertTrue(measured(listOf(out, incoming), from + 2 * day).isEmpty())
+        assertEquals("one outgoing call reaches calls_out at most", mapOf("volte:on" to WeekReports.CALLS_OUT), measured(listOf(out)))
+        assertTrue("an incoming call alone is no rung", measured(listOf(incoming)).isEmpty())
+        val wifi = listOf(call(from + day, CallDirection.OUTGOING, bearer = ProvenBearer.IWLAN))
+        assertEquals(mapOf("vowifi:on" to WeekReports.CALLS_OUT), measured(wifi))
+        assertEquals(mapOf("volte:on" to Pointers.WORKS, "vowifi:on" to WeekReports.CALLS_OUT), measured(wifi + out + incoming))
+        // Another bearer's incoming call does not lift it.
+        assertEquals(mapOf("volte:on" to WeekReports.CALLS_OUT), measured(listOf(out, incoming.copy(bearer = null))))
+        assertTrue("no vonr or video result comes from a call", measured(listOf(out, incoming)).keys.none { it.startsWith("vonr") || it.startsWith("video_calling") })
+    }
+
+    @Test
+    fun `a rung counts only for a week with a passing call, on this build, after the last voice install and the yes`() {
+        val earlier = out.copy(atMs = from - day)
+        assertEquals("an old leg with one passing call this week", mapOf("volte:on" to Pointers.WORKS), measured(listOf(earlier, incoming)))
+        assertTrue("no passing call this week: the entry stays signed_in", measured(listOf(earlier, incoming.copy(atMs = from - day))).isEmpty())
+        assertTrue("the running week waits", measured(listOf(out.copy(atMs = monday))).isEmpty())
+        assertTrue("another build holds no rung", measured(listOf(out.copy(build = "other"))).isEmpty())
+        val install = WeekReports.voiceInstalled(WeekState(), sim, "abc", from + day + 1)
+        assertTrue("calls before the install hold no rung", measured(listOf(out), install).isEmpty())
+        assertEquals("the old outgoing leg is gone with it", mapOf("volte:on" to WeekReports.CALLS_OUT), measured(listOf(out.copy(atMs = from + 3 * day), incoming), install))
+        assertEquals("another SIM's install changes nothing", mapOf("volte:on" to WeekReports.CALLS_OUT), measured(listOf(out), WeekReports.voiceInstalled(WeekState(), SimKey(9, "26202", 1), "abc", now)))
+        assertTrue("a pass before the yes proves nothing yet", measured(listOf(out), WeekState(yes = true, yesAtMs = from + 2 * day)).isEmpty())
+        assertEquals(WeekReports.voiceInstalled(WeekState(), sim, "abc", now).voiceInstalls, WeekReports.off(WeekReports.voiceInstalled(WeekState(), sim, "abc", now)).voiceInstalls)
+    }
+
+    @Test
+    fun `a failure or a hold in the week replaces works and calls_out, whatever came first`() {
+        val failed = call(from + day, CallDirection.OUTGOING).copy(method = CallMethod.MAILBOX_CALL, active = false, disconnect = DisconnectReading(501, "CODE_USER_TERMINATED"), hungUpByPhone = false, media = null, activeMs = null)
+        val later = out.copy(atMs = from + 5 * day)
+        assertEquals("a later pass does not hide it", mapOf("volte:on" to Pointers.FAILED), measured(listOf(failed, later, incoming)))
+        assertEquals(mapOf("volte:on" to Pointers.FAILED), measured(listOf(out, incoming, failed.copy(atMs = from + 6 * day))))
+        assertEquals("a hold has no bearer, so it takes the rung it finds", mapOf("volte:on" to Pointers.FAILED), measured(listOf(out, incoming), WeekState(callHoldAtMs = from + 3 * day)))
+        assertTrue("a hold with no rung adds nothing", measured(emptyList(), WeekState(callHoldAtMs = from)).isEmpty())
+        assertEquals("a hold of another week changes nothing", mapOf("volte:on" to Pointers.WORKS), measured(listOf(out, incoming), WeekState(callHoldAtMs = from - 1)))
+        val dataset = File("src/main/java/io/github/open_carrier_data/check/owner/OwnerDataset.kt").readText()
+        assertTrue(dataset.contains("week = it.week.copy(callHoldAtMs = now)"))
+    }
+
+    @Test
+    fun `nothing from roaming, several calls, a mailbox notification or an uncalibrated stack`() {
+        for (notHome in listOf(true, null)) assertEquals(mapOf("volte:on" to WeekReports.CALLS_OUT), measured(listOf(out, incoming.copy(roaming = notHome))))
+        assertTrue(measured(listOf(out.copy(roaming = true))).isEmpty())
+        assertEquals(mapOf("volte:on" to WeekReports.CALLS_OUT), measured(listOf(out, incoming.copy(severalCalls = true))))
+        assertEquals(mapOf("volte:on" to WeekReports.CALLS_OUT), measured(listOf(out, incoming.copy(fromMailbox = true))))
+        assertTrue(measured(listOf(out.copy(stack = "phh_ims"))).isEmpty())
+        // A call whose bearer proof did not count holds no rung.
+        assertTrue(measured(listOf(out.copy(bearer = null))).isEmpty())
+        val merged = WeekReports.merged(mapOf("volte:on" to "signed_in"), mapOf("volte:on" to "works"), "phh_ims")
+        assertEquals("an uncalibrated stack keeps what the light check saw", mapOf("volte:on" to "signed_in"), merged)
+        assertEquals(mapOf("volte:on" to "works"), WeekReports.merged(mapOf("volte:on" to "signed_in"), mapOf("volte:on" to "works"), "aosp_imsstack"))
+        val calls = File("src/main/java/io/github/open_carrier_data/check/owner/OwnerCalls.kt").readText()
+        assertTrue("read as the call starts", calls.indexOf("val roaming = QuietReader.roaming(context)") in 1 until calls.indexOf("while (SystemClock.elapsedRealtime() - started < MAX_MS)"))
+    }
+
+    @Test
+    fun `calls_out is a result of a calibrated stack only, and only the rung leaves`() {
+        assertTrue(WeekReports.CALLS_OUT in WeekReports.RESULTS && WeekReports.CALLS_OUT !in WeekReports.UNCALIBRATED_RESULTS)
+        assertTrue(WeekReports.clean(report(mapOf("volte:on" to WeekReports.CALLS_OUT))!!, schema))
+        assertNull(report(mapOf("volte:on" to WeekReports.CALLS_OUT), c = cell.copy(imsStack = "phh_ims")))
+        val store = MemoryStore(OwnerState(calls = listOf(out, incoming), week = yes()))
+        val fake = Fake()
+        step(store, fake)
+        assertEquals(mapOf("volte:on" to "works"), pairs(Json.parseToJsonElement(fake.posts.single()).jsonObject))
+        for (never in listOf("packet", "duration", "count", "direction", "outgoing")) assertFalse(never, fake.posts.single().contains(never, ignoreCase = true))
+    }
+
+    @Test
+    fun `the words say what the rungs mean and what a yes reveals`() {
+        for (needed in listOf("calls both ways by packet counts", "outgoing only", "No sound was checked", "nothing here speaks for emergency calls", "the flag shows that calls happened that week")) {
+            assertTrue(needed, needed in WeekQuestion.DETAILS_TEXT)
+            assertTrue(needed, needed in WeekWords.MEANS)
+        }
+        assertTrue(File("src/main/java/io/github/open_carrier_data/check/owner/OwnerScreen.kt").readText().contains("Summary(WeekWords.MEANS)"))
     }
 
     @Test
@@ -524,7 +601,7 @@ class Round48WeekTest {
         val basis = TestBasis("r", rom, "a")
         val inserted = EntryRecord(sim, "apn:$row", from + day, basis, works = false, outcome = "inserted")
         val present = EntryRecord(sim, "apn:other.example|default|IP", from + day, basis, works = true, outcome = "present")
-        val state = OwnerState(entries = listOf(inserted, present), calls = listOf(call(from + day, CallDirection.OUTGOING), call(from + 2 * day, CallDirection.INCOMING)))
+        val state = OwnerState(entries = listOf(inserted, present), calls = listOf(out, incoming))
         assertEquals(mapOf("volte:on" to Pointers.WORKS, "apn:$row" to Pointers.FAILED), WeekReports.measured(state, sim, from, monday, rom))
         val store = MemoryStore(state.copy(week = yes()))
         val fake = Fake(rows = setOf(row))
@@ -552,6 +629,6 @@ class Round48WeekTest {
         val state = OwnerState(week = yes())
         assertEquals(state.week, OwnerState.decode(state.encode()).week)
         val text = WeekReports.text(report(mapOf("volte:on" to "signed_in"))!!)
-        assertFalse("subId" in text || "26203\"" in text)
+        assertFalse("subId" in text)
     }
 }

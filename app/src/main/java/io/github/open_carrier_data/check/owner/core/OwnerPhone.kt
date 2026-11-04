@@ -48,6 +48,9 @@ interface OwnerPhone {
     suspend fun iwlanServiceText(): String? = null
     suspend fun qnsText(): String? = null
 
+    /** ImsStack's own service dump; its `### Carrier Configs` holds every config layer (round 49). Parsed in memory, never kept. */
+    suspend fun imsStackText(): String? = null
+
     /** `dumpsys isms`, for how an SMS came in ([InboundSms]); null when the route cannot read it. */
     suspend fun smsText(): String? = null
 

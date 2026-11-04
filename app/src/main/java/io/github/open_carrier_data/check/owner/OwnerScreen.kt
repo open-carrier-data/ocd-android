@@ -106,6 +106,7 @@ import io.github.open_carrier_data.check.owner.core.Ladders
 import io.github.open_carrier_data.check.owner.core.LeftoversLine
 import io.github.open_carrier_data.check.owner.core.PointerLedger
 import io.github.open_carrier_data.check.owner.core.MobileDataLine
+import io.github.open_carrier_data.check.owner.core.NoCallWords
 import io.github.open_carrier_data.check.owner.core.CarrierOffer
 import io.github.open_carrier_data.check.owner.core.ReportPlan
 import io.github.open_carrier_data.check.owner.core.ReportWords
@@ -116,6 +117,7 @@ import io.github.open_carrier_data.check.owner.core.StatusKind
 import io.github.open_carrier_data.check.owner.core.StatusSentence
 import io.github.open_carrier_data.check.owner.core.Tone
 import io.github.open_carrier_data.check.owner.core.WeekSwitch
+import io.github.open_carrier_data.check.owner.core.sameCard
 import io.github.open_carrier_data.check.owner.core.WeekWords
 import java.text.DateFormat
 import java.time.ZoneId
@@ -358,6 +360,7 @@ private fun OwnerContent(ui: OwnerUi, options: TestOptions, setOptions: (TestOpt
     }
     CarrierData(ui, actions)
     WeekSection(ui, actions)
+    NoCallSection(ui)
 
     var open by rememberSaveable { mutableStateOf(false) }
     Spacer(Modifier.padding(top = 24.dp))
@@ -447,9 +450,30 @@ private fun WeekSection(ui: OwnerUi, actions: OwnerActions) {
                 Title(WeekWords.LAST)
                 val last = week.last
                 Summary(if (last == null) WeekWords.NONE else WeekWords.line(last))
+                Summary(WeekWords.MEANS)
                 last?.reports?.forEach { report ->
                     SelectionContainer { Text(report, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
                 }
+            }
+        }
+    }
+}
+
+/** Round 49: the checks without a call. They live on this screen only, and an unknown result shows nothing. */
+@Composable
+private fun NoCallSection(ui: OwnerUi) {
+    if (!ui.privileged) return
+    val context = LocalContext.current
+    val format = remember { android.text.format.DateFormat.getMediumDateFormat(context) }
+    val two = ui.sims.orEmpty().size > 1
+    val lines = NoCallWords.lines(ui.state.noCall, { key -> ui.sims.orEmpty().firstOrNull { it.key.sameCard(key) }?.name.takeIf { two } }) { format.format(Date(it)) }
+    if (lines.isEmpty()) return
+    SectionTitle(NoCallWords.SECTION)
+    Group {
+        item {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                lines.forEach { Summary(it) }
+                Summary(NoCallWords.NOTE)
             }
         }
     }

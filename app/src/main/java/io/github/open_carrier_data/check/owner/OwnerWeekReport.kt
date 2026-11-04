@@ -94,7 +94,7 @@ private class AndroidWeekDevice(private val context: Context, private val store:
         return QuietPlan.apnCandidates(OwnerData(context, store).apnRows(live), live).map { it.key }.toSet()
     }
 
-    override suspend fun relayOpen(): Boolean = OwnerData(context, store).relayOpen()
+    override fun relayOpen(): Boolean = OwnerData(context, store).relayOpen()
 
     /**
      * One POST on the very network the limits were read on, so a switch to mobile data cannot carry it. HTTPS only, no

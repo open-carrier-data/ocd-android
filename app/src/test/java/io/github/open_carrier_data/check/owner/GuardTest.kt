@@ -59,6 +59,8 @@ class GuardTest {
         // The IWLAN and QNS dumps in place of the log (2026-10-20); no Wi-Fi command at all.
         assertEquals("dumpsys activity service com.google.android.iwlan/.IwlanDataService", lines[OwnerCommand.IWLAN_DUMP])
         assertEquals("dumpsys activity service com.android.telephony.qns", lines[OwnerCommand.QNS_DUMP])
+        // Round 49: ImsStack's own config layers, for the QoS check.
+        assertEquals("dumpsys activity service com.android.imsstack", lines[OwnerCommand.IMS_STACK_DUMP])
         assertEquals("dumpsys power", lines[OwnerCommand.POWER])
         // How a test SMS came in, from Telephony's own record (2026-10-24).
         assertEquals("dumpsys isms", lines[OwnerCommand.SMS_DUMP])
