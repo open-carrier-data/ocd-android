@@ -257,7 +257,7 @@ enum class MediaVerdict(val wire: String) {
 /** How a measured call came about (round 28's call_kind). */
 @Serializable
 enum class CallKind(val wire: String) {
-    /** OCD's automatic, muted call to the SIM's own mailbox. */
+    /** The person's tapped call to the SIM's own mailbox, placed by OCD (the wire name is round 28's). */
     @SerialName("mailbox_auto")
     MAILBOX_AUTO("mailbox_auto"),
 

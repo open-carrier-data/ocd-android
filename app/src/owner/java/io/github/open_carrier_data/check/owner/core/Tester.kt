@@ -1,26 +1,28 @@
 package io.github.open_carrier_data.check.owner.core
 
-import io.github.open_carrier_data.check.core.Mailbox
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
 
 /*
- * OCD round 31 ("scope", SM7 to SM12): the tester runs in two builds.
+ * OCD rule round 47: what runs by itself, the same on every phone.
  *
- * - The owner build (build type `owner`): the owner's own phones only. Its tests run under the owner's own switches.
- * - The ROM build (build type `rom`): the build another ROM ships in its own image, signed with that
- *   ROM's key (SM5). It pulls, hands the dataset to CarrierSettings and runs the passive checks
- *   (IMS registration, data validation, the no-regression check) without asking. The active tests
- *   (dialled test calls, test SMS, trials that change carrier settings, the emergency data test and,
- *   since round 42, the mobile-data probe ladder and the Wi-Fi-calling name lookup) run only after
- *   the person turns them on (SM9, off by default), and calls and SMS go only where OCD's allowlist
- *   marks them free for that carrier.
+ * Automatic: passive reads, IMS registration state, watching real calls and SMS, the failure-only data
+ * and DNS probes, dataset installs, and repair after a measured failure. Nothing automatic rings, shows,
+ * leaves a trace or can cost money. On the person's tap only: a test call, a test SMS, the balance USSD,
+ * Test now's trials, the voice-loss hold's split and the MMS APN candidates. The emergency data test
+ * never runs by itself and has no tap: only a ROM builder's manual first use over adb (SM10).
  *
- * In both builds nothing leaves the phone by itself (round 47, item 2): results stay on the phone as local
- * records, and a report goes only when the person taps, reads it and submits it under their own GitHub login.
+ * No phone declares a tester, so SM7 applies on every phone. A healthy phone gets no trials: a trial can
+ * lose a real incoming call and gains only "still registered". An automatic result stops at signed_in;
+ * only a real or tapped call can say works.
  *
- * In both builds, active verdicts count only on an IMS stack that one calls-out pass has calibrated
- * (SM8); today that is AOSP ImsStack. On any other stack results read "not counted": no candidates,
- * no records, only passive evidence.
+ * Active verdicts count only on an IMS stack that one calls-out pass has calibrated (SM8); today that is
+ * AOSP ImsStack. On any other stack results read "not counted": no candidates, no records, only passive
+ * evidence.
  */
 
 /** Which build this is ([io.github.open_carrier_data.check.BuildConfig.TESTER]). */
@@ -38,55 +40,23 @@ enum class TesterBuild(val wire: String) {
 @Serializable
 data class TesterDeclaration(val on: Boolean, val atMs: Long)
 
-/** The person's opt-in for the active tests on a ROM build (SM9). Off by default; the owner build does not use it. */
-@Serializable
-data class ActiveTestsOptIn(val on: Boolean = false, val atMs: Long? = null)
-
-/** What the tests may do in this build, for this person (SM8 to SM11). Pure. */
-data class TesterPolicy(val build: TesterBuild, val optIn: Boolean = false) {
-    val owner: Boolean get() = build == TesterBuild.OWNER
-
-    /** Dialled test calls, test SMS, override trials, the emergency data test and the probe ladder with W1 (SM9). */
-    val activeTests: Boolean get() = owner || optIn
-
-    /** Why a dialled test call to [mailbox] may not go out in this build, or null (SM9). */
-    fun callRefusal(mailbox: Mailbox?): String? = when {
-        !activeTests -> OPT_IN_OFF
-        !owner && mailbox?.freeCalls != true -> NOT_FREE
-        else -> null
-    }
-
-    /** Why a test SMS may not go out in this build for a SIM whose allowlist entry is [entry], or null (SM9). */
-    fun smsRefusal(entry: Mailbox?): String? = when {
-        !activeTests -> OPT_IN_OFF
-        !owner && entry?.freeSms != true -> NOT_FREE
-        else -> null
-    }
-
-    /**
-     * Why the emergency data test may not run, or null (SM9 and SM10). [buildSwitch]: the ROM
-     * builder's switch, which CarrierSettings reports from the build after the device family's
-     * first use passed (null when this ROM build does not say).
-     */
-    fun emergencyRefusal(buildSwitch: Boolean?): String? = when {
-        !activeTests -> OPT_IN_OFF
-        buildSwitch != true -> "the ROM builder has not turned the emergency data test on in this build"
-        else -> null
-    }
-
-    /**
-     * Why the round 29 setting trials (a non-persistent override, a temporary access point row, the restart check's
-     * override) may not start on the IMS stack [stackId], or null (SM8, SM9). The stack is read first, as in the round 30
-     * and 31 paths: the opt-in cannot make a stack count that the tests are not calibrated on.
-     */
-    fun trialRefusal(stackId: String?): TrialRefusal? =
-        StackCalibration.notCounted(stackId)?.let { TrialRefusal(NOT_CALIBRATED, it) }
-            ?: if (!activeTests) TrialRefusal(OPT_IN_OFF, "the active tests are off on this phone; only the passive checks run") else null
+/** What may start by itself on this phone (round 47, SM8). Pure. */
+data class TesterPolicy(
+    /** OcdCarrierSettings is on this phone and speaks round 31 ([DatasetStatus.round31]). */
+    val provider: Boolean = false,
+    /** The phone's IMS stack, as [ImsStack] names it. */
+    val stackId: String? = null,
+) {
+    /** Why a setting trial may not start here, or null: the provider, then the calibrated stack (SM8). */
+    val trialRefusal: TrialRefusal?
+        get() = when {
+            !provider -> TrialRefusal(NO_PROVIDER, "this phone has no OcdCarrierSettings that speaks round 31; only the passive checks run")
+            else -> StackCalibration.notCounted(stackId)?.let { TrialRefusal(NOT_CALIBRATED, it) }
+        }
 
     companion object {
-        const val OPT_IN_OFF = "active_tests_off"
-        const val NOT_FREE = "not_marked_free"
         const val NOT_CALIBRATED = "stack_not_calibrated"
+        const val NO_PROVIDER = "no_round31_provider"
     }
 }
 
@@ -105,21 +75,32 @@ object StackCalibration {
         if (counted(stackId)) null else "not counted: the tests are not calibrated on the IMS stack ${stackId?.ifEmpty { null } ?: "this phone runs"}; only passive evidence counts"
 }
 
-/** The opt-in's words (SM9): what the app does, in plain words, before the person turns it on. */
-object OptInWords {
-    const val TITLE = "Test calls on this phone"
-    const val OFF = "Off: Open Carrier Data only checks what the phone shows by itself. It makes no calls, sends no SMS, sends no test requests and changes no carrier setting to test it"
-    const val ON = "On: Open Carrier Data tests calls on this phone, only where its list marks the call and the SMS free for your carrier"
+/** Round 47: the static line on the first screen, what the app does without being asked. */
+object OnItsOwn {
+    const val LINE = "On its own, this app only reads the phone's state, installs new carrier data and repairs a failure it measured. " +
+        "It makes no calls and sends no SMS unless you tap for it."
+}
 
-    /** What the person agrees to, shown before the switch goes on. */
-    fun explain(emergencyDataTest: Boolean): String = buildString {
-        append("When this is on, Open Carrier Data:\n")
-        append("- calls your SIM's own mailbox, muted, at most ${TestCaps.CALLS_PER_DAY} times a day;\n")
-        append("- sends SMS to your SIM's own number;\n")
-        append("- changes carrier settings for a short while to test them, and puts them back;\n")
-        append("- when mobile data or Wi-Fi calling fails, or when you ask for a check, sends a few kilobytes of test requests over mobile data and Wi-Fi to find out why, by itself at most once every 6 hours;\n")
-        if (emergencyDataTest) append("- briefly opens the emergency data connection, without making a call.\n")
-        append("The calls and SMS go only where Open Carrier Data's list marks the mailbox call and the SMS as free for your carrier. None of it happens during a call or while roaming, and the test requests wait while mobile data is switched off. ")
-        append("It never calls an emergency number. Results stay on this phone; apart from those test requests, nothing is sent anywhere by itself. You can turn it off at any time.")
+/**
+ * Round 47: the kinds SM7 holds back, which an automatic trial never applies: VoLTE, Wi-Fi calling or SMS over IMS off,
+ * provisioning that turns voice off, a Wi-Fi-only mode, and values that hide or lock a switch. With no dialled test to
+ * catch it, such a value can remove calls, including the path to 112, on a network without 2G or 3G.
+ */
+object Sm7Kinds {
+    private val WFC_MODE = setOf("carrier_default_wfc_ims_mode_int", "carrier_default_wfc_ims_roaming_mode_int")
+    private const val WIFI_ONLY = 0
+
+    /** CarrierSettings's own `sm7Kind`, read from a JSON value. */
+    fun held(key: String, value: JsonElement?): Boolean {
+        val primitive = value as? JsonPrimitive
+        return when {
+            key in Groups.X5_OFF -> primitive?.booleanOrNull == Groups.X5_OFF.getValue(key)
+            key in WFC_MODE -> primitive?.intOrNull == WIFI_ONLY
+            key == "carrier_allow_turnoff_ims_bool" || key == "allow_adding_apns_bool" -> primitive?.booleanOrNull == false
+            key.startsWith("editable_") -> primitive?.booleanOrNull == false
+            key.startsWith("hide_") -> primitive?.booleanOrNull == true
+            key == "read_only_apn_types_string_array" || key == "read_only_apn_fields_string_array" -> (value as? JsonArray)?.isNotEmpty() == true
+            else -> false
+        }
     }
 }

@@ -22,13 +22,10 @@ import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.StatusSentence
 
 /**
- * The owner hears little (2026-10-20, "so the user does not notice it that
- * much"). While a test runs, a quiet notification (the lowest importance: no
- * sound, no status-bar icon, folded at the bottom of the shade) says so with
- * "Stop test". Round 30 removed Undo and round 31 removed safe mode: the way
- * back is disabling this app in Android's Settings, after which CarrierSettings
- * serves the ROM's own data without it. Routine work posts nothing. A normal
- * notification comes only when a value changed or something failed ([Notices]).
+ * Round 47: an automatic run shows nothing, and there is no ongoing notification. A notification comes
+ * only where calls were lost or the person must act: the voice-loss and stop events with Resume. The way
+ * back is disabling this app in Android's Settings, after which CarrierSettings serves the ROM's own data
+ * without it.
  */
 object OwnerNotifications {
     private const val LIVE_CHANNEL = "owner_live_quiet"
@@ -45,12 +42,7 @@ object OwnerNotifications {
     private fun channels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         runCatching { manager.deleteNotificationChannel(OLD_LIVE_CHANNEL) }
-        manager.createNotificationChannel(
-            NotificationChannel(LIVE_CHANNEL, "Active changes", NotificationManager.IMPORTANCE_MIN).apply {
-                description = "Shown while Open Carrier Data is testing or has changed a setting"
-                setShowBadge(false)
-            },
-        )
+        runCatching { manager.deleteNotificationChannel(LIVE_CHANNEL) }
         manager.createNotificationChannel(
             NotificationChannel(EVENTS_CHANNEL, "Changes and failures", NotificationManager.IMPORTANCE_DEFAULT).apply {
                 description = "When a setting is changed or a test fails"
@@ -62,32 +54,9 @@ object OwnerNotifications {
         context, 0, Intent(context, OwnerActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
-    // allowed() checks POST_NOTIFICATIONS first; lint does not follow it into the helper.
-    @SuppressLint("MissingPermission")
+    /** Round 47: no ongoing notification. This only takes away one an older build left. */
     fun refresh(context: Context, state: OwnerState) {
-        val manager = NotificationManagerCompat.from(context)
-        if (!state.anyKept) {
-            manager.cancel(LIVE_ID)
-            return
-        }
-        if (!allowed(context)) return
-        channels(context)
-        val testing = state.overrides.any { it.hold == Hold.TRIAL } || state.apns.any { it.hold == Hold.TRIAL } || state.trial30 != null
-        val text = StatusSentence.keptChanges(state).joinToString(", ")
-        val notification = NotificationCompat.Builder(context, LIVE_CHANNEL)
-            .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setContentTitle(if (testing) "Testing a carrier setting" else Notices.CHANGED_TITLE)
-            .apply { if (!testing && text.isNotEmpty()) setContentText(text) }
-            .setPriority(NotificationCompat.PRIORITY_MIN)
-            .setSilent(true)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(open(context))
-            .apply {
-                if (testing) addAction(0, "Stop test", action(context, NoticeActionReceiver.ACTION_STOP, 2))
-            }
-            .build()
-        runCatching { manager.notify(LIVE_ID, notification) }
+        NotificationManagerCompat.from(context).cancel(LIVE_ID)
     }
 
     /** A change or a failure; replaces the previous one. */
@@ -104,23 +73,6 @@ object OwnerNotifications {
             .setContentIntent(open(context))
             .build()
         runCatching { NotificationManagerCompat.from(context).notify(EVENT_ID, notification) }
-    }
-
-    private fun action(context: Context, what: String, code: Int): PendingIntent = PendingIntent.getBroadcast(
-        context, code, Intent(context, NoticeActionReceiver::class.java).setAction(what), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-    )
-}
-
-/** The notification's "Stop test": it queues its work, nothing else. Not exported. */
-class NoticeActionReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        when (intent.action) {
-            ACTION_STOP -> OwnerScheduler.stopTests(context)
-        }
-    }
-
-    companion object {
-        const val ACTION_STOP = "io.github.open_carrier_data.check.owner.STOP_TEST"
     }
 }
 

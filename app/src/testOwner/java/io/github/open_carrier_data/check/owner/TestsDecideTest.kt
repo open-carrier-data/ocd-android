@@ -34,7 +34,6 @@ import io.github.open_carrier_data.check.owner.core.TrialPlan
 import io.github.open_carrier_data.check.owner.core.TrialVerdict
 import io.github.open_carrier_data.check.owner.core.TypedValues
 import io.github.open_carrier_data.check.owner.core.VoiceLoss
-import io.github.open_carrier_data.check.owner.core.X5Test
 import io.github.open_carrier_data.check.core.CallDirection
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -228,18 +227,6 @@ class TestsDecideTest {
             }
             assertTrue(plans.size <= CampaignPlanner.MAX_TRIALS)
         }
-    }
-
-    @Test
-    fun `X5 - an off is released only by a call ACTIVE on the remaining path, or an SMS delivered`() {
-        assertEquals("iwlan", X5Test.remainingBearer("carrier_volte_available_bool"))
-        assertEquals("lte", X5Test.remainingBearer("carrier_wfc_ims_available_bool"))
-        assertTrue(X5Test.passed("carrier_volte_available_bool", listOf(CallEvidence("iwlan", CallEvidence.PASSED, "L2")), null))
-        assertFalse(X5Test.passed("carrier_volte_available_bool", listOf(CallEvidence("lte", CallEvidence.PASSED, "L2")), null))
-        // "Registered" never proves a voice off: no call, no release.
-        assertFalse(X5Test.passed("carrier_volte_available_bool", emptyList(), true))
-        assertTrue(X5Test.passed("imssms.sms_over_ims_supported_bool", emptyList(), true))
-        assertFalse(X5Test.passed("imssms.sms_over_ims_supported_bool", emptyList(), null))
     }
 
     @Test

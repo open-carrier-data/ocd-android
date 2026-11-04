@@ -6,10 +6,8 @@ import java.time.ZoneId
 import java.util.concurrent.TimeUnit
 
 /*
- * The optional silent incoming-path check (the coordinator's refinement of
- * 2026-10-20; round 26 automatic check 10): off unless the owner turns it on
- * in Details, because an SMS to one's own number may cost an SMS on the
- * tariff. When on, now and then at night, the app sends one data SMS to the
+ * The incoming-path check on the person's tap (round 47; it was a weekly job): an SMS to one's own
+ * number may cost an SMS on the tariff. The app sends one data SMS to the
  * phone's own number on its own port (the SMS manager's data message: always a
  * port, never a port-less text, never a Type 0 "silent" SMS) and waits for
  * it to come back. It arriving says "the network reaches this phone over
@@ -57,7 +55,6 @@ object SelfSms {
     const val MAGIC = "OCD1"
     const val IMS = "ims"
     const val CS = "cs"
-    val EVERY_MS: Long = TimeUnit.DAYS.toMillis(7)
     val WAIT_MS: Long = TimeUnit.MINUTES.toMillis(10)
     private val NONCE = Regex("[0-9a-f]{16}")
     private val NUMBER = Regex("\\+?[0-9]{6,15}")
@@ -82,11 +79,6 @@ object SelfSms {
         smsOverIms != true -> "sms_over_ims_not_registered"
         ownNumber == null || !NUMBER.matches(ownNumber) -> "own_number_unknown"
         else -> null
-    }
-
-    fun due(checks: List<SelfSmsCheck>, sim: SimKey, nowMs: Long): Boolean {
-        val last = checks.lastOrNull { it.sim.sameCard(sim) && !it.result.startsWith("refused_") } ?: return true
-        return nowMs - last.sentAtMs >= EVERY_MS || nowMs < last.sentAtMs
     }
 
     /** A sent SMS that did not come back within [WAIT_MS] is "not received". */

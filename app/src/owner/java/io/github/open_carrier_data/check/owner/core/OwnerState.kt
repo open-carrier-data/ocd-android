@@ -252,14 +252,9 @@ data class OwnerState(
     val provisional: List<ProvisionalKeep> = emptyList(),
     /** What this phone's own measured calls showed, 90 days each ([Retested]). */
     val retested: List<RetestedEntry> = emptyList(),
-    /** Whether the app dials its own mailbox calls or only logs what it would dial ([CallsOutMode]). */
-    val callsOutMode: CallsOutMode = CallsOutMode.DRY_RUN,
-    /** The mailbox calls of the recent nights: at most one per feature and bearer a night. */
-    val callsOutNights: List<CallsOutNight> = emptyList(),
     /** The MMS access point checks per SIM ([MmsProbe]); never an MMS. */
     val mms: List<MmsCheck> = emptyList(),
-    /** The optional data SMS to the phone's own number (off unless the owner turns it on; it may cost an SMS). */
-    val selfSmsOn: Boolean = false,
+    /** The data SMS the person tapped for, to the phone's own number (it may cost an SMS). */
     val selfSms: List<SelfSmsCheck> = emptyList(),
     /**
      * OCD round 30: what CarrierSettings's dataset installer last reported (`status`); null before
@@ -291,8 +286,6 @@ data class OwnerState(
     val lastCallSeenAtMs: Long? = null,
     /** Round 30 keeps no override: the keeps of earlier builds were dropped once. */
     val keepsDropped: Boolean = false,
-    /** Round 31 (SM9): the person's opt-in for the active tests in a ROM build; off by default, unused in the owner build. */
-    val activeTests: ActiveTestsOptIn = ActiveTestsOptIn(),
     /** Round 31 (R31.5): the last tester declaration sent to CarrierSettings, so the same one goes at most once a day. */
     val testerDeclared: TesterDeclaration? = null,
     /** Round 32 (D8 and D7 rule 4, rounds 33 to 36): the APN candidate trials after measured failures, each once per commit and SIM. */
@@ -305,13 +298,11 @@ data class OwnerState(
     val epdgRuns: List<EpdgRunMark> = emptyList(),
     /** Round 42 (items 4/5): the last account-state read per SIM (a balance USSD reply or a carrier-SMS class), fed into the verdict while fresh. */
     val accountReads: List<AccountReadMark> = emptyList(),
-    /** Round 42 (item 4): the owner's opt-in for the balance USSD read; off by default, and on rom also behind the active-tests opt-in (SM9). */
-    val balanceUssdOn: Boolean = false,
     /** Round 42 (item 4): when a balance USSD was last sent, for the small daily cap. */
     val balanceAskedMs: List<Long> = emptyList(),
     /** Round 42 (item 4, follow-up fix): a send that read nothing (a menu, a failure, no reply) halts that SIM's sends until the next day. */
     val balanceHalts: List<BalanceHalt> = emptyList(),
-    /** Round 42 (item 5): the person's opt-in for reading the carrier's own plan SMS; off by default, and on rom behind SM9's opt-in. */
+    /** Round 42 (item 5): the person's own switch for reading the carrier's own plan SMS; off by default. */
     val carrierSmsOn: Boolean = false,
     /** Round 43: each SIM's current verdict and its Details, for the screen ([DiagnosisMark]); classes and plain words only. */
     val diagnoses: List<DiagnosisMark> = emptyList(),

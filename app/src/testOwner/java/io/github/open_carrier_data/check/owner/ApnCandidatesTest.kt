@@ -240,11 +240,12 @@ class ApnCandidatesTest {
     ) = ApnCandidateGate.refusal(ApnCandidateGate.Inputs(status, active, roaming, left, stop, failure, mmsEnded))
 
     @Test
-    fun `candidates run only on a tester phone - calibrated stack, active tests, at home, within the caps`() {
+    fun `candidates run on a calibrated stack, at home, within the caps, and an MMSC failure needs a tap`() {
         assertNull(gate())
         assertNotNull(gate(status = status(stack = "phh_ims")))
         assertNotNull(gate(status = status().copy(protocol = 2)))
-        assertNotNull(gate(active = false))
+        assertNotNull(gate(active = false, failure = LeadFailure.MMSC_PROBE))
+        assertNull(gate(active = false))
         assertNotNull(gate(roaming = true))
         assertNotNull(gate(roaming = null))
         assertNotNull(gate(left = 1))

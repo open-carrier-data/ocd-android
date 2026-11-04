@@ -43,22 +43,19 @@ import kotlinx.coroutines.withTimeoutOrNull
  * [io.github.open_carrier_data.check.owner.core.Refusals] before this runs). An automatic W1 asks the
  * cellular resolver only when cellular data itself fails or is the default network; the owner's
  * "check now" compares both. D5 (the carrier self-care page) is in; the D6 throughput sample never is.
- * On the rom build the ladder and W1 run only behind SM9's opt-in ([allowed]), the way the balance read does.
+ * Round 47: these failure-only probes are automatic on every phone; the bounds above are their only gate.
  */
 @RequiresApi(Build.VERSION_CODES.Q)
 object OwnerProbe {
     private const val NETWORK_MS = 20_000L
     private const val WIFI_MS = 2_000L
 
-    /** Whether the ladder and W1 may run in this build: always on the owner build, on rom only after the person's active-tests opt-in (SM9). */
-    fun allowed(state: OwnerState): Boolean = OwnerTester.policy(state).activeTests
-
     /**
      * Runs the ladder for [sim] on a freshly requested cellular network and returns each step's
      * outcome, or null when the network did not come up. The network's own LinkProperties give its
      * DNS servers, [ProbeNet.privateDnsStrict] its Private DNS mode and its own capabilities the
      * Private DNS broken bit; the default network (the Wi-Fi while Wi-Fi is on) is never read for
-     * them. D5 runs (owner and rom only path). Only [runIfDue] calls it, behind [allowed].
+     * them. D5 runs (owner and rom only path). Only [runIfDue] calls it.
      */
     private suspend fun run(context: Context, sim: OwnerSim): ProbeResults? =
         onCellular(context, sim) { network ->
@@ -157,7 +154,6 @@ object OwnerProbe {
         dataOff: Boolean,
         nowMs: Long,
     ): ProbeRunMark? {
-        if (!allowed(store.read())) return null
         if (ProbePolicy.refusal(roaming, dataOff) != null) return null
         val last = ProbeRunMark.last(store.read().probeRuns, sim.key)
         if (!ProbePolicy.due(measuredFailure, checkNow, last?.atMs, nowMs)) return null
@@ -189,7 +185,6 @@ object OwnerProbe {
         nowMs: Long,
         safe: suspend () -> Boolean,
     ): EpdgRunMark? {
-        if (!allowed(store.read())) return null
         if (ProbePolicy.refusal(roaming, dataOff) != null) return null
         val home = HomeNetwork.of(sim.identity.mccmnc) ?: return null
         val wifi = wifiNetwork(context)

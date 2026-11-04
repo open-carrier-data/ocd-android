@@ -7,7 +7,8 @@ import java.time.ZoneOffset
 import java.util.concurrent.TimeUnit
 
 /*
- * The emergency data test (OCD round 30, "emergencyDataTest"), owner build only. The app requests
+ * The emergency data test (OCD round 30, "emergencyDataTest"). Round 47: it never runs by itself and no person
+ * gets a tap for it; only a ROM builder's manual first use over adb (SM10) runs it. The app requests
  * the emergency data network (NET_CAPABILITY_EIMS) on the home mobile network with the SIM's
  * matched emergency APN row, sees whether the network sets it up, and releases it. There is no
  * call, no dialled number, no SIP, no IMS emergency registration, and nothing is sent.
@@ -201,29 +202,6 @@ object EmergencyData {
         i.honorRetryTimer != false -> "shouldHonorRetryTimerForEmergencyNetworkRequest is not false on this build"
         i.emergencyTransport != "WWAN" -> "the preferred transport for emergency is not cellular"
         else -> null
-    }
-
-    /**
-     * Why a session is due for this SIM now, or null. [rowKey]: the SIM's selected emergency row
-     * (null: Android's default). One session per SIM per day; after three days on which both
-     * requests failed, paused until the row or the build changes.
-     */
-    fun due(sessions: List<EmergencySession>, sim: SimKey, rowKey: String?, basis: String, nowMs: Long): String? {
-        val mine = sessions.filter { it.subId == sim.subId && it.mccmnc == sim.mccmnc }
-        val today = day(nowMs)
-        if (mine.any { it.day == today && it.outcome !in setOf("refused") }) return null
-        val sameCell = mine.filter { it.rowKey == rowKey && it.basis == basis }
-        if (sameCell.filter { it.outcome == "both_failed" }.map { it.day }.distinct().size >= PAUSE_AFTER_FAILED_DAYS) return null
-        if (sameCell.any { it.outcome == "stopped" }) return null
-        val decided = sameCell.filter { it.outcome in setOf("passed", "default_won", "failed", "both_failed") }
-        if (mine.isEmpty()) return "a SIM first seen"
-        if (mine.none { it.rowKey == rowKey }) return "the SIM's emergency row changed"
-        if (mine.none { it.basis == basis }) return "a new build, IMS stack or modem firmware"
-        val last = decided.maxByOrNull { it.atMs } ?: return "no decided session yet"
-        if (last.outcome == "both_failed") return "both requests failed on an earlier day"
-        val ends = LocalDate.parse(last.day).plusDays(RECORD_DAYS)
-        if (!LocalDate.parse(today).isBefore(ends.minusDays(RENEW_BEFORE_DAYS))) return "the 90-day record is about to expire"
-        return null
     }
 
     /** One attempt's class (the ruling's verdicts). */

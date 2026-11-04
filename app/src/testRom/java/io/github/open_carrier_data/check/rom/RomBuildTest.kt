@@ -3,7 +3,6 @@ package io.github.open_carrier_data.check.rom
 import io.github.open_carrier_data.check.BuildConfig
 import io.github.open_carrier_data.check.owner.OwnerAccess
 import io.github.open_carrier_data.check.owner.OwnerTester
-import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.TesterBuild
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -45,12 +44,6 @@ class RomBuildTest {
         assertEquals("io.github.open_carrier_data.check", BuildConfig.APPLICATION_ID)
         assertEquals(TesterBuild.ROM, OwnerTester.build)
         assertEquals("io.github.open_carrier_data.check", merged.documentElement.getAttribute("package"))
-    }
-
-    @Test
-    fun `out of the box the active tests are off`() {
-        val policy = OwnerTester.policy(OwnerState())
-        assertFalse(policy.activeTests)
     }
 
     @Test

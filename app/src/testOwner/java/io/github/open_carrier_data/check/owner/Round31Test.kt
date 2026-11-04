@@ -13,7 +13,6 @@ import io.github.open_carrier_data.check.owner.core.DeviceOverride
 import io.github.open_carrier_data.check.owner.core.ExplainKey
 import io.github.open_carrier_data.check.owner.core.ExplainView
 import io.github.open_carrier_data.check.owner.core.MeasuredRecord
-import io.github.open_carrier_data.check.owner.core.OptInWords
 import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.RecordCarrier
@@ -25,8 +24,6 @@ import io.github.open_carrier_data.check.owner.core.RecordTarget
 import io.github.open_carrier_data.check.owner.core.RecordValue
 import io.github.open_carrier_data.check.core.SimIdentity
 import io.github.open_carrier_data.check.owner.core.StackCalibration
-import io.github.open_carrier_data.check.owner.core.TesterBuild
-import io.github.open_carrier_data.check.owner.core.TesterPolicy
 import io.github.open_carrier_data.check.owner.core.TrialGuard
 import io.github.open_carrier_data.check.owner.core.TrialOutcome
 import io.github.open_carrier_data.check.owner.core.TrialVerdict
@@ -165,46 +162,6 @@ class Round31Test {
         assertEquals(CampaignPhase.DONE, passed.phase)
         val notCounted = CampaignPlanner.passive(c, TrialVerdict(TrialOutcome.NOT_COUNTED, reason = "no service"), "x", now)
         assertEquals(CampaignPhase.BATCH, notCounted.phase)
-    }
-
-    @Test
-    fun `SM9 and SM11 - the ROM build tests actively only after the opt-in, only where the allowlist marks it free, and never sends`() {
-        val free = Mailbox("Vodafone", "5500", "x", FreeFlags(calls = true, sms = true))
-        val notFree = Mailbox("Vodafone", "5500", "x")
-        val off = TesterPolicy(TesterBuild.ROM, optIn = false)
-        val on = TesterPolicy(TesterBuild.ROM, optIn = true)
-        assertFalse(off.activeTests)
-        assertEquals(TesterPolicy.OPT_IN_OFF, off.callRefusal(free))
-        assertEquals(TesterPolicy.OPT_IN_OFF, off.smsRefusal(free))
-        assertNull(on.callRefusal(free))
-        assertNull(on.smsRefusal(free))
-        assertEquals(TesterPolicy.NOT_FREE, on.callRefusal(notFree))
-        assertEquals(TesterPolicy.NOT_FREE, on.smsRefusal(notFree))
-        assertEquals(TesterPolicy.NOT_FREE, on.smsRefusal(null))
-        assertEquals(TesterPolicy.NOT_FREE, on.callRefusal(Mailbox("x", "333", "x", FreeFlags(calls = false, sms = true))))
-        // The emergency data test also needs the ROM builder's switch (SM10).
-        assertNotNull(off.emergencyRefusal(buildSwitch = true))
-        assertNotNull(on.emergencyRefusal(buildSwitch = null))
-        assertNotNull(on.emergencyRefusal(buildSwitch = false))
-        assertNull(on.emergencyRefusal(buildSwitch = true))
-        // The owner build keeps its own switches; the emergency data test waits for the ROM builder's switch there too.
-        val owner = TesterPolicy(TesterBuild.OWNER)
-        assertTrue(owner.activeTests)
-        assertNull(owner.callRefusal(notFree))
-        assertNull(owner.emergencyRefusal(buildSwitch = true))
-        assertNotNull(owner.emergencyRefusal(buildSwitch = null))
-        // An unknown build name is the stricter ROM build; the opt-in is off in a fresh state.
-        assertEquals(TesterBuild.ROM, TesterBuild.of("something"))
-        assertFalse(OwnerState().activeTests.on)
-    }
-
-    @Test
-    fun `SM9 - the opt-in says in plain words what the app does`() {
-        val text = OptInWords.explain(emergencyDataTest = true)
-        for (part in listOf("mailbox", "at most 10 times a day", "SMS to your SIM's own number", "changes carrier settings", "emergency data connection, without making a call", "free", "never calls an emergency number", "nothing is sent", "a few kilobytes of test requests", "at most once every 6 hours")) {
-            assertTrue(part, part.lowercase() in text.lowercase())
-        }
-        assertFalse("emergency data" in OptInWords.explain(emergencyDataTest = false))
     }
 
     @Test

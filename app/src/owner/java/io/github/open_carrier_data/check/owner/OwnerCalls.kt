@@ -7,14 +7,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.SystemClock
 import android.os.UserManager
-import android.provider.CallLog
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import androidx.work.ExistingWorkPolicy
@@ -33,7 +31,6 @@ import io.github.open_carrier_data.check.owner.core.CallLevels
 import io.github.open_carrier_data.check.owner.core.CallMethod
 import io.github.open_carrier_data.check.owner.core.CallRecord
 import io.github.open_carrier_data.check.owner.core.MailboxGuard
-import io.github.open_carrier_data.check.owner.core.MuteState
 import io.github.open_carrier_data.check.owner.core.OwnerFeature
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.PointerLedger
@@ -86,36 +83,29 @@ object CallBuild {
         targets(context)?.let { CallTargets.dialableFor(it, sim.identity.mccmnc, sim.identity.spn) { false } }
 }
 
-/**
- * Round 31: which build this is (the owner's, or the one another ROM ships) and what its tests may
- * do for this person ([TesterPolicy]): BuildConfig.TESTER, and the opt-in kept in the state.
- */
+/** Which build this is, and what may start by itself on this phone ([TesterPolicy]). */
 object OwnerTester {
     val build: io.github.open_carrier_data.check.owner.core.TesterBuild
         get() = io.github.open_carrier_data.check.owner.core.TesterBuild.of(io.github.open_carrier_data.check.BuildConfig.TESTER)
 
-    fun policy(state: io.github.open_carrier_data.check.owner.core.OwnerState) =
-        io.github.open_carrier_data.check.owner.core.TesterPolicy(build, state.activeTests.on)
+    /** The provider's word is the last status read: a fresh state has none, so nothing starts until the installer has answered. */
+    fun policy(context: Context, state: OwnerState) =
+        io.github.open_carrier_data.check.owner.core.TesterPolicy(state.datasetStatus?.round31 == true, CallBuild.stack(context))
 
-    fun policy(context: Context) = policy(FileStateStore(context).read())
-
-    /**
-     * Why the round 29 setting trials (a non-persistent override, a temporary access point row, and the restart
-     * check's override) may not start, or null: only on an IMS stack the tests are calibrated on (SM8, both builds),
-     * and on rom only after the person's opt-in (SM9). The stack is the one [CallBuild] names for the reports and the calls.
-     */
-    fun trialRefusal(context: Context, state: OwnerState): TrialRefusal? = policy(state).trialRefusal(CallBuild.stack(context))
+    /** Why a setting trial may not start, or null: the provider and the calibrated stack (SM8). */
+    fun trialRefusal(context: Context, state: OwnerState): TrialRefusal? = policy(context, state).trialRefusal
 }
 
 /**
- * Telecom, the audio service and the call log for the app's own mailbox call.
- * CALL_PHONE, READ_CALL_LOG and WRITE_CALL_LOG are runtime permissions,
- * granted by default-permissions-ocd-check-owner.xml in a ROM build and by
- * `pm grant` on a hand install; MODIFY_PHONE_STATE (privileged, held already)
- * lets the app mute the voice-call stream and end its own call.
+ * Telecom for the app's own mailbox call.
+ * CALL_PHONE is a runtime permission, granted by
+ * default-permissions-ocd-check-owner.xml in a ROM build and by `pm grant` on a
+ * hand install; MODIFY_PHONE_STATE (privileged, held already) lets the app end
+ * its own call. Round 47: the call is the person's tap, so nothing is muted: a
+ * process death could otherwise leave the voice stream at its lowest for the next
+ * real call, 112 included, and the entry stays in the call log.
  */
 class AndroidCallDevice(private val context: Context) : CallDevice {
-    private val audio = context.getSystemService(AudioManager::class.java)
     private val telecom = context.getSystemService(TelecomManager::class.java)
     private val telephony = context.getSystemService(TelephonyManager::class.java)
 
@@ -129,54 +119,6 @@ class AndroidCallDevice(private val context: Context) : CallDevice {
     }
 
     override suspend fun inEmergencyCall(): Boolean? = SystemBinders.call(SystemBinders.telecom(context), SystemBinders.TELECOM, "isInEmergencyCall")
-
-    override suspend fun mute(): MuteState? {
-        val am = audio ?: return null
-        val stream = AudioManager.STREAM_VOICE_CALL
-        val state = runCatching {
-            MuteState(am.getStreamVolume(stream), am.isStreamMute(stream), am.isMicrophoneMute, muted = false)
-        }.getOrNull() ?: return null
-        val muted = lower(am)
-        val lowest = runCatching { am.getStreamVolume(stream) == am.getStreamMinVolume(stream) }.getOrDefault(false)
-        if (!muted && !lowest) {
-            restore(state)
-            return null
-        }
-        return state.copy(muted = muted)
-    }
-
-    /** The voice-call stream to its lowest volume and muted (MODIFY_PHONE_STATE), and the microphone muted. */
-    private fun lower(am: AudioManager): Boolean {
-        val stream = AudioManager.STREAM_VOICE_CALL
-        runCatching { am.setStreamVolume(stream, am.getStreamMinVolume(stream), 0) }
-        runCatching { am.adjustStreamVolume(stream, AudioManager.ADJUST_MUTE, 0) }
-        runCatching { am.isMicrophoneMute = true }
-        return runCatching { am.isStreamMute(stream) }.getOrDefault(false)
-    }
-
-    override suspend fun muteAgain(state: MuteState) {
-        audio?.let { lower(it) }
-    }
-
-    override suspend fun restore(state: MuteState): Boolean {
-        val am = audio ?: return false
-        val stream = AudioManager.STREAM_VOICE_CALL
-        var ok = true
-        for (attempt in 1..3) {
-            runCatching { if (state.mutedBefore == false) am.adjustStreamVolume(stream, AudioManager.ADJUST_UNMUTE, 0) }
-            runCatching { state.volumeBefore?.let { am.setStreamVolume(stream, it, 0) } }
-            runCatching { state.micMutedBefore?.let { am.isMicrophoneMute = it } }
-            ok = runCatching {
-                (state.volumeBefore == null || am.getStreamVolume(stream) == state.volumeBefore) &&
-                    (state.mutedBefore != false || !am.isStreamMute(stream)) &&
-                    (state.micMutedBefore == null || am.isMicrophoneMute == state.micMutedBefore)
-            }.getOrDefault(false)
-            if (ok) break
-            delay(300)
-        }
-        OwnCall.untilElapsedMs = SystemClock.elapsedRealtime()
-        return ok
-    }
 
     @SuppressLint("MissingPermission")
     override suspend fun place(number: String, subId: Int): Boolean {
@@ -203,36 +145,10 @@ class AndroidCallDevice(private val context: Context) : CallDevice {
     @Suppress("DEPRECATION")
     override suspend fun end(): Boolean = runCatching { telecom?.endCall() == true }.getOrDefault(false)
 
-    @SuppressLint("MissingPermission")
-    override suspend fun deleteLogEntry(number: String, fromMs: Long, toMs: Long): Int = withContext(Dispatchers.IO) {
-        if (context.checkSelfPermission(Manifest.permission.WRITE_CALL_LOG) != PackageManager.PERMISSION_GRANTED ||
-            context.checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return@withContext 0
-        }
-        val resolver = context.contentResolver
-        val where = "${CallLog.Calls.NUMBER} = ? AND ${CallLog.Calls.TYPE} = ? AND ${CallLog.Calls.DATE} >= ? AND ${CallLog.Calls.DATE} <= ?"
-        val args = arrayOf(number, CallLog.Calls.OUTGOING_TYPE.toString(), fromMs.toString(), toMs.toString())
-        // Telecom writes the entry a moment after the call ends.
-        repeat(15) {
-            val ids = runCatching {
-                resolver.query(CallLog.Calls.CONTENT_URI, arrayOf(CallLog.Calls._ID), where, args, null)?.use { c ->
-                    buildList { while (c.moveToNext()) add(c.getLong(0)) }
-                }
-            }.getOrNull().orEmpty()
-            when {
-                // Exactly this call's entry, by its own ID; several matches: none is touched.
-                ids.size == 1 -> return@withContext runCatching {
-                    resolver.delete(CallLog.Calls.CONTENT_URI, "${CallLog.Calls._ID} = ?", arrayOf(ids[0].toString()))
-                }.getOrDefault(0)
-                ids.size > 1 -> return@withContext 0
-            }
-            delay(1_000)
-        }
-        0
+    /** The app's own call is over: from here on the passive watch counts every call again. */
+    override fun callEnded() {
+        OwnCall.untilElapsedMs = SystemClock.elapsedRealtime()
     }
-
-    override suspend fun leaveReason(): String? = if (QuietReader.battery(context).first == false) "unplugged" else null
 }
 
 /**

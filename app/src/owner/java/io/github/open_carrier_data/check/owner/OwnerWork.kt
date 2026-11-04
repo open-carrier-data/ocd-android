@@ -41,8 +41,6 @@ import io.github.open_carrier_data.check.owner.core.OcdApnRow
 import io.github.open_carrier_data.check.owner.core.PlanWhy
 import io.github.open_carrier_data.check.owner.core.SchemaRefused
 import io.github.open_carrier_data.check.owner.core.CallsOutDue
-import io.github.open_carrier_data.check.owner.core.CallsOutMode
-import io.github.open_carrier_data.check.owner.core.CallsOutPlan
 import io.github.open_carrier_data.check.owner.core.CallLevels
 import io.github.open_carrier_data.check.owner.core.MailboxCaller
 import io.github.open_carrier_data.check.owner.core.MmsProbe
@@ -132,7 +130,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 // The emergency data test by hand (its first use, with adb logcat streamed): one session on the SIM in the slot.
                 STEP_EMERGENCY_DATA -> withPhone(store) { _, sims, phone ->
                     val sim = sims.firstOrNull { it.slot == inputData.getInt(KEY_SLOT, 0) } ?: throw SafetyException("no_sim", "no SIM in that slot")
-                    val line = OwnerEmergencyData.session(applicationContext, store, phone, OwnerDatasetStep.client(applicationContext), sim, manual = true)
+                    val line = OwnerEmergencyData.session(applicationContext, store, phone, OwnerDatasetStep.client(applicationContext), sim)
                     store.update { it.logged(System.currentTimeMillis(), "emergency_data", line ?: "nothing to do") }
                     Result.success()
                 }
@@ -174,6 +172,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 STEP_APN -> apn(store)
                 STEP_CALLS_OUT -> callsOut(store)
                 STEP_SELF_SMS -> selfSmsNow(store)
+                STEP_BALANCE -> balanceNow(store)
                 STEP_DROP_KEEP -> dropKeep(store)
                 STEP_FINISH -> finish(store)
                 else -> Result.failure()
@@ -209,7 +208,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         }
         val after = store.read()
         // Routine work is silent; a change or a failure is told. A chain's changes wait for its end (STEP_FINISH).
-        if (step !in CHAIN_STEPS) Notices.of(before, after)?.let { OwnerNotifications.notice(applicationContext, it) }
+        if (step !in CHAIN_STEPS) Notices.of(before, after)?.takeIf { it.failed }?.let { OwnerNotifications.notice(applicationContext, it) }
         OwnerNotifications.refresh(applicationContext, after)
         return result
     }
@@ -227,9 +226,8 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     }
 
     /**
-     * Round 31 (SM8, SM9): a trial step (the night's chain, "Test now" without the dataset installer, the restart check) starts
-     * nothing on an IMS stack the tests are not calibrated on, nor on a rom build whose person has not turned the active tests
-     * on, also for a chain queued before either changed. Reverts and cleanups never ask: they only take a change back.
+     * SM8 and round 47: a trial step (the restart check) starts nothing without the provider or on an IMS stack the tests are
+     * not calibrated on. Reverts and cleanups never ask: they only take a change back.
      */
     private fun requireTrials(store: FileStateStore) {
         OwnerTester.trialRefusal(applicationContext, store.read())?.let { throw SafetyException(it.code, it.plain) }
@@ -430,73 +428,10 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 quietLog(store, "check", "light check: no tests: $why")
                 return Result.success()
             }
-            if (round30) {
-                for (sim in sims) {
-                    runCatching { OwnerEmergencyData.session(context, store, phone, OwnerDatasetStep.client(context), sim, manual = false) }
-                        .onSuccess { line -> if (line != null) quietLog(store, "emergency_data", "slot ${sim.slot + 1}: $line") }
-                        .onFailure { e -> if (e is CancellationException) throw e }
-                }
-                store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, store.read().datasetLine ?: "checked")) }
-                return Result.success()
-            }
-            // From here on the round 29 trials, which change carrier settings for a short while. None runs on an IMS stack the tests
-            // are not calibrated on (SM8), and a rom build runs none before the person's opt-in (SM9); the light check and the
-            // passive reads above have run.
-            OwnerTester.trialRefusal(context, store.read())?.let { why ->
-                store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, "checked; nothing tested: ${why.plain}")) }
-                quietLog(store, "check", "light check: no tests: ${why.plain}")
-                return Result.success()
-            }
-            state = store.read()
-            // Others' reports for each SIM's own cell: they only move an entry earlier (read only when there are any).
-            val observed = state.observed
-            val reports = if (observed?.pointers.isNullOrEmpty()) {
-                emptyMap()
-            } else {
-                OwnerData.observedCells(context, device(context), sims, bundle).associate { (sim, cell) -> sim.key to ObservedReports.forCell(observed, cell) }
-            }
-            val plan = QuietPlan.plan(
-                checks, state.entries, basis, now,
-                known = state.runs.mapNotNull { it.sim }.toSet(),
-                onOnly = (state.onOnlyUntilMs ?: 0) > now,
-                nightUsed = state.trialNight == QuietWindow.nightOf(nowLocal),
-                undone = state.undone,
-                reports = reports,
-                dataKeys = dataKeys,
-            )
-            val ims = checks.joinToString { "slot ${it.sim.slot + 1}: ${it.imsLine}" }
-            val callsDue = callsOutDue(store, sims, phone, reportsBySim = reports)
-            if (plan.all.isEmpty() && callsDue.isNotEmpty()) {
-                // Only mailbox calls are due (a pointer, the weekly call of a kept voice entry): night only, the whole silent window.
-                val block = QuietWindow.trialBlocker(look, nightOnly = true, traffic = false)
-                    ?: QuietWindow.trialBlocker(reader.read(phone, QuietWindow.FIRST_SAMPLE_MS), nightOnly = true)
-                if (block == null) {
-                    val line = OwnerScheduler.runCallsOut(context)
-                    store.update { it.copy(lastCheckAtMs = now).logged(now, "quiet", "silent window open; $line: ${callsDue.joinToString { "${it.feature.wire} over ${it.bearer.wire} (${it.why})" }}") }
-                    return Result.success()
-                }
-                quietLog(store, "quiet_wait", "mailbox calls wait: ${block.wire}")
-            }
-            if (plan.all.isEmpty()) {
-                val text = "checked, nothing changed" + if (plan.waiting > 0) " (${plan.waiting} due on later nights)" else ""
-                store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, text)) }
-                quietLog(store, "check", "light check: $ims; ${plan.line}${if (plan.paused.isNotEmpty()) "; paused after failures: ${plan.paused.joinToString()}" else ""}")
-                return Result.success()
-            }
-            if (plan.triggered && state.triggerSinceMs == null) store.update { it.copy(triggerSinceMs = now) }
-            val nightOnly = QuietPlan.nightOnly(plan, store.read().triggerSinceMs, now)
-            val unhealthy = plan.entries.isNotEmpty() && checks.any { !it.healthy }
-            // The cheap conditions first; the minute of traffic sampling only when they hold.
-            val block = QuietWindow.trialBlocker(look, nightOnly, traffic = false)
-                ?: QuietBlock.NOT_HEALTHY.takeIf { unhealthy }
-                ?: QuietWindow.trialBlocker(reader.read(phone, QuietWindow.FIRST_SAMPLE_MS), nightOnly)
-            if (block != null) {
-                store.update { it.copy(lastCheckAtMs = now, lastResult = LastResult(now, "checked; ${plan.all.size} test(s) wait: ${block.plain}")) }
-                quietLog(store, "quiet_wait", "${plan.line}; waits: ${block.wire}")
-                return Result.success()
-            }
-            val line = OwnerScheduler.runPlanned(context, plan, nightOnly)
-            store.update { it.copy(lastCheckAtMs = now).logged(now, "quiet", "silent window open; $line: ${plan.line}") }
+            // Round 47: nothing else runs by itself. The dataset step above holds the passive checks and any repair; without the
+            // installer there is nothing to repair with. No mailbox call, no plan, no chain.
+            val line = if (round30) store.read().datasetLine ?: "checked" else "checked; ${OwnerTester.trialRefusal(context, store.read())?.plain ?: "nothing tested"}"
+            store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, line)) }
             return Result.success()
         } finally {
             handle.close()
@@ -504,32 +439,8 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     }
 
     /**
-     * The mailbox calls due now ([CallsOutPlan]): after an apply, a pointer of
-     * others' reports, or weekly per kept voice entry, unless a real call of
-     * the owner's showed calls out already.
-     */
-    private suspend fun callsOutDue(
-        store: FileStateStore, sims: List<OwnerSim>, phone: OwnerPhone,
-        reportsBySim: Map<io.github.open_carrier_data.check.owner.core.SimKey, Map<String, io.github.open_carrier_data.check.owner.core.ReportPointer>>? = null,
-    ): List<CallsOutDue> {
-        val context = applicationContext
-        val state = store.read()
-        val switches = sims.associate { sim ->
-            sim.key to runCatching { OwnerSession(phone, store, sim).observe() }.getOrNull().let { o -> OwnerFeature.entries.associateWith { o?.switch(it) } }
-        }
-        val reports = reportsBySim ?: if (state.observed?.pointers.isNullOrEmpty()) {
-            emptyMap()
-        } else {
-            OwnerData.observedCells(context, device(context), sims, OwnerData(context, store).bundle()).associate { (sim, cell) -> sim.key to ObservedReports.forCell(state.observed, cell) }
-        }
-        val pointed = reports.mapValues { (_, byEntry) -> byEntry.filterValues { it.moves }.keys }
-        return CallsOutPlan.due(sims, state, switches, pointed, OwnerBasis.current(context, state).rom, QuietWindow.nightOf(ZonedDateTime.now()), System.currentTimeMillis())
-    }
-
-    /**
-     * The message checks of the light check: the MMS access point probe (never
-     * where MMS ended, every 14 days, no MMS sent) and, only when the owner
-     * turned it on, the weekly data SMS to the phone's own number at night.
+     * The message check of the light check: the MMS access point probe (never
+     * where MMS ended, every 14 days, no MMS sent), the only routine probe.
      */
     private suspend fun messageChecks(store: FileStateStore, phone: OwnerPhone, sims: List<OwnerSim>, look: io.github.open_carrier_data.check.owner.core.QuietInputs, night: Boolean) {
         val context = applicationContext
@@ -541,12 +452,6 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 store.update { it.copy(mms = MmsProbe.add(it.mms, check)) }
                 quietLog(store, "mms", "slot ${sim.slot + 1}: ${MmsProbe.line(check, MmsProbe.ended(OwnerMms.ended(context), sim.identity.mccmnc), java.time.ZoneId.systemDefault())}")
             }
-            val state = store.read()
-            if (state.selfSmsOn && OwnerTester.policy(state).smsRefusal(CallBuild.entry(context, sim)) == null && night && QuietWindow.trialBlocker(look, nightOnly = true, traffic = false) == null && SelfSms.due(state.selfSms, sim.key, now)) {
-                // The check is in the ledger before the SMS goes out (OwnerSelfSms.send); only the log line here.
-                val sent = runCatching { OwnerSelfSms.send(context, phone, sim, on = true) }.getOrNull() ?: continue
-                store.update { it.logged(now, "self_sms", "slot ${sim.slot + 1}: ${sent.result}") }
-            }
         }
     }
 
@@ -554,9 +459,9 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
      * OCD round 42 (items 1/3/7): the passive cause read and the plain verdict. For each SIM it reads
      * the fail causes and the user-plane state ([OwnerPassiveRead]), the IMS sign-out reason
      * ([ImsReasonReader]) and whether MMS ended, assembles the verdict ([Diagnoses]) and logs it when
-     * it differs from the last one. The probe ladder (item 2: D1-D5 and W1) and the balance read (item
-     * 4) send their few requests only within their bounds, on the rom build only after the person's
-     * active-tests opt-in (each checks it itself); nothing here changes a value or starts a candidate.
+     * it differs from the last one. The probe ladder (item 2: D1-D5 and W1) sends its few requests
+     * only within its bounds; nothing here changes a value or starts a candidate. The balance USSD is
+     * the person's tap (round 47).
      */
     private suspend fun diagnoseCauses(store: FileStateStore, phone: OwnerPhone, sims: List<OwnerSim>) {
         // The fail causes it reads need Android 12. Older Android records that the verdict did not run, never silence.
@@ -591,8 +496,6 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 // A safety refusal that cannot be read counts as a refusal: nothing is sent then.
                 val safe: suspend () -> Boolean = { runCatching { OwnerSession(phone, store, sim).safety().refusal == null }.getOrDefault(false) }
                 if ((measuredFailure || checkNow) && safe()) {
-                    // Item 4: the balance USSD (opt-in, capped) runs first, so its class can pair with the refusal.
-                    if (measuredFailure) runCatching { OwnerBalance.readIfDue(context, store, sim, measuredFailure = true, roaming = roamingNow, nowMs = now) }
                     // Item 2: the cellular probe ladder, automatic at most once per SIM per 6 hours, or on "check now" ([OwnerProbe]).
                     val run = runCatching {
                         OwnerProbe.runIfDue(
@@ -693,6 +596,16 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
      * port, under the owner build's refusals (no call, no emergency state, not roaming) and the
      * self-SMS refusals. The weekly switch stays as the owner set it.
      */
+    /** The person's "Read the plan balance": each SIM once, under the balance read's own limits and the refusals. */
+    private suspend fun balanceNow(store: FileStateStore): Result = withPhone(store) { _, sims, phone ->
+        val context = applicationContext
+        for (sim in sims) {
+            if (OwnerSession(phone, store, sim).safety().refusal != null) continue
+            runCatching { OwnerBalance.readOnTap(context, store, sim, QuietReader.roaming(context), System.currentTimeMillis()) }
+        }
+        Result.success()
+    }
+
     private suspend fun selfSmsNow(store: FileStateStore): Result = withPhone(store) { _, sims, phone ->
         if (sims.isEmpty()) throw SafetyException("no_sim", "no SIM, nothing to test")
         for (sim in sims) {
@@ -709,55 +622,31 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     }
 
     /**
-     * The night's mailbox calls (round 26 check 4), or a dry run on the
-     * owner's request. Live calls run only in the night window, at most one
-     * per feature and bearer a night; each call passes every guard of
-     * [MailboxCaller] first.
+     * The mailbox call on the person's tap, or a dry run of it (round 47: nothing dials by itself). One call,
+     * on the first SIM with a voice feature on; it passes every guard of [MailboxCaller] first.
      */
     private suspend fun callsOut(store: FileStateStore): Result {
         val context = applicationContext
-        val dryRunRequest = inputData.getBoolean(KEY_DRY_RUN, false)
+        val dryRun = inputData.getBoolean(KEY_DRY_RUN, false)
         return withPhone(store) { _, sims, phone ->
-            val runId = inputData.getString(KEY_RUN)
-            if (background && runId != null) gate(store, phone, runId, nightOnly = true)?.let { return@withPhone it }
             val state = store.read()
-            val mode = if (dryRunRequest) CallsOutMode.DRY_RUN else state.callsOutMode
-            var due = callsOutDue(store, sims, phone)
-            if (dryRunRequest && due.isEmpty()) {
-                // The owner's dry run: every SIM's voice features that are on, to show what the app would dial.
-                due = sims.flatMap { sim ->
-                    val o = runCatching { OwnerSession(phone, store, sim).observe() }.getOrNull()
-                    listOf(OwnerFeature.VOWIFI, OwnerFeature.VOLTE).mapNotNull { f ->
-                        CallLevels.bearerOf(f)?.takeIf { o?.switch(f) == true }?.let { CallsOutDue(sim.slot, sim.key, f, it, "dry_run_request") }
-                    }
+            val due = sims.flatMap { sim ->
+                val o = runCatching { OwnerSession(phone, store, sim).observe() }.getOrNull()
+                listOf(OwnerFeature.VOWIFI, OwnerFeature.VOLTE).mapNotNull { f ->
+                    CallLevels.bearerOf(f)?.takeIf { o?.switch(f) == true }?.let { CallsOutDue(sim.slot, sim.key, f, it, if (dryRun) "dry_run_request" else "tap_request") }
                 }
-            }
-            if (due.isEmpty()) {
-                store.update { it.logged(System.currentTimeMillis(), "calls_out", "no mailbox call due") }
+            }.firstOrNull()
+            if (due == null) {
+                store.update { it.logged(System.currentTimeMillis(), "calls_out", "no voice feature is on, so there is nothing to call over") }
                 return@withPhone Result.success()
             }
-            val minute = ZonedDateTime.now().let { it.hour * 60 + it.minute }
-            val night = QuietWindow.night(minute)
+            val sim = sims.first { it.slot == due.slot && it.key.subId == due.sim.subId }
             val caller = MailboxCaller(
                 phone, store, AndroidCallDevice(context), OwnerBasis.current(context, state).rom, CallBuild.short(context),
-                CallBuild.stack(context), device(context).model, CallBuild.cellOf(context), policy = OwnerTester.policy(state),
+                CallBuild.stack(context), device(context).model, CallBuild.cellOf(context),
             )
-            val targets = CallBuild.targets(context)
-            for (d in due.take(MAX_CALLS_PER_STEP)) {
-                val sim = sims.firstOrNull { it.slot == d.slot && it.key.subId == d.sim.subId } ?: continue
-                if (background && mode == CallsOutMode.LIVE) RevertAlarm.arm(context)
-                val outcome = try {
-                    caller.run(sim, d, targets, mode, night, QuietWindow.nightOf(ZonedDateTime.now()))
-                } finally {
-                    if (!store.read().trialsLive()) RevertAlarm.disarm(context)
-                }
-                OwnerScheduler.dropKeeps(context, outcome.reverts)
-                // A scheduled dry run also uses the night's one call, so the log gets one line a night, not one an hour.
-                if (outcome.result == "dry_run" && !dryRunRequest) {
-                    store.update { s -> s.copy(callsOutNights = (s.callsOutNights + io.github.open_carrier_data.check.owner.core.CallsOutNight(d.sim, d.feature, d.bearer, QuietWindow.nightOf(ZonedDateTime.now()))).takeLast(MailboxCaller.MAX_NIGHTS)) }
-                }
-                if (outcome.result == "aborted") break
-            }
+            val outcome = caller.run(sim, due, CallBuild.targets(context), dryRun)
+            OwnerScheduler.dropKeeps(context, outcome.reverts)
             settleProvisional(context, store.read())
             Result.success()
         }
@@ -995,6 +884,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val STEP_PROBE = "probe"
         const val STEP_CALLS_OUT = "calls_out"
         const val STEP_SELF_SMS = "self_sms"
+        const val STEP_BALANCE = "balance"
         const val STEP_DROP_KEEP = "drop_keep"
         const val STEP_DATASET = "dataset"
         const val STEP_MAIN_CHECK = "main_check"
@@ -1201,77 +1091,27 @@ object OwnerScheduler {
         )
     }
 
-    /**
-     * The night's chain from a [Plan]: the reverts of failing kept values,
-     * then the one feature's entries (both values in one step when both are
-     * due), or its APN rows; then the end mark. Every step is a background
-     * step: it checks the silent window again and stops on an interruption.
-     */
-    fun runPlanned(context: Context, plan: Plan, nightOnly: Boolean): String {
-        val runId = UUID.randomUUID().toString().take(8)
-        val common = arrayOf(
-            OwnerWorker.KEY_RUN to runId, OwnerWorker.KEY_OFFS to true, OwnerWorker.KEY_VOICE_MS to 0L, OwnerWorker.KEY_APNS to true,
-            OwnerWorker.KEY_SCHEDULED to true, OwnerWorker.KEY_BACKGROUND to true, OwnerWorker.KEY_NIGHT_ONLY to nightOnly,
-            OwnerWorker.KEY_SESSION_START to System.currentTimeMillis(), OwnerWorker.KEY_PLAN to plan.line.take(400),
-        )
-        val steps = mutableListOf<OneTimeWorkRequest>()
-        for (revert in plan.reverts) {
-            val feature = revert.feature ?: continue
-            steps += step(
-                workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_FEATURE, OwnerWorker.KEY_SLOT to revert.slot, OwnerWorker.KEY_FEATURE to feature.wire, OwnerWorker.KEY_ONLY to revert.value, OwnerWorker.KEY_NIGHT_ONLY to false),
-                nightConstraints(), expedite = false,
-            )
-        }
-        for ((key, entries) in plan.entries.groupBy { it.slot to it.group }) {
-            val (slot, group) = key
-            val feature = OwnerFeature.ofWire(group)
-            steps += if (feature != null) {
-                val values = entries.mapNotNull { it.value }.toSet()
-                val only = values.singleOrNull()
-                step(
-                    if (only != null) {
-                        workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_FEATURE, OwnerWorker.KEY_SLOT to slot, OwnerWorker.KEY_FEATURE to feature.wire, OwnerWorker.KEY_ONLY to only)
-                    } else {
-                        workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_FEATURE, OwnerWorker.KEY_SLOT to slot, OwnerWorker.KEY_FEATURE to feature.wire)
-                    },
-                    nightConstraints(), expedite = false,
-                )
-            } else {
-                step(
-                    workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_APN, OwnerWorker.KEY_SLOT to slot, OwnerWorker.KEY_APN_KEYS to entries.mapNotNull { it.apnKey }.toTypedArray()),
-                    nightConstraints(), expedite = false,
-                )
-            }
-        }
-        if (steps.isEmpty()) return "nothing to queue"
-        // Round 26: a changed voice value kept tonight needs calls out before the night ends; the step looks what is due.
-        if (plan.entries.any { it.feature?.voice == true }) {
-            steps += step(workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_CALLS_OUT), nightConstraints(), expedite = false)
-        }
-        steps += step(workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_FINISH), null, false)
-        var chain = WorkManager.getInstance(context).beginUniqueWork(RUN, ExistingWorkPolicy.KEEP, steps.first())
-        for (next in steps.drop(1)) chain = chain.then(next)
-        chain.enqueue()
-        return "queued background run $runId (${steps.size - 1} step(s))"
-    }
-
-    /** The night's mailbox calls alone (a pointer, the weekly call of a kept voice entry): one calls-out step and the end mark. */
-    fun runCallsOut(context: Context): String {
-        val runId = UUID.randomUUID().toString().take(8)
-        val common = arrayOf(
-            OwnerWorker.KEY_RUN to runId, OwnerWorker.KEY_SCHEDULED to true, OwnerWorker.KEY_BACKGROUND to true,
-            OwnerWorker.KEY_NIGHT_ONLY to true, OwnerWorker.KEY_SESSION_START to System.currentTimeMillis(),
-        )
-        val first = step(workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_CALLS_OUT), nightConstraints(), expedite = false)
-        WorkManager.getInstance(context).beginUniqueWork(RUN, ExistingWorkPolicy.KEEP, first).enqueue()
-        return "queued mailbox calls $runId"
-    }
-
     /** The owner's one test SMS to the phone's own number now ([OwnerWorker] STEP_SELF_SMS). */
     fun selfSmsNow(context: Context) {
         WorkManager.getInstance(context).enqueueUniqueWork(
             "owner-self-sms-now", ExistingWorkPolicy.KEEP,
             step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_SELF_SMS), null, expedite = true),
+        )
+    }
+
+    /** Round 47: one mailbox call on the person's own tap; every guard of the call holds. */
+    fun callMailboxNow(context: Context) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "owner-call-mailbox-now", ExistingWorkPolicy.KEEP,
+            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_CALLS_OUT), null, expedite = true),
+        )
+    }
+
+    /** Round 47: one balance read on the person's own tap. */
+    fun balanceNow(context: Context) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "owner-balance-now", ExistingWorkPolicy.KEEP,
+            step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_BALANCE), null, expedite = true),
         )
     }
 
@@ -1298,46 +1138,12 @@ object OwnerScheduler {
             FileStateStore(context).update { it.copy(undone = emptyList()).logged(System.currentTimeMillis(), "run", "test now: pull, hand over, install and test, now") }
             return "queued: pull, install and test"
         }
-        // The round 29 chain below changes carrier settings for a short while: only on an IMS stack the tests are calibrated on
-        // (SM8), and a rom build runs it only after the person's opt-in (SM9).
+        // Without the installer there is nothing to test with: setting trials need the provider and a calibrated stack.
         OwnerTester.trialRefusal(context, FileStateStore(context).read())?.let { why ->
             FileStateStore(context).update { it.logged(System.currentTimeMillis(), "run", "test now refused: ${why.plain}") }
             return if (why.code == TesterPolicy.NOT_CALIBRATED) why.plain else "off: ${why.plain}"
         }
-        val sims = OwnerData.sims(context)
-        val runId = UUID.randomUUID().toString().take(8)
-        val common = arrayOf(
-            OwnerWorker.KEY_RUN to runId, OwnerWorker.KEY_OFFS to offs, OwnerWorker.KEY_VOICE_MS to voiceCheckMs,
-            OwnerWorker.KEY_APNS to apns, OwnerWorker.KEY_SCHEDULED to false,
-        )
-        val steps = mutableListOf<OneTimeWorkRequest>()
-        // Round 29: "Test now" pulls main's newest validated commit first, so the test runs on the newest data.
-        if (sims.isNotEmpty()) steps += step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_PULL, OwnerWorker.KEY_IN_RUN to true), null, expedite = false)
-        for (sim in sims) {
-            for (feature in OwnerFeature.entries) {
-                steps += step(
-                    workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_FEATURE, OwnerWorker.KEY_SLOT to sim.slot, OwnerWorker.KEY_FEATURE to feature.wire),
-                    null, expedite = false,
-                )
-            }
-            if (apns) steps += step(workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_APN, OwnerWorker.KEY_SLOT to sim.slot), null, false)
-        }
-        val store = FileStateStore(context)
-        if (steps.isEmpty()) {
-            store.update {
-                it.withRun(RunResult(id = runId, startedMs = System.currentTimeMillis(), scheduled = false, endedMs = System.currentTimeMillis(), refused = "no_sim", note = "no SIM, nothing to test"))
-                    .logged(System.currentTimeMillis(), "run", "no SIM, nothing to test")
-            }
-            return "no SIM, nothing to test"
-        }
-        steps += step(workDataOf(*common, OwnerWorker.KEY_STEP to OwnerWorker.STEP_FINISH), null, false)
-        var chain = WorkManager.getInstance(context).beginUniqueWork(RUN, ExistingWorkPolicy.KEEP, steps.first())
-        for (next in steps.drop(1)) chain = chain.then(next)
-        chain.enqueue()
-        // The owner asks for a test: what he undid may be kept again if it tests better.
-        store.update { it.copy(undone = emptyList()) }
-        store.update { it.logged(System.currentTimeMillis(), "run", "queued run $runId: ${sims.size} SIM(s), a pull and ${steps.size - 2} steps${if (offs) ", off values too" else ", on values only"}") }
-        return "queued run $runId"
+        return "off: this phone has no dataset installer"
     }
 
     /** Whether the work of a unique name is still to run. */

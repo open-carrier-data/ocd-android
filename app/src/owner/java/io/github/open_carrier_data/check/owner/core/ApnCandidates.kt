@@ -431,7 +431,8 @@ object ApnCandidateGate {
 
     data class Inputs(
         val status: DatasetStatus,
-        val activeTests: Boolean,
+        /** The person's own tap: MMS candidates need one (round 47). */
+        val tap: Boolean,
         val roaming: Boolean?,
         val reregistrationsLeft: Int,
         val stop: String?,
@@ -443,7 +444,7 @@ object ApnCandidateGate {
     fun refusal(i: Inputs): String? = when {
         !i.status.round31 -> "this ROM build has no installer for temporary APN sets"
         StackCalibration.notCounted(i.status.build.imsStackId) != null -> "the tests are not calibrated on this IMS stack (SM8); a failure here starts no candidate"
-        !i.activeTests -> "the active tests are off on this phone"
+        i.failure == LeadFailure.MMSC_PROBE && !i.tap -> "an MMSC probe failure alone opens nothing by itself; candidates for it need a tap"
         i.roaming != false -> if (i.roaming == null) "roaming is not readable" else "the phone is roaming; candidates run only on the home network"
         i.stop != null -> "tests and changes are paused: ${i.stop}"
         i.status.changesHalted.on -> "CarrierSettings halted changes"

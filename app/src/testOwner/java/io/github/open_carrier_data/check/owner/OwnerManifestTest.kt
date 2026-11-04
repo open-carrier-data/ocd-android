@@ -69,7 +69,6 @@ class OwnerManifestTest {
         // Settings' summary provider: guarded by the calling uid in code, as call() checks no manifest permission.
         assertEquals("", exported["io.github.open_carrier_data.check.owner.OwnerSettingsProvider"])
         assertTrue("io.github.open_carrier_data.check.owner.OwnerBootReceiver" in exported)
-        assertTrue("io.github.open_carrier_data.check.owner.NoticeActionReceiver" !in exported)
         assertTrue("io.github.open_carrier_data.check.owner.RevertAlarmReceiver" !in exported)
         // Round 26: only the system sends these (PHONE_STATE to privileged phone-state holders, the data SMS with BROADCAST_SMS).
         assertEquals("android.permission.READ_PRIVILEGED_PHONE_STATE", exported["io.github.open_carrier_data.check.owner.PhoneStateReceiver"])
@@ -176,14 +175,11 @@ class OwnerManifestTest {
     }
 
     companion object {
-        /** Round 26: the mailbox call, its call log entry, the optional data SMS; runtime, granted by default-permissions or pm grant. */
-        val ROUND_26_RUNTIME = setOf(
-            "android.permission.CALL_PHONE", "android.permission.READ_CALL_LOG", "android.permission.WRITE_CALL_LOG",
-            "android.permission.SEND_SMS", "android.permission.RECEIVE_SMS",
-        )
+        /** Round 47: the tapped mailbox call and the tapped data SMS; runtime, granted by default-permissions or pm grant. No call log access. */
+        val ROUND_26_RUNTIME = setOf("android.permission.CALL_PHONE", "android.permission.SEND_SMS", "android.permission.RECEIVE_SMS")
 
-        /** Normal permissions: the microphone muted during the mailbox call, the SIM's MMS network for the MMSC probe. */
-        val ROUND_26_NORMAL = setOf("android.permission.MODIFY_AUDIO_SETTINGS", "android.permission.CHANGE_NETWORK_STATE")
+        /** Normal permissions: the SIM's MMS network for the MMSC probe. */
+        val ROUND_26_NORMAL = setOf("android.permission.CHANGE_NETWORK_STATE")
     }
 
     @Test

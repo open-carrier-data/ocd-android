@@ -49,16 +49,16 @@ class CheckNowTest {
     }
 
     @Test
-    fun `the quiet job lets the tap through and stops it before the dataset step, the emergency data test and the tests`() {
+    fun `the quiet job lets the tap through and stops it before the dataset step`() {
         val work = File("src/owner/java/io/github/open_carrier_data/check/owner/OwnerWork.kt").readText()
         assertTrue(work.contains("if ((!state.scheduleOn && !tap) || OwnerScheduler.runActive(context)) return Result.success()"))
         assertTrue(work.contains("QuietWindow.checkBlocker(look, ownerTap = tap)"))
-        val quiet = work.substring(work.indexOf("private suspend fun quiet("), work.indexOf("private suspend fun callsOutDue("))
+        val quiet = work.substring(work.indexOf("private suspend fun quiet("), work.indexOf("     * The message check of the light check"))
         val stop = quiet.indexOf("if (checkOnly) {")
         assertTrue(stop > 0)
         // The read and the diagnosis come first; everything that may change a value comes after the stop.
         assertTrue(quiet.indexOf("diagnoseCauses(store, phone, sims)") in 0 until stop)
-        for (later in listOf("OwnerDatasetStep.run(context, store, phone, sims)", "OwnerEmergencyData.session(", "OwnerScheduler.runPlanned(", "OwnerScheduler.runCallsOut(")) {
+        for (later in listOf("OwnerDatasetStep.run(context, store, phone, sims)")) {
             assertTrue(later, quiet.indexOf(later) > stop)
         }
         // The revert of a provisional keep and the leftover cleanup are skipped on a check-only tap.
