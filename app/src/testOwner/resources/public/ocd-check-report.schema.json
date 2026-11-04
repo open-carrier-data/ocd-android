@@ -136,6 +136,7 @@
       "maxItems": 60,
       "items": { "$ref": "#/$defs/result" }
     },
+    "plan": {"anyOf": [{"const": "unknown"}, {"type": "object", "additionalProperties": false, "required": ["offer"], "properties": {"offer": {"$ref": "#/$defs/offer_id"}, "options": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"$ref": "#/$defs/offer_id"}}}}], "description": "The plan the person chose next to the report (rule round 47, item 4): unknown, or a closed offer ID with booked options from the carrier's published list. Never free text, and never read from an account, USSD, carrier SMS or TS.43. A report without it reads as unknown. Until a carrier has an offer list, unknown is the only choice the bot takes. Plan is never a matching key and feeds no carrier value: it shows in observed/results.json and can only open a source review."},
     "results_left_out": {
       "type": "integer",
       "minimum": 1,
@@ -144,6 +145,7 @@
     }
   },
   "$defs": {
+    "offer_id": {"type": "string", "pattern": "^[a-z]{2}\\.[a-z0-9-]{1,40}\\.[a-z0-9-]{1,40}$", "description": "An ID of the carrier's published offer list: country, brand and offer, for example de.lidl-connect.smart."},
     "code": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]{0,63}$",

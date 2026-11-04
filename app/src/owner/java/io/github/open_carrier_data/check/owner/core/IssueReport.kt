@@ -109,6 +109,7 @@ object IssueReport {
         calls: List<CallsTested>,
         leaveOutApns: Int = 0,
         settled: Map<String, SettledLevel> = emptyMap(),
+        plan: ReportPlan = ReportPlan.Unknown,
     ): JsonObject? {
         val sim = run.sim ?: return null
         if (!DIGEST.matches(cell.dataDigest)) return null
@@ -149,6 +150,8 @@ object IssueReport {
                 if (run.profileId != null) cell.gid1Prefix?.let { put("gid1_prefix", it) }
             }
             put("ocd_profile", run.profileId)
+            // Round 47 item 4: the person's own choice, default unknown. Never a key: nothing but this report reads it.
+            put("plan", plan.wire)
             putJsonArray("results") {
                 for (r in results) {
                     addJsonObject {
@@ -228,12 +231,12 @@ object IssueReport {
     }
 
     /** The prefilled issue, or null without a SIM, a data digest or a result, or when the privacy scan finds an identifier. */
-    fun prefill(run: RunResult, cell: ReportCell, calls: List<CallsTested>, settled: Map<String, SettledLevel> = emptyMap()): Prefilled? {
+    fun prefill(run: RunResult, cell: ReportCell, calls: List<CallsTested>, settled: Map<String, SettledLevel> = emptyMap(), plan: ReportPlan = ReportPlan.Unknown): Prefilled? {
         val title = title(run, cell)
         if (PrivacyScan.scanValue("title", title).isNotEmpty()) return null
         var leaveOut = 0
         while (true) {
-            val report = report(run, cell, calls, leaveOut, settled) ?: return null
+            val report = report(run, cell, calls, leaveOut, settled, plan) ?: return null
             if (PrivacyScan.scan(report, hex = HEX_FIELDS).isNotEmpty()) return null
             val text = text(report)
             val url = NEW_ISSUE + "?" + linkedMapOf("template" to TEMPLATE, "title" to title, FIELD to text).entries
@@ -271,9 +274,13 @@ object ReportWords {
     const val BUTTON_TEXT = "You read it first. Nothing is sent until you submit it"
     const val FORM_TITLE = "Read this report"
     const val FORM_TEXT = "This is everything the report says. The next step opens OCD's form in your browser with this report filled in, and nothing is sent until you submit it there. " +
-        "The issue is public, under your own GitHub account: anyone can link your GitHub name to the carrier in this report. This app never holds your login. " +
+        "The issue is public, under your own GitHub account: anyone can link your GitHub name to the carrier and any plan in this report. This app never holds your login. " +
         "If you delete the issue later, the report leaves OCD's current files at the next rebuild, but older versions stay in git history. " +
         "A report reads as \"reported, not checked by OCD\" and changes nothing on any other phone"
+    const val PLAN_TITLE = "Your plan"
+    const val PLAN_UNKNOWN = "Unknown"
+    const val PLAN_TEXT = "Your own choice from the carrier's published list, for this report only. It changes nothing on this phone or any other"
+    const val PLAN_NO_LIST = "This carrier has no published offer list yet, so unknown is the only choice"
     const val FORM_OPEN = "Open on GitHub"
     const val FORM_CANCEL = "Not now"
     const val HELD_BACK = "Report held back: it may contain private data, or the test has no data digest"
