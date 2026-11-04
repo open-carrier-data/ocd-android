@@ -1,6 +1,7 @@
 package io.github.open_carrier_data.check.owner.core
 
 import io.github.open_carrier_data.check.core.PrivacyScan
+import io.github.open_carrier_data.check.core.ProvenBearer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
