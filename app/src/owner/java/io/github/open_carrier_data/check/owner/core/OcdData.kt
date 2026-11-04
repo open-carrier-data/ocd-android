@@ -41,8 +41,8 @@ object OcdDataProtocol {
     const val URI = "content://$AUTHORITY"
     const val PERMISSION = "com.android.carriersettings.permission.WRITE_OCD_DATASET"
     /** The protocol this app speaks; [PROTOCOLS] are the ones it reads (2: the round 30 build). */
-    const val PROTOCOL = 3
-    val PROTOCOLS = setOf(2, 3)
+    const val PROTOCOL = 4
+    val PROTOCOLS = setOf(2, 3, 4)
 
     const val STATUS = "status"
     const val STAGE = "stage_dataset"
@@ -250,6 +250,9 @@ data class DatasetStatus(
 
     /** The provider speaks round 31 (protocol 3): the hold, the default emergency APN test and the tester declaration exist. */
     val round31: Boolean get() = available && protocol >= 3
+
+    /** Round 47 (protocol 4): an activation that leaves a SIM's values and rows unchanged reloads nothing for that SIM. */
+    val skipsUnchanged: Boolean get() = available && protocol >= 4
 
     /** SM10: the ROM builder declared the device family's first use of the emergency data test passed. */
     val emergencyTestOn: Boolean get() = emergencyGateSource == "build" && emergencyGate == "narrow"

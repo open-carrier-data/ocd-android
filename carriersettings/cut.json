@@ -101,7 +101,8 @@
     "ocd/src/com/android/carriersettings/ocd/Engine.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Engine.kt",
       "blob": "3d7e51f9e749885e66b6be5eee93473b194b6336",
-      "status": "equal"
+      "status": "changed",
+      "why": "OCD rule round 47, items 3 and 1 (protocol 4): an activation that leaves a SIM's served values and APN rows unchanged records the commit and neither notifies nor proves that SIM; emergency_default_won and winner_after_failure records do not lapse at 90 days and end with the data, the cell or a new record of the same key."
     },
     "ocd/src/com/android/carriersettings/ocd/Files.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Files.kt",
@@ -111,7 +112,8 @@
     "ocd/src/com/android/carriersettings/ocd/Guard.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Guard.kt",
       "blob": "9e6cc8be03163792eb555c600651607eb2f17287",
-      "status": "equal"
+      "status": "changed",
+      "why": "OCD rule round 47, items 3 and 1 (protocol 4): an activation that leaves a SIM's served values and APN rows unchanged records the commit and neither notifies nor proves that SIM; emergency_default_won and winner_after_failure records do not lapse at 90 days and end with the data, the cell or a new record of the same key."
     },
     "ocd/src/com/android/carriersettings/ocd/Json.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Json.kt",
@@ -148,13 +150,14 @@
     "ocd/src/com/android/carriersettings/ocd/Protocol.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Protocol.kt",
       "blob": "c2b53c3e32b77c5ef5501174857d336f2c4b246d",
-      "status": "equal"
+      "status": "changed",
+      "why": "OCD rule round 47, items 3 and 1 (protocol 4): an activation that leaves a SIM's served values and APN rows unchanged records the commit and neither notifies nor proves that SIM; emergency_default_won and winner_after_failure records do not lapse at 90 days and end with the data, the cell or a new record of the same key."
     },
     "ocd/src/com/android/carriersettings/ocd/Serving.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Serving.kt",
       "blob": "7a269add4c00cb1a897e647dd8bd9d305bf08ccb",
       "status": "changed",
-      "why": "carriersettings/v1.1.0, OCD rule round 45, item 3: OCD's resolution order (Android's weights from the phone's carrier ID table, then the written tie rule) instead of specificity and ID; the bundle's stack passes each profile's kind to the order (an OCD profile above a fill-only one)."
+      "why": "carriersettings/v1.1.0, OCD rule round 45, item 3: OCD's resolution order (Android's weights from the phone's carrier ID table, then the written tie rule) instead of specificity and ID; the bundle's stack passes each profile's kind to the order (an OCD profile above a fill-only one). OCD rule round 47, items 3 and 1 (protocol 4): an activation that leaves a SIM's served values and APN rows unchanged records the commit and neither notifies nor proves that SIM; emergency_default_won and winner_after_failure records do not lapse at 90 days and end with the data, the cell or a new record of the same key."
     },
     "ocd/src/com/android/carriersettings/ocd/ServingIndex.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/ServingIndex.kt",
@@ -165,7 +168,8 @@
     "ocd/src/com/android/carriersettings/ocd/State.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/State.kt",
       "blob": "84efbdbe135c3b4f9e5ef8c5351caf385a634c16",
-      "status": "equal"
+      "status": "changed",
+      "why": "OCD rule round 47, items 3 and 1 (protocol 4): an activation that leaves a SIM's served values and APN rows unchanged records the commit and neither notifies nor proves that SIM; emergency_default_won and winner_after_failure records do not lapse at 90 days and end with the data, the cell or a new record of the same key."
     },
     "ocd/src/com/android/carriersettings/ocd/Types.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/Types.kt",
@@ -186,23 +190,26 @@
     "ocd/test/src/ApnTest.kt": {
       "from": "carriersettings/ocd/test/src/ApnTest.kt",
       "blob": "4b80ef26f53b84c54d8e3751e0f002d770476f1d",
-      "status": "equal"
+      "status": "changed",
+      "why": "OCD rule round 47, items 3 and 1 (protocol 4): an activation that leaves a SIM's served values and APN rows unchanged records the commit and neither notifies nor proves that SIM; emergency_default_won and winner_after_failure records do not lapse at 90 days and end with the data, the cell or a new record of the same key."
     },
     "ocd/test/src/BundleTest.kt": {
       "from": "carriersettings/ocd/test/src/BundleTest.kt",
       "blob": "f903c0c2b11c0036d8b6ab0a7caa61f99dd04924",
       "status": "changed",
-      "why": "carriersettings/v1.0.2: the index, the streamed baked files and the dataset serve the same bundle with group A reads; an index without the sources is never complete nor read."
+      "why": "carriersettings/v1.0.2: the index, the streamed baked files and the dataset serve the same bundle with group A reads; an index without the sources is never complete nor read. OCD rule round 47, items 3 and 1 (protocol 4): an activation that leaves a SIM's served values and APN rows unchanged records the commit and neither notifies nor proves that SIM; emergency_default_won and winner_after_failure records do not lapse at 90 days and end with the data, the cell or a new record of the same key."
     },
     "ocd/test/src/CandidateTest.kt": {
       "from": "carriersettings/ocd/test/src/CandidateTest.kt",
       "blob": "57fe79422166e5b13fd2b67bf760a058149d789e",
-      "status": "equal"
+      "status": "changed",
+      "why": "OCD rule round 47, items 3 and 1 (protocol 4): an activation that leaves a SIM's served values and APN rows unchanged records the commit and neither notifies nor proves that SIM; emergency_default_won and winner_after_failure records do not lapse at 90 days and end with the data, the cell or a new record of the same key."
     },
     "ocd/test/src/EngineTest.kt": {
       "from": "carriersettings/ocd/test/src/EngineTest.kt",
       "blob": "a7e35c1c155225d6e9db0e7639fe0bad786f40ac",
-      "status": "equal"
+      "status": "changed",
+      "why": "OCD rule round 47, items 3 and 1 (protocol 4): an activation that leaves a SIM's served values and APN rows unchanged records the commit and neither notifies nor proves that SIM; emergency_default_won and winner_after_failure records do not lapse at 90 days and end with the data, the cell or a new record of the same key."
     },
     "ocd/test/src/Fixture.kt": {
       "from": "carriersettings/ocd/test/src/Fixture.kt",

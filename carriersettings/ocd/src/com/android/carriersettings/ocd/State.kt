@@ -101,8 +101,12 @@ data class ApnState(
     val lastError: String? = null,
 )
 
-/** What a subscription was last served: the version string, the dataset, and whether SM7 applied. */
-data class ServedRef(val version: String, val datasetDigest: String, val atMs: Long, val sm7: Boolean = false)
+/**
+ * What a subscription was last served: the version string, the dataset, and whether SM7 applied.
+ * [loaded] (round 47): after an install left this SIM's values and rows unchanged, the version
+ * string Telephony still holds for the same values; null once a load served [version].
+ */
+data class ServedRef(val version: String, val datasetDigest: String, val atMs: Long, val sm7: Boolean = false, val loaded: String? = null)
 
 /**
  * CarrierSettings's own state (spec 9.2), `state.json` in device-protected storage. No IMSI,
@@ -204,7 +208,7 @@ data class State(
                 "emergency_up" to s.emergencyUp,
                 "last_call_ended_at_ms" to s.lastCallEndedAtMs,
                 "last_notify_ms" to s.lastNotifyMs.entries.associate { (k, v) -> k.toString() to v },
-                "served" to s.served.entries.associate { (k, v) -> k.toString() to linkedMapOf("version" to v.version, "dataset_digest" to v.datasetDigest, "at_ms" to v.atMs, "sm7" to v.sm7) },
+                "served" to s.served.entries.associate { (k, v) -> k.toString() to linkedMapOf("version" to v.version, "dataset_digest" to v.datasetDigest, "at_ms" to v.atMs, "sm7" to v.sm7, "loaded" to v.loaded) },
                 "x5_served" to s.x5Served.entries.associate { (k, v) -> k.toString() to v },
                 "x5_tested_here" to s.x5TestedHere,
                 "mismatches" to s.mismatches,
@@ -278,7 +282,7 @@ data class State(
                 emergencyUp = o.raw["emergency_up"] == true,
                 lastCallEndedAtMs = long("last_call_ended_at_ms"),
                 lastNotifyMs = o.objOrNull("last_notify_ms")?.let { m -> m.keys.associate { it.toInt() to m.long(it) } }.orEmpty(),
-                served = intMap("served").mapValues { (_, v) -> ServedRef(v.str("version"), v.str("dataset_digest"), long("at_ms", v), v.raw["sm7"] == true) },
+                served = intMap("served").mapValues { (_, v) -> ServedRef(v.str("version"), v.str("dataset_digest"), long("at_ms", v), v.raw["sm7"] == true, v.strOrNull("loaded")) },
                 x5Served = intMap("x5_served").mapValues { (_, v) -> v.keys.associateWith { k -> v.raw[k] as Boolean? } },
                 x5TestedHere = o.objOrNull("x5_tested_here")?.let { m -> m.keys.associateWith { m.str(it) } }.orEmpty(),
                 mismatches = long("mismatches").toInt(),

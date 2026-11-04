@@ -443,7 +443,7 @@ class CandidateTest {
         p.drain()
         assertNull(e.state().apnTest)
         assertEquals(Files.sha512(File(p.bakedDir, "apns-conf.xml").readBytes()), p.tpFileSha512)
-        assertEquals("open.26207.c07dcc040b58+ocd${BAKED.take(7)}", p.effective[1])
+        assertEquals("open.26207.c07dcc040b58+ocd${BAKED.take(7)}", e.state().served.getValue(1).version)
     }
 
     @Test
@@ -627,8 +627,8 @@ class CandidateTest {
     }
 
     @Test
-    fun theProtocolStaysThreeAndTheMethodsAreTheOwnersOnly() {
-        assertEquals(3, Protocol.VERSION)
+    fun theProtocolIsFourAndTheMethodsAreTheOwnersOnly() {
+        assertEquals(4, Protocol.VERSION)
         assertTrue(Protocol.APN_CANDIDATE_SET in Protocol.OWNER_METHODS)
         assertTrue(Protocol.APN_CANDIDATE_RESTORE in Protocol.OWNER_METHODS)
         assertFalse("adb never writes", Protocol.APN_CANDIDATE_SET in Protocol.ADB_METHODS)
@@ -639,7 +639,7 @@ class CandidateTest {
         assertEquals("candidate", Protocol.CANDIDATE)
         val (e, p) = setup()
         installed(e, p)
-        assertEquals(3, e.status()[Protocol.PROTOCOL])
+        assertEquals(4, e.status()[Protocol.PROTOCOL])
         val id = inPlace(e, p)
         for (k in listOf("install_id", "state", "candidate", "removed_rows", "changed_rows", "added_rows", "rows", "preferred_apn_recorded")) assertTrue(k, e.installStatus(id).containsKey(k))
         assertTrue("the app reads \"candidate\" in it", ((e.status()["apn_test_set"] as Map<*, *>)["status"] as String).contains("candidate"))

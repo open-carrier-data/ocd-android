@@ -331,9 +331,9 @@ class Engine(private val p: Platform) {
         }
     }
 
-    private fun buildFor(sim: SimId, sub: Int, state: State, choice: Choice, sm7: Boolean = sm7(state)): Built {
+    private fun buildFor(sim: SimId, sub: Int, state: State, choice: Choice, sm7: Boolean = sm7(state), without: Set<String> = emptySet()): Built {
         val data = choice.data ?: refuse("storage", "no serving index")
-        val local = if (choice.local) localRecords(data.types) else emptyList()
+        val local = if (choice.local) localRecords(data.types).filter { it.key !in without } else emptyList()
         return BundleBuilder.build(
             BuildInput(
                 sim, data, local, state.x5TestedHere.keys, x5Reference(state, sub, sim, buildServing()), today(), p.cell(),
@@ -646,6 +646,33 @@ class Engine(private val p: Platform) {
         return Triple(selected, apnProfile, coupling)
     }
 
+    /**
+     * The local records that do not lapse ([BundleBuilder.noLapse]) and end with this install
+     * (round 47, item 1): their row is gone from [rowKeys] (a row key hashes every attribute, so a
+     * changed row is a gone row), or, on a SIM in the phone they apply to, the data's own value of
+     * their key differs between the installed dataset and [staged]. A source-backed change on main
+     * must reach the phone; before round 47 the 90 days ended such a record.
+     */
+    private fun endedRecords(state: State, staged: ServingData, rowKeys: Set<String>, sims: List<ActiveSim>): Set<String> {
+        val records = localRecords(staged.types).filter(BundleBuilder::noLapse)
+        val installed = installedServing(state)
+        val before = Choice(installed, true, false, "installed")
+        val after = Choice(staged, true, false, "staged")
+        return records.filter { r ->
+            val key = r.target.key
+            if (key == null) {
+                r.target.rowKey != null && r.target.rowKey !in rowKeys
+            } else {
+                installed != null && sims.filter { !it.sim.noSim }.any { s ->
+                    runCatching {
+                        r.key in buildFor(s.sim, s.subId, state, before).recordsApplied &&
+                            buildFor(s.sim, s.subId, state, before, without = setOf(r.key)).values[key] != buildFor(s.sim, s.subId, state, after, without = setOf(r.key)).values[key]
+                    }.getOrDefault(false)
+                }
+            }
+        }.map { it.key }.toSet()
+    }
+
     /** Checks 14 to 17 and the `changes` list, against the active dataset. */
     private fun installChecks(job: Job, state: State, dataset: Dataset, staged: ServingData, sims: List<ActiveSim>) {
         val (dir, activeData, activeLocal) = active(state)
@@ -669,11 +696,12 @@ class Engine(private val p: Platform) {
         val changes = ArrayList<Map<String, Any?>>()
         val oldChoice = Choice(activeData, activeLocal, false, "active")
         val newChoice = Choice(staged, true, false, "staged")
+        val ended = endedRecords(state, staged, newView.rowProfiles.keys, sims)
         var narrowNeedsRead = false
         for (s in sims) {
             if (s.sim.noSim) continue
             val oldBuilt = runCatching { buildFor(s.sim, s.subId, state, oldChoice) }.getOrNull()
-            val newBuilt = buildFor(s.sim, s.subId, state, newChoice)
+            val newBuilt = buildFor(s.sim, s.subId, state, newChoice, without = ended)
             val (oldRows, _, oldCoupling) = if (oldBuilt != null) simApn(oldView, oldBuilt, s.sim) else Triple(emptyList(), null, "same")
             val (newRows, newApnProfile, newCoupling) = simApn(newView, newBuilt, s.sim)
             check(15, "every SIM keeps an internet row, and an IMS row where it had one") {
@@ -799,6 +827,8 @@ class Engine(private val p: Platform) {
         val view = apnView(job.dir!!, newRecords)
         val (activeDir, activeData, activeLocal) = active(state)
         val rollback = { apnView(activeDir, recordsFor(activeData, activeLocal)).composed }
+        val ended = endedRecords(state, staged, view.rowProfiles.keys, sims)
+        val rowsBefore = rowsInPlace(state, view.composed)
         val outcome = installApn(view.composed, digest, rollback, job)
         job.apn = Json.write(outcome.toMap())
         if (!outcome.ok) {
@@ -815,10 +845,12 @@ class Engine(private val p: Platform) {
         if (!job.dir.renameTo(target)) refuse("storage", "the dataset could not be moved into place")
         val ref = InstalledRef(digest, job.commit!!, job.dataDigest!!, job.generatedAt!!, p.nowMs(), job.laneSource ?: "dataset")
         update {
+            if (ended.isNotEmpty()) store.writeLocalRecords(localRecords(staged.types).filter { r -> r.key !in ended })
             it.copy(installed = ref, active = "installed", servingReason = "installed")
         }
+        if (ended.isNotEmpty()) p.log("the data changed under local records ${ended.sorted()}; they end")
         job.state = "proving"
-        val unproven = notifyAndProve(sims)
+        val unproven = notifyAndProve(sims, ApnRows(rowsBefore, view.composed.doc.rows))
         update { s -> if (s.crashGuard != null && s.crashGuard.datasetDigest != digest && unproven.isEmpty()) s.copy(crashGuard = null, pullAgain = false) else s }
         prune()
         job.state = if (unproven.isEmpty()) "installed" else "reload_not_proven"
@@ -973,16 +1005,56 @@ class Engine(private val p: Platform) {
 
     // --- reloads, proof, pending (7.6, 8.4) -------------------------------------------------
 
+    /** The rows an install replaced ([before]; null: unknown) and the rows it put in place. */
+    class ApnRows(val before: List<ApnXml.Row>?, val after: List<ApnXml.Row>)
+
+    /** The rows of the confirmed APN file, read before [composed] replaces it; null when there is none to compare with. */
+    private fun rowsInPlace(state: State, composed: ApnLogic.Composed): List<ApnXml.Row>? {
+        val sha = state.apn.sha512?.takeIf { state.apn.confirmedAtMs > 0 } ?: return null
+        if (sha == composed.sha512) return composed.doc.rows
+        return runCatching { ApnXml.parse(Files.readBounded(File(store.apnOut, "${sha.take(12)}.xml"), DatasetFile.APN_XML.cap)).rows }.getOrNull()
+    }
+
     /**
-     * 7.6: notifies every active subscription and polls the version string for up to 60 s
-     * until it is what CarrierSettings would serve now; the others wait as pending.
+     * Round 47, item 3 fix 4: the install changes nothing for this SIM. What is compared is what
+     * the SIM really has: every key and value of the bundle last handed to Telephony
+     * (`served/<sub>.json`) against [built], apart from the version string, and the SIM's selected
+     * rows, by row key (a hash of all attributes), against the file the install replaced. Unknown
+     * counts as changed: a SIM never served, a reload still pending or unproven, a version in
+     * effect that is not the last one served, an unreadable bundle or file.
      */
-    fun notifyAndProve(sims: List<ActiveSim>): Set<Int> {
+    private fun unchanged(s: ActiveSim, built: Built, state: State, rows: ApnRows): Boolean {
+        val ref = state.served[s.subId] ?: return false
+        if (s.subId in state.pending || s.subId in state.proving) return false
+        val effective = p.effectiveVersion(s.subId)
+        if (effective == null || (effective != ref.version && effective != ref.loaded)) return false
+        val (values, types) = store.readServed(s.subId) ?: return false
+        fun json(v: Map<String, Any>, t: Map<String, KeyType>) = v.filterKeys { it != Types.VERSION_KEY }.mapValues { (k, x) -> t.getValue(k) to Types.toJson(t.getValue(k), x) }
+        if (json(values, types) != json(built.values, built.types)) return false
+        val before = rows.before ?: return false
+        return ApnSelect.select(before, s.sim).map { it.rowKey }.toSet() == ApnSelect.select(rows.after, s.sim).map { it.rowKey }.toSet()
+    }
+
+    /**
+     * 7.6: notifies the active subscriptions and polls the version string for up to 60 s until it
+     * is what CarrierSettings would serve now; the others wait as pending. With [rows] (an install;
+     * round 47) a SIM the install left [unchanged] is neither notified nor proven, since Telephony
+     * would never load the new version: its [ServedRef] takes the commit and keeps the version in
+     * effect as [ServedRef.loaded]. The crash guard's end needs a real proof, so with the guard on
+     * every SIM reloads.
+     */
+    fun notifyAndProve(sims: List<ActiveSim>, rows: ApnRows? = null): Set<Int> {
         val state = state()
         val choice = choose(state)
-        val expected = sims.filter { !it.sim.noSim }.associate { s ->
-            s.subId to (runCatching { buildFor(s.sim, s.subId, state, choice).version }.getOrNull() ?: "")
+        val builts = sims.filter { !it.sim.noSim }.associateWith { s -> runCatching { buildFor(s.sim, s.subId, state, choice) }.getOrNull() }
+        val same = if (rows == null || state.crashGuard != null) emptyMap() else builts.filter { (s, b) -> b != null && unchanged(s, b, state, rows) }
+        if (same.isNotEmpty()) {
+            val digest = choice.data?.datasetDigest.orEmpty()
+            val refs = same.entries.associate { (s, b) -> s.subId to ServedRef(b!!.version, digest, p.nowMs(), b.sm7, p.effectiveVersion(s.subId)?.takeIf { it != b.version }) }
+            update { it.copy(served = it.served + refs) }
+            p.log("subs ${same.keys.map { it.subId }.sorted()}: values and rows unchanged by ${choice.data?.sha7}; no reload")
         }
+        val expected = (builts - same.keys).entries.associate { (s, b) -> s.subId to (b?.version ?: "") }
         val sent = HashSet<Int>()
         for (sub in expected.keys) if (p.notifyConfigChanged(sub)) sent += sub
         update { s -> s.copy(lastNotifyMs = s.lastNotifyMs + sent.associateWith { p.nowMs() }) }
@@ -1204,9 +1276,10 @@ class Engine(private val p: Platform) {
                 return "target ${target.target} (${target.reason}) waits: $refusal"
             }
             update { it.copy(active = target.target, servingReason = target.reason, ownInstall = null) }
+            val rowsBefore = rowsInPlace(state, view.composed)
             val outcome = if (apnStale) installApn(view.composed, targetData.datasetDigest, null, null) else null
             // An APN change alone needs no CarrierConfig reload (it would cost an IMS re-registration).
-            val unproven = if (ccStale) notifyAndProve(active) else emptySet()
+            val unproven = if (ccStale) notifyAndProve(active, ApnRows(rowsBefore, view.composed.doc.rows)) else emptySet()
             prune()
             return "target ${target.target} (${target.reason})" +
                 (outcome?.let { if (it.ok) "; APN ${if (it.sent) "installed" else "unchanged"} (${it.expected} rows)" else "; APN ${it.code}: ${it.detail}" } ?: "") +

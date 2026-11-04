@@ -61,6 +61,8 @@ class FakePlatform(root: File, baked: File) : Platform {
 
     // Telephony.
     val notified = ArrayList<Int>()
+    /** Telephony takes the notify and never loads, so the proof runs out. */
+    var reloadsHang = false
     val effective = HashMap<Int, String>()
     var retries = 0
     val logs = ArrayList<String>()
@@ -124,6 +126,7 @@ class FakePlatform(root: File, baked: File) : Platform {
 
     override fun notifyConfigChanged(subId: Int): Boolean {
         notified += subId
+        if (reloadsHang) return true
         val sim = sims?.firstOrNull { it.subId == subId }?.sim ?: return true
         effective[subId] = engine!!.load(subId, sim).version
         return true
@@ -165,8 +168,9 @@ class EngineTest {
         commit: String = APP,
         records: List<Map<String, Any?>> = Fixture.s20Records(),
         index: ((String) -> String)? = null,
+        values: Map<String, Map<String, Any?>> = Fixture.VALUES,
     ): MutableMap<String, ByteArray> {
-        val files = Fixture.files(rows = rows, generatedAt = generatedAt, commit = commit, records = Fixture.recordsJson(records))
+        val files = Fixture.files(profiles = Fixture.profilesJson(values = values), rows = rows, generatedAt = generatedAt, commit = commit, records = Fixture.recordsJson(records))
         if (index != null) {
             files["apn-index.json"] = index(String(files.getValue("apn-index.json"))).toByteArray()
             return Fixture.seal(files, generatedAt, commit)
@@ -430,7 +434,8 @@ class EngineTest {
         val result = boot(e, p)
         assertTrue(result, result.startsWith("target build (build_pin_newer)"))
         assertNull(e.state().installed)
-        assertEquals("open.26207.c07dcc040b58+ocd${APP2.take(7)}", p.effective[1])
+        // The build's values equal the installed ones here: the commit is recorded, no reload (round 47).
+        assertEquals("open.26207.c07dcc040b58+ocd${APP2.take(7)}", e.state().served.getValue(1).version)
         assertEquals(Files.sha512(File(newer, "apns-conf.xml").readBytes()), p.tpFileSha512)
     }
 
@@ -476,7 +481,7 @@ class EngineTest {
         e.processPending("retry")
         p.drain()
         assertNull(e.state().ownInstall)
-        assertEquals("open.26207.c07dcc040b58+ocd${BAKED.take(7)}", p.effective[1])
+        assertEquals("open.26207.c07dcc040b58+ocd${BAKED.take(7)}", e.state().served.getValue(1).version)
     }
 
     @Test
@@ -553,7 +558,7 @@ class EngineTest {
         p.drain()
         assertNull(e.state().installed)
         assertEquals("no_dataset", e.status()["serving_reason"])
-        assertEquals("open.26207.c07dcc040b58+ocd${BAKED.take(7)}", p.effective[1])
+        assertEquals("open.26207.c07dcc040b58+ocd${BAKED.take(7)}", e.state().served.getValue(1).version)
     }
 
     @Test
@@ -569,15 +574,234 @@ class EngineTest {
         assertEquals(before.values, during.values)
     }
 
+    // --- round 47: an activation that changes nothing for a SIM -----------------------------------
+
+    private val o2Profile = "open.26207.c07dcc040b58"
+    private val tchibo = "open.26207.78040a3afcc4"
+    private val vodafone = SimId("262", "02", spn = "Example2", imsi = "262020000000001", iccid = "89490200000000000001")
+    private val twoSims = listOf(ActiveSim(1, 0, O2), ActiveSim(2, 1, vodafone))
+    private val app3 = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    private fun withValue(key: String, value: Any?) = Fixture.VALUES + (o2Profile to (Fixture.VALUES.getValue(o2Profile) + (key to value)))
+    /** A new dataset: another carrier's value differs in each, since equal files are `already_installed` and never activate. */
+    private fun next(commit: String = APP2, generatedAt: String = "2026-10-26T09:57:41Z", rows: List<Pair<String, String>> = ROWS, values: Map<String, Map<String, Any?>> = Fixture.VALUES) =
+        appFiles(commit = commit, generatedAt = generatedAt, rows = rows, values = values + (tchibo to (Fixture.VALUES.getValue(tchibo) + ("maxMessageSize" to 1000 + commit[0].code))))
+
+    @Test
+    fun anUnchangedSimGetsNoNotifyAndNoProofAndTheCommitIsRecorded() {
+        val (e, p) = setup()
+        boot(e, p)
+        installed(e, p)
+        val before = p.notified.size
+        val loaded = p.effective.getValue(1)
+        assertEquals("$o2Profile+ocd${APP.take(7)}", loaded)
+        val id = installed(e, p, next())
+        // No proof ran: it would have waited 60 s on a version that never reloads, and ended in reload_not_proven.
+        assertEquals(e.installStatus(id).toString(), "installed", e.installStatus(id)[Protocol.STATE])
+        assertEquals(before, p.notified.size)
+        assertEquals(loaded, p.effective[1])
+        val s = e.state()
+        assertEquals(APP2, s.installed!!.commit)
+        assertEquals(s.installed!!.datasetDigest, s.served.getValue(1).datasetDigest)
+        assertEquals("$o2Profile+ocd${APP2.take(7)}", s.served.getValue(1).version)
+        assertEquals(loaded, s.served.getValue(1).loaded)
+        assertTrue(s.pending.isEmpty() && s.proving.isEmpty())
+        // The commit counts as served: the next check has nothing to do.
+        assertTrue(boot(e, p).contains("nothing to install"))
+        // Telephony's cached bundle at a boot is the same values: no reload.
+        e.onConfigChanged(1, O2)
+        p.drain()
+        assertEquals(before, p.notified.size)
+        assertEquals(0, e.state().mismatches)
+        // Any real load serves the new version.
+        assertEquals("$o2Profile+ocd${APP2.take(7)}", e.load(1, O2).version)
+        assertNull(e.state().served.getValue(1).loaded)
+    }
+
+    @Test
+    fun aChangedSimOnTheSameActivationStillGetsBoth() {
+        val (e, p) = setup()
+        p.sims = twoSims
+        boot(e, p)
+        installed(e, p)
+        assertEquals("$o2Profile+ocd${APP.take(7)}", p.effective[1])
+        val before = p.notified.size
+        val other = p.effective.getValue(2)
+        val id = installed(e, p, next(values = withValue("maxImageHeight", 1000)))
+        assertEquals("installed", e.installStatus(id)[Protocol.STATE])
+        assertEquals(listOf(1), p.notified.drop(before))
+        assertEquals("$o2Profile+ocd${APP2.take(7)}", p.effective[1])
+        assertEquals(1000, e.load(1, O2).values["maxImageHeight"])
+        assertEquals(other, p.effective[2])
+        assertEquals(other, e.state().served.getValue(2).loaded)
+    }
+
+    @Test
+    fun aRowOfOneSimChangesAndOnlyThatSimReloads() {
+        val (e, p) = setup()
+        p.sims = twoSims
+        boot(e, p)
+        installed(e, p)
+        val before = p.notified.size
+        val broadcasts = p.broadcasts.size
+        val rows = ROWS.map { (profile, line) -> profile to line.replace("""apn="web.vodafone.de"""", """apn="web2.vodafone.de"""") }
+        val id = installed(e, p, next(rows = rows))
+        assertEquals("installed", e.installStatus(id)[Protocol.STATE])
+        assertEquals(broadcasts + 1, p.broadcasts.size)
+        assertEquals(listOf(2), p.notified.drop(before))
+        assertEquals(APP.take(7), p.effective.getValue(1).takeLast(7))
+        assertEquals(APP2.take(7), p.effective.getValue(2).takeLast(7))
+    }
+
+    @Test
+    fun aSecondActivationWithNoChangeSendsNothing() {
+        val (e, p) = setup()
+        boot(e, p)
+        installed(e, p)
+        val before = p.notified.size
+        val broadcasts = p.broadcasts.size
+        val loaded = p.effective.getValue(1)
+        installed(e, p, next())
+        val id = installed(e, p, next(commit = app3, generatedAt = "2026-10-27T09:57:41Z"))
+        assertEquals("installed", e.installStatus(id)[Protocol.STATE])
+        assertEquals(before, p.notified.size)
+        assertEquals(broadcasts, p.broadcasts.size)
+        assertEquals("$o2Profile+ocd${app3.take(7)}", e.state().served.getValue(1).version)
+        assertEquals(loaded, e.state().served.getValue(1).loaded)
+        // A change after skipped commits compares with what the SIM really holds, and reloads it.
+        installed(e, p, next(commit = "f".repeat(40), generatedAt = "2026-10-28T09:57:41Z", values = withValue("maxImageHeight", 1000)))
+        assertEquals(before + 1, p.notified.size)
+        assertNull(e.state().served.getValue(1).loaded)
+    }
+
+    @Test
+    fun aSimWaitingForItsProofIsNotSkipped() {
+        val (e, p) = setup()
+        boot(e, p)
+        installed(e, p)
+        p.reloadsHang = true
+        val hung = installed(e, p, next(values = withValue("maxImageHeight", 1000)))
+        assertEquals("reload_not_proven", e.installStatus(hung)[Protocol.STATE])
+        assertTrue(1 in e.state().pending)
+        p.reloadsHang = false
+        // Back to the values the SIM still holds; its proof is open, so it reloads and proves as ever.
+        val before = p.notified.size
+        val id = installed(e, p, next(commit = app3, generatedAt = "2026-10-27T09:57:41Z"))
+        assertEquals("installed", e.installStatus(id)[Protocol.STATE])
+        assertEquals(before + 1, p.notified.size)
+        assertEquals("$o2Profile+ocd${app3.take(7)}", p.effective[1])
+    }
+
+    @Test
+    fun aSimWhoseVersionInEffectIsUnknownReloads() {
+        val (e, p) = setup()
+        boot(e, p)
+        installed(e, p)
+        p.effective[1] = "$o2Profile+ocd0000000"
+        val before = p.notified.size
+        installed(e, p, next())
+        assertEquals(before + 1, p.notified.size)
+    }
+
+    @Test
+    fun theCrashGuardsEndNeedsARealProof() {
+        val (e, p) = setup()
+        boot(e, p)
+        installed(e, p)
+        e.update { it.copy(crashGuard = CrashGuard("sha256:x", p.now, false)) }
+        val before = p.notified.size
+        installed(e, p, next())
+        assertEquals(before + 1, p.notified.size)
+        assertNull(e.state().crashGuard)
+    }
+
+    @Test
+    fun aSkippedStateSurvivesTheStateFile() {
+        val s = State(served = mapOf(1 to ServedRef("a+ocd2", "sha256:d", 5, true, "a+ocd1"), 2 to ServedRef("b+ocd2", "sha256:d", 5)))
+        val back = State.decode(State.encode(s))!!
+        assertEquals(s.served, back.served)
+    }
+
+    // --- round 47: records that do not lapse --------------------------------------------------
+
+    private val winnerKey = "carrier_volte_provisioning_required_bool"
+
+    @Test
+    fun theTwoResultsDoNotLapseAndAnOrdinaryRecordDoes() {
+        val (e, p) = setup()
+        boot(e, p)
+        installed(e, p)
+        val past = "2026-10-01"
+        val winner = e.putRecord(recordJson(winnerKey, true, validUntil = past, result = "winner_after_failure"))
+        assertEquals("reload_sent", winner[Protocol.EFFECT])
+        assertEquals(true, e.load(1, O2).values[winnerKey])
+        refusal("record_expired") { e.putRecord(recordJson("carrier_vt_available_bool", false, validUntil = past, result = "works")) }
+        assertEquals("apn_recompose_needed", e.putRecord(recordJson("", null, valueKind = "none", validUntil = past, target = linkedMapOf("type" to "emergency_data", "row_key" to sosRow().rowKey)))[Protocol.EFFECT])
+        p.now += 400L * 24 * 3_600_000
+        assertEquals(true, e.load(1, O2).values[winnerKey])
+        assertEquals(listOf("served", "served"), e.listRecords(1).filter { it["origin"] == "local" }.map { it["state"] })
+        val id = e.applyApnRecords()
+        p.drain()
+        assertEquals("installed", e.installStatus(id)[Protocol.STATE])
+        assertFalse(p.tpRows.any { it.apn == "sos" })
+    }
+
+    @Test
+    fun theDataChangingItsKeyEndsAWinner() {
+        val (e, p) = setup()
+        boot(e, p)
+        installed(e, p)
+        val key = e.putRecord(recordJson(winnerKey, true, result = "winner_after_failure"))[Protocol.RECORD_KEY]
+        // A change elsewhere in the data leaves it.
+        installed(e, p, next(values = withValue("maxImageHeight", 1000)))
+        assertEquals(true, e.load(1, O2).values[winnerKey])
+        assertTrue(e.listRecords(1).any { (it["record"] as Map<*, *>)["record_key"] == key })
+        // The data's own value of the key changes: the record ends, the install says so, and the SIM reloads.
+        val before = p.notified.size
+        val id = installed(e, p, next(commit = app3, generatedAt = "2026-10-27T09:57:41Z", values = withValue("maxImageHeight", 1000) + (o2Profile to (withValue("maxImageHeight", 1000).getValue(o2Profile) + (winnerKey to false)))))
+        assertTrue(e.installStatus(id)[Protocol.CHANGES] as String, winnerKey in (e.installStatus(id)[Protocol.CHANGES] as String))
+        assertEquals(before + 1, p.notified.size)
+        assertEquals(false, e.load(1, O2).values[winnerKey])
+        assertTrue(e.listRecords(1).none { it["origin"] == "local" })
+    }
+
+    @Test
+    fun anOrdinaryRecordIsNotEndedByTheData() {
+        val (e, p) = setup()
+        boot(e, p)
+        installed(e, p)
+        e.putRecord(recordJson(winnerKey, true))
+        installed(e, p, next(values = withValue(winnerKey, false)))
+        assertEquals(true, e.load(1, O2).values[winnerKey])
+    }
+
+    @Test
+    fun theRowChangingEndsTheDefaultWon() {
+        val (e, p) = setup()
+        boot(e, p)
+        installed(e, p)
+        e.putRecord(recordJson("", null, valueKind = "none", target = linkedMapOf("type" to "emergency_data", "row_key" to sosRow().rowKey)))
+        val rows = ROWS.map { (profile, line) -> profile to line.replace("""apn="sos"""", """apn="sos2"""") }
+        val read = Json.write(linkedMapOf("schema" to "x1s-ocd-f5-read.v1", "base_commit" to APP, "head_commit" to APP2, "lines_digest" to "x", "reader" to "a second agent", "read_at" to "2026-10-26T00:00:00Z", "verdict" to "proceed"))
+        val files = next(rows = rows)
+        val id = stage(e, files, read)[Protocol.INSTALL_ID] as String
+        p.drain()
+        assertEquals(e.installStatus(id).toString(), "verified", e.installStatus(id)[Protocol.STATE])
+        e.activate(id)
+        p.drain()
+        assertEquals("installed", e.installStatus(id)[Protocol.STATE])
+        assertTrue(e.listRecords(1).none { it["origin"] == "local" })
+        assertTrue(p.tpRows.any { it.apn == "sos2" })
+    }
+
     // --- 6.4 records --------------------------------------------------------------------------
 
-    private fun recordJson(key: String, value: Any?, profile: String = "open.26207.c07dcc040b58", kind: String = "measured", model: String = "SM-G981B", validUntil: String? = null, target: Map<String, Any?>? = null, valueKind: String = "value"): String =
+    private fun recordJson(key: String, value: Any?, profile: String = "open.26207.c07dcc040b58", kind: String = "measured", model: String = "SM-G981B", validUntil: String? = null, target: Map<String, Any?>? = null, valueKind: String = "value", result: String? = null): String =
         Json.write(
             Fixture.record(
                 kind = kind, key = key, value = value, carrier = mapOf("scope" to "profile", "profile_id" to profile), model = model,
                 validUntil = validUntil, lastMeasured = if (validUntil != null) "2026-07-01" else "2026-10-25", valueKind = valueKind,
                 target = target ?: linkedMapOf("type" to "config", "key" to key),
-                result = if (target?.get("type") == "emergency_data") "emergency_default_won" else null,
+                result = result ?: if (target?.get("type") == "emergency_data") "emergency_default_won" else null,
             ),
         )
 
@@ -682,7 +906,7 @@ class EngineTest {
             "pending_subs", "waiting_for", "emergency_gate", "emergency_gate_source", "device_override", "apn_test_set", "notice", "apn", "last_check",
         )) assertTrue(k, status.containsKey(k))
         assertFalse(status.containsKey("safe_mode"))
-        assertEquals(3, status["protocol"])
+        assertEquals(4, status["protocol"])
     }
 
     // --- privacy (4.1, 8.6) ---------------------------------------------------------------------
@@ -808,7 +1032,8 @@ class EngineTest {
         e.voiceLossRelease("winners", "VT on passed")
         p.drain()
         assertEquals("installed", e.status()["serving"])
-        assertEquals("open.26207.c07dcc040b58+ocd${APP.take(7)}", p.effective[1])
+        // The winner equals the build's value, so the SIM holds the same values: the commit is recorded, no reload (round 47).
+        assertEquals("open.26207.c07dcc040b58+ocd${APP.take(7)}", e.state().served.getValue(1).version)
         assertEquals(true, e.load(1, O2).values["carrier_vt_available_bool"])
         // Lost again, but under other values now (the winner): a new hold, not a stop.
         assertEquals("hold", e.voiceLossHold("again")["voice_loss"])
