@@ -33,8 +33,11 @@ import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.DataException
 import io.github.open_carrier_data.check.owner.core.DataSource
+import io.github.open_carrier_data.check.owner.core.DatasetFiles
+import io.github.open_carrier_data.check.owner.core.MainCheck
 import io.github.open_carrier_data.check.owner.core.MainPin
 import io.github.open_carrier_data.check.owner.core.MainPull
+import io.github.open_carrier_data.check.owner.core.ManifestRead
 import io.github.open_carrier_data.check.owner.core.NotFound
 import io.github.open_carrier_data.check.owner.core.SchemaRefused
 import io.github.open_carrier_data.check.owner.core.Validation
@@ -287,10 +290,28 @@ class OwnerData(private val context: Context, private val store: StateStore) {
 
     private fun passedOver(commits: List<String>): String = if (commits.isEmpty()) "" else "; newer commits passed over: ${commits.joinToString()}"
 
+    /**
+     * Round 47: main's manifest on the raw host, a conditional request with [etag] ([MainCheck]). A hint: nothing of it
+     * is kept but its two digests. No manifest on main counts as an answer without digests. Throws what [get] throws.
+     */
+    suspend fun mainManifest(etag: String?): ManifestRead = withContext(Dispatchers.IO) {
+        var answered: String? = null
+        try {
+            val body = get(MainCheck.MANIFEST_URL, DatasetFiles.CAPS.getValue(DatasetFiles.MANIFEST), etag) { answered = it }
+            ManifestRead.Fresh(answered, MainCheck.hint(body.decodeToString()))
+        } catch (e: NotModified) {
+            ManifestRead.Same
+        } catch (e: NotFound) {
+            ManifestRead.Fresh(null, null)
+        }
+    }
+
     /** The pull's GET (GitHub's hosts only, no identifier), for the APN candidates' reads of the installed commit. */
     fun fetch(): io.github.open_carrier_data.check.owner.core.Fetch = io.github.open_carrier_data.check.owner.core.Fetch { url, max -> get(url, max) }
 
-    private fun get(url: String, maxBytes: Long): ByteArray {
+    private class NotModified : Exception()
+
+    private fun get(url: String, maxBytes: Long, etag: String? = null, answered: (String?) -> Unit = {}): ByteArray {
         var target = URL(url)
         repeat(6) {
             require(target.protocol == "https") { "https only" }
@@ -300,6 +321,7 @@ class OwnerData(private val context: Context, private val store: StateStore) {
             connection.readTimeout = 60_000
             // Round 31 (SM11): the pull carries no identifier; a ROM build does not even name itself as the owner's.
             connection.setRequestProperty("User-Agent", if (OwnerTester.build == io.github.open_carrier_data.check.owner.core.TesterBuild.OWNER) "ocd-check-owner" else "ocd-check")
+            if (etag != null) connection.setRequestProperty("If-None-Match", etag)
             if (target.host == "api.github.com") {
                 connection.setRequestProperty("Accept", "application/vnd.github+json")
                 connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
@@ -308,8 +330,10 @@ class OwnerData(private val context: Context, private val store: StateStore) {
                 when (val code = connection.responseCode) {
                     HttpURLConnection.HTTP_OK -> {
                         if (connection.contentLengthLong > maxBytes) throw DataException("download larger than the cap")
+                        answered(connection.getHeaderField("ETag"))
                         return connection.inputStream.use { capped(it, maxBytes) }
                     }
+                    HttpURLConnection.HTTP_NOT_MODIFIED -> throw NotModified()
                     301, 302, 303, 307, 308 -> {
                         val next = URL(target, connection.getHeaderField("Location") ?: throw IOException("redirect without a location"))
                         // GitHub serves the API and the files from its own hosts only.
@@ -320,6 +344,10 @@ class OwnerData(private val context: Context, private val store: StateStore) {
                     }
                     404 -> throw NotFound("HTTP 404 for ${target.path}")
                     403, 429 -> {
+                        // Round 47: from either host the 15-minute job waits, whoever made the call.
+                        val now = System.currentTimeMillis()
+                        val wait = MainCheck.retryAfterMs(connection.getHeaderField("Retry-After"), now)
+                        store.update { it.copy(mainCheck = it.mainCheck.copy(limit = MainCheck.limited(it.mainCheck.limit, wait, now))) }
                         // The unauthenticated API allows 60 calls an hour; a pull needs two or three.
                         val left = connection.getHeaderField("x-ratelimit-remaining")
                         throw IOException(if (left == "0") "GitHub's hourly API limit is used up (HTTP $code); tried again later" else "HTTP $code for ${target.path}")

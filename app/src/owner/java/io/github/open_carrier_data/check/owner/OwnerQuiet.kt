@@ -8,6 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.TrafficStats
 import android.os.BatteryManager
 import android.os.Build
@@ -96,6 +98,19 @@ class QuietReader(private val context: Context) {
             val tm = context.getSystemService(TelephonyManager::class.java) ?: return null
             subs.any { tm.createForSubscriptionId(it).isNetworkRoaming }
         }.getOrNull()
+
+        /** The default network's NET_CAPABILITY_NOT_METERED (a phone's hotspot has none); null: no network, or not readable. */
+        fun unmetered(context: Context): Boolean? = runCatching {
+            val network = context.getSystemService(ConnectivityManager::class.java) ?: return null
+            network.getNetworkCapabilities(network.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        }.getOrNull()
+
+        /** Data Saver is on, also when this app is on its allowlist; null: not readable. */
+        fun dataSaver(context: Context): Boolean? = runCatching {
+            context.getSystemService(ConnectivityManager::class.java)?.restrictBackgroundStatus?.let { it != ConnectivityManager.RESTRICT_BACKGROUND_STATUS_DISABLED }
+        }.getOrNull()
+
+        fun screenOn(context: Context): Boolean? = runCatching { context.getSystemService(PowerManager::class.java)?.isInteractive }.getOrNull()
 
         /** Every app's traffic but the owner build's own, in bytes; null when a counter is unsupported. */
         fun othersBytes(): Long? {
