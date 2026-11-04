@@ -103,6 +103,14 @@ object OwnerEmergencyData {
         val status = OwnerDatasetStep.status(context, store)
         if (!status.available) return "emergency data test: no dataset installer on this ROM"
         if (!OwnerAccess.restrictedNetworksGranted(context)) return "emergency data test not run: this build does not grant CONNECTIVITY_USE_RESTRICTED_NETWORKS"
+        // Round 47: this manual run ends an emergency_default_won record of this SIM, which no longer lapses by itself.
+        val won = EmergencyData.defaultWonKeys(client.listRecords(sim.subId).element("records"))
+        if (won.isNotEmpty()) {
+            won.forEach { client.removeRecord(it) }
+            val apply = client.applyApnRecords()
+            log(store, "slot ${sim.slot + 1}: ended ${won.size} emergency_default_won record(s): ${if (apply.ok) "the row comes back; run again to test it" else apply.line}")
+            return "emergency data test: the record is ended; run again once the access points are back"
+        }
         val explain = ExplainView.parse(sim.subId, client.explain(sim.subId)) ?: return "emergency data test: explain not readable"
         val row: ExplainRow? = explain.emergencyRow
         val basis = EmergencyData.basis(OwnerBasis.current(context, state).rom, status.build.imsStackId, status.build.imsStackVersion, runCatching { Build.getRadioVersion() }.getOrNull())

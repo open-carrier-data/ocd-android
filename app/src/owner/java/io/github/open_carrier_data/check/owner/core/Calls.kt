@@ -544,7 +544,7 @@ object CallLedger {
         shortBuild: String,
         zone: ZoneId = ZoneId.systemDefault(),
     ): Pair<OwnerState, List<Triple<Int, OwnerFeature, String>>> {
-        var next = state.copy(calls = (state.calls + record).takeLast(CallRecord.MAX))
+        var next = RealCallWatch.after(state.copy(calls = (state.calls + record).takeLast(CallRecord.MAX)), record)
         next = retested(next, record, nowMs, cellOf, shortBuild)
         return settle(next, record.build, nowMs, zone)
     }
