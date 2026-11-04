@@ -217,7 +217,7 @@ object OwnerApnCandidates {
         if (r.line != InstallState.RESTORED) store.update { it.logged(System.currentTimeMillis(), "apn_candidate", "slot ${sim.slot + 1}: apn_candidate_restore ${r.line}") }
         if (r.failed) {
             store.update { it.copy(stop = it.stop ?: "an APN candidate set could not be restored").logged(System.currentTimeMillis(), "stop", "the APN candidate set could not be restored: ${r.why ?: InstallState.RESTORE_FAILED}") }
-            OwnerNotifications.notice(context, Notice("Access point names restored by CarrierSettings", "A temporary access point name test did not come back as it was, so CarrierSettings installed the last good set again. Tests and changes are paused until you tap Resume.", failed = true))
+            OwnerNotifications.notice(context, Notice("Access point names restored by CarrierSettings", "A temporary access point name test did not come back as it was, so CarrierSettings installed the last good set again. Tests and changes are paused until you tap Resume.", failed = true, hold = true))
         }
         return r
     }

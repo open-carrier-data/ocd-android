@@ -328,7 +328,7 @@ object OwnerEmergencyData {
         }
         client.stop("emergency data test: $why")
         log(store, "STOP slot ${sim.slot + 1}: $why; the test stops until a judged round")
-        OwnerNotifications.notice(context, Notice("Emergency data test stopped", "$why. Tests and changes are paused until you tap Resume; the test itself stays stopped until a judged round.", failed = true))
+        OwnerNotifications.notice(context, Notice("Emergency data test stopped", "$why. Tests and changes are paused until you tap Resume; the test itself stays stopped until a judged round.", failed = true, hold = true))
         return "STOP: $why"
     }
 
@@ -425,7 +425,7 @@ object OwnerEmergencyData {
             if (state == InstallState.RESTORE_FAILED) {
                 // CarrierSettings halted changes and installed the last good set (or the build's APN file); a stop event here too.
                 store.update { it.copy(stop = it.stop ?: "the emergency default test set could not be restored").logged(System.currentTimeMillis(), "stop", "the emergency default test set could not be restored: ${view?.str("error") ?: ""}") }
-                OwnerNotifications.notice(context, Notice("Access point names restored by CarrierSettings", "The emergency test's temporary access point names did not come back as they were, so CarrierSettings installed the last good set again. Tests and changes are paused until you tap Resume.", failed = true))
+                OwnerNotifications.notice(context, Notice("Access point names restored by CarrierSettings", "The emergency test's temporary access point names did not come back as they were, so CarrierSettings installed the last good set again. Tests and changes are paused until you tap Resume.", failed = true, hold = true))
             }
             return r.copy(line = line)
         }

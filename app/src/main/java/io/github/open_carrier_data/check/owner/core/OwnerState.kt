@@ -312,6 +312,8 @@ data class OwnerState(
     val carrierSmsOn: Boolean = false,
     /** Round 43: each SIM's current verdict and its Details, for the screen ([DiagnosisMark]); classes and plain words only. */
     val diagnoses: List<DiagnosisMark> = emptyList(),
+    /** Round 48: the hold notice last shown, until the hold ends ([HoldNotices]). */
+    val holdNotice: HoldMark? = null,
 ) {
     val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
 

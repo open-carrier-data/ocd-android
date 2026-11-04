@@ -106,7 +106,7 @@ class OwnerManifestTest {
     }
 
     @Test
-    fun `the Settings entry sits under Network and internet with title, live summary and icon`() {
+    fun `the Settings entry sits last on About phone, with title, keywords, live summary and icon`() {
         val activity = elements("activity").single { it.getAttributeNS(android, "name") == "io.github.open_carrier_data.check.owner.OwnerActivity" }
         val actions = activity.getElementsByTagName("action").let { n -> (0 until n.length).map { (n.item(it) as Element).getAttributeNS(android, "name") } }
         assertEquals(listOf("com.android.settings.action.IA_SETTINGS"), actions)
@@ -114,8 +114,16 @@ class OwnerManifestTest {
         assertEquals("singleTop", activity.getAttributeNS(android, "launchMode"))
         val meta = activity.getElementsByTagName("meta-data").let { n -> (0 until n.length).map { n.item(it) as Element } }
             .associate { it.getAttributeNS(android, "name") to (it.getAttributeNS(android, "value").ifEmpty { it.getAttributeNS(android, "resource") }) }
-        // CategoryKey.CATEGORY_NETWORK in AOSP 16 / LineageOS 23.2 SettingsLib.
-        assertEquals("com.android.settings.category.ia.wireless", meta["com.android.settings.category"])
+        // Round 48: CategoryKey.CATEGORY_MY_DEVICE_INFO in AOSP 16 / LineageOS 23.2 SettingsLib, last on the page: its highest order is 53.
+        assertEquals("com.android.settings.category.ia.my_device_info", meta["com.android.settings.category"])
+        assertEquals("1000", meta["com.android.settings.order"])
+        // Tile.getKeywords reads a string-array resource, so a plain string here would index nothing.
+        assertTrue(meta.toString(), meta["com.android.settings.keywords"]!!.isNotEmpty())
+        val strings = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(File("src/main/res/values/strings.xml"))
+        val array = strings.getElementsByTagName("string-array").let { n -> (0 until n.length).map { n.item(it) as Element } }.single { it.getAttribute("name") == "settings_entry_keywords" }
+        val keywords = array.getElementsByTagName("item").let { n -> (0 until n.length).map { n.item(it).textContent } }
+        assertTrue(keywords.toString(), keywords.containsAll(listOf("calls", "VoLTE", "Wi-Fi calling", "carrier")))
+        assertTrue("Settings joins the keywords with commas", keywords.none { ',' in it })
         assertEquals("content://io.github.open_carrier_data.check.settings/getDynamicSummary", meta["com.android.settings.summary_uri"])
         assertTrue(meta.toString(), meta["com.android.settings.title"]!!.isNotEmpty())
         assertTrue(meta.toString(), meta["com.android.settings.icon"]!!.isNotEmpty())

@@ -723,7 +723,7 @@ object DatasetWords {
                 "build_pin_newer" -> ": the ROM's data is newer"
                 "crash_guard" -> ": the newest data did not load twice"
                 "app_disabled" -> ": Open Carrier Data was disabled"
-                "voice_loss_hold" -> ": calls came back only with it, and the values at fault are found when the phone is next idle at home"
+                "voice_loss_hold" -> ": calls came back only with it; tap Test now to find the values at fault"
                 "voice_loss_stop" -> ": calls stopped twice with the same new values; tap Resume to try again, or wait for a newer ROM build"
                 // A round 30 ROM still names its own switch; its build's data serves either way.
                 "safe_mode" -> " (switched in this older ROM's own Settings entry)" // a round 30 ROM only

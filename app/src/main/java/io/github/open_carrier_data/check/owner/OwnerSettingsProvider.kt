@@ -10,8 +10,8 @@ import android.os.Process
 import io.github.open_carrier_data.check.owner.core.SettingsSummary
 
 /**
- * The live summary under "Open Carrier Data" in Settings > Network &
- * internet, the owner screen's headline ("All signed in on your phone's own
+ * The live summary under "Open Carrier Data" in Settings > About phone,
+ * the owner screen's headline ("All signed in on your phone's own
  * settings", "Open Carrier Data switched on VoLTE"), built with the call
  * tests as on the screen:
  * Settings calls `getDynamicSummary` on this authority (the
