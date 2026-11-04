@@ -84,8 +84,9 @@
     },
     "ocd/src/com/android/carriersettings/ocd/ApnLogic.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/ApnLogic.kt",
-      "blob": "303494846e093127db910b695899bec32f65506b",
-      "status": "equal"
+      "blob": "27a05660e0fd51a4042b9aa9e52f0073e44a5bcc",
+      "status": "changed",
+      "why": "The f5_read reader check also accepts a reader named \"OCD Android\" (the app's new name); \"OCD Check\" and \"ocd-check\" still count as the app."
     },
     "ocd/src/com/android/carriersettings/ocd/ApnXml.kt": {
       "from": "carriersettings/ocd/src/com/android/carriersettings/ocd/ApnXml.kt",
