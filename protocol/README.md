@@ -1,6 +1,6 @@
 # The writer-to-provider protocol
 
-OCD Check (`../app`, the writer) hands datasets, records and test steps to OcdCarrierSettingsDataset (`../carriersettings`, the provider) through `content://com.android.carriersettings.ocddata`, with method calls only. OCD rule round 37, item 6 gives this protocol one versioned spec, which both sides' tests read:
+OCD Android (`../app`, the writer) hands datasets, records and test steps to OcdCarrierSettingsDataset (`../carriersettings`, the provider) through `content://com.android.carriersettings.ocddata`, with method calls only. OCD rule round 37, item 6 gives this protocol one versioned spec, which both sides' tests read:
 
 - [`ocd-provider-protocol.json`](ocd-provider-protocol.json): the protocol version, the authority, the writer permission and packages, each method with the protocol it came in, who may call it (the writer app, adb) and its extras, the extras, the error codes, the outcomes and the install job states.
 - [`vectors/`](vectors): status answers as the app reads them. Every member the provider's `status` writes is in each vector.

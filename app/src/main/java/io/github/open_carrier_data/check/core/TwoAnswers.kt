@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
  * configure answer, what the phone is set up to try. `for_you` says, per feature, what an admitted
  * operator or brand statement states about availability for this customer, and `depends_on` says
  * why a conditional value is not single. The app shows them apart and never as "works", "booked"
- * or "you have it" (round 42's rule that OCD Check never claims a booking): a for_you line always
+ * or "you have it" (round 42's rule that OCD Android never claims a booking): a for_you line always
  * says what the brand states and that the person's plan is not checked.
  */
 

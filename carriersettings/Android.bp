@@ -1,6 +1,6 @@
 // Open Carrier Data's CarrierSettings: the dataset provider OcdCarrierSettingsDataset, the second
 // app of this repository (OCD rule round 37, item 6). Soong reads only this directory; the Gradle
-// build of OCD Check (app/) has no Android.bp and is never part of it. The two stay two APKs: this
+// build of OCD Android (app/) has no Android.bp and is never part of it. The two stay two APKs: this
 // one is package com.android.carriersettings, platform-signed by each ROM builder, privileged,
 // system_ext, directBootAware, with no INTERNET, no UI and no network or checker code.
 //

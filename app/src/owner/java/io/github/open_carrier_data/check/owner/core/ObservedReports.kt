@@ -25,7 +25,7 @@ import java.time.ZoneOffset
  * Others' reports, the one way the adopted anti-fake design lets a phone use
  * them (the research "Make a fake report worth nothing" and the owner's
  * direction of 2026-10-20: a report points, phones prove). OCD's public
- * observed/summary.json (public PR #286) counts the valid OCD Check reports
+ * observed/summary.json (public PR #286) counts the valid OCD Android reports
  * per device × carrier profile × stack × entry, unverified. For this phone's
  * own cell, an entry that others reported working ("works", "signed in") or
  * contested (a clean measured failure) only moves earlier in the night's
@@ -172,7 +172,7 @@ object ObservedReports {
     private val json = Json { ignoreUnknownKeys = true }
 
     /** A report the app opened, as its log line names it (builds before the list in the state). */
-    private val OPENED_LINE = Regex("opened the prefilled OCD Check report (sha256:[0-9a-f]{64})")
+    private val OPENED_LINE = Regex("opened the prefilled OCD (?:Android|Check) report (sha256:[0-9a-f]{64})")
 
     /** The hashes of the reports this app opened: the owner's own reports. */
     fun ownHashes(state: OwnerState): Set<String> =

@@ -410,7 +410,7 @@ object RecordReport {
             append("### Record\n\n```json\n")
             append(MeasuredRecord.text(record))
             append("\n```\n\n### Privacy check\n\n")
-            append("- [X] The OCD Check app's privacy scan passed: the record holds no IMSI, ICCID, IMEI, phone number, SIP URI or IP address.\n")
+            append("- [X] The OCD Android app's privacy scan passed: the record holds no IMSI, ICCID, IMEI, phone number, SIP URI or IP address.\n")
         }
         return Issue(title, body, MeasuredRecord.recordKey(record))
     }
@@ -441,7 +441,7 @@ data class SourceReview(val key: String, val title: String, val body: String, va
         fun noValuePassed(profile: String, key: String, failing: JsonElement?, tried: List<Candidate>, commit: String, reason: String, nowMs: Long) = SourceReview(
             "no_value_passed|$profile|$key|${commit.take(12)}",
             "${TITLE_PREFIX}no value passed: $key for $profile",
-            "The OCD Check owner build measured a failure with OCD's value of `$key` for `$profile` (data commit `$commit`), " +
+            "The OCD Android owner build measured a failure with OCD's value of `$key` for `$profile` (data commit `$commit`), " +
                 "and no other value passed under the same conditions, so the newest value stays and the test repeats in the next idle moment.\n\n" +
                 "- Value served: `${failing ?: "Android's default"}`\n- Failure: ${reason.take(300)}\n" +
                 "- Values tried: ${tried.joinToString { "`${it.plain}` (${it.origin})" }.ifEmpty { "none known" }}\n",

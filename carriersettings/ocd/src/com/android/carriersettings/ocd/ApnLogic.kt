@@ -170,7 +170,7 @@ object ApnLogic {
         val reader = (raw["reader"] as? String)?.trim().orEmpty()
         if (reader.isEmpty()) return "f5_read names no reader"
         val r = reader.lowercase(java.util.Locale.ROOT)
-        if (r == "app" || r.contains("open_carrier_data.check") || r.contains("ocd check") || r.contains("ocd-check")) return "f5_read's reader is the app"
+        if (r == "app" || r.contains("open_carrier_data.check") || r.contains("ocd check") || r.contains("ocd android") || r.contains("ocd-check")) return "f5_read's reader is the app"
         if ((raw["read_at"] as? String).isNullOrBlank()) return "f5_read has no read_at"
         return null
     }

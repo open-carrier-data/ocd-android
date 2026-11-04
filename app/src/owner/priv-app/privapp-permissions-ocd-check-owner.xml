@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    OCD Check owner build as a privileged system app (the owner's target form, 2026-10-19).
+    OCD Android owner build as a privileged system app (the owner's target form, 2026-10-19).
     Install to /system_ext/etc/permissions/ next to the APK in
     /system_ext/priv-app/OcdCheckOwner/OcdCheckOwner.apk (or the /product pair).
     Only for the owner's own ROM; never for a ROM anyone else runs (round 25 OB1, AV2).

@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
  * - without a token nothing is sent, and "Open report on GitHub" opens the prefilled form as
  *   before, which also stays with a token;
  * - it sends only settled results ([Settled]): the newest run of each SIM with the entries
- *   that carry `settled`, after the same privacy scan, as an issue on the "OCD Check report"
+ *   that carry `settled`, after the same privacy scan, as an issue on the "OCD Android report"
  *   form through GitHub's REST API;
  * - a settled result is sent once, and again only when its level or outcome changes or after
  *   [RENEW_MS], so a record in observed/retested.json is renewed well before its 90 days end;

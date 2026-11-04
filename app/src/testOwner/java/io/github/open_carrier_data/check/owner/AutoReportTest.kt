@@ -253,7 +253,7 @@ class AutoReportTest {
     @Test
     fun `the automatic report carries only the settled results, in the form's shape`() {
         val issue = IssueReport.automatic(run(), cell, calls, settled)!!
-        assertEquals("[OCD Check report] SM-G981B on 26202 (LIDL Connect)", issue.title)
+        assertEquals("[OCD Android report] SM-G981B on 26202 (LIDL Connect)", issue.title)
         val report = Json.parseToJsonElement(issue.text).jsonObject
         assertEquals(listOf("volte:on", "vowifi:on"), report.getValue("results").jsonArray.map { it.jsonObject.getValue("entry").jsonPrimitive.content })
         assertEquals(emptyList<String>(), SchemaSubset.problems(report, schema))

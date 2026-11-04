@@ -133,7 +133,7 @@ object ApnTrialReview {
     fun of(profile: String, c: ApnSetCandidate, failure: LeadFailure, commit: String, nowMs: Long) = SourceReview(
         "apn_candidate|$profile|${c.id}|${commit.take(12)}",
         "${SourceReview.TITLE_PREFIX}APN candidate passed: ${c.kind} for $profile",
-        "The OCD Check owner build measured a failure on `$profile` (data commit `$commit`): ${failure.plain}. " +
+        "The OCD Android owner build measured a failure on `$profile` (data commit `$commit`): ${failure.plain}. " +
             "As a non-persistent trial through CarrierSettings's temporary set, ${c.plain} passed: ${failure.check}. " +
             "The installed set was restored at once; nothing changed in the data.\n\n" +
             "- Rule: ${c.rule}\n- Candidate: `${c.id}` (${c.kind})\n" +

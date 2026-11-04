@@ -18,7 +18,7 @@ import java.time.ZoneOffset
 
 /**
  * The owner's "upload": a GitHub issue URL on OCD's public repository,
- * prefilled for its "OCD Check report" form with exactly one JSON block, a
+ * prefilled for its "OCD Android report" form with exactly one JSON block, a
  * closed pointer report. Each result names an entry of the OCD data's
  * closed list ([Pointers]: `volte:on`, `apn:<row key>`, ...) and the result
  * class the phone measured, never a value. The report follows the public
@@ -52,7 +52,7 @@ object IssueReport {
 
     /** The form's textarea the report goes in (`id: report`, rendered as JSON, so the issue shows it fenced). */
     const val FIELD = "report"
-    const val TITLE_PREFIX = "[OCD Check report]"
+    const val TITLE_PREFIX = "[OCD Android report]"
     const val SCHEMA = "ocd-check-test-report"
     const val SCHEMA_VERSION = 1
 
@@ -126,7 +126,7 @@ object IssueReport {
             put("schema", SCHEMA)
             put("schema_version", SCHEMA_VERSION)
             putJsonObject("app") {
-                put("name", "OCD Check")
+                put("name", "OCD Android")
                 put("build", "owner")
                 put("version", cell.appVersion)
             }
@@ -283,7 +283,7 @@ object IssueReport {
      */
     fun body(text: String): String =
         "### $REPORT_HEADING\n\n```json\n$text\n```\n\n### $PRIVACY_HEADING\n\n" +
-            "- [X] Sent by the OCD Check owner build after its privacy scan; it holds none of the private values listed in SECURITY.md.\n"
+            "- [X] Sent by the OCD Android owner build after its privacy scan; it holds none of the private values listed in SECURITY.md.\n"
 
     /** A fixed code, as the schema wants it: lower case letters, digits and underscores. */
     internal fun code(text: String): String {

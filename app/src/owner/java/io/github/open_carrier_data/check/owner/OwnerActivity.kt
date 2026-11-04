@@ -448,7 +448,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * The prefilled "OCD Check report" issue of the last finished test, or
+     * The prefilled "OCD Android report" issue of the last finished test, or
      * null when the privacy scan holds it back. A run recorded before the
      * report cell existed is named with this phone as it is now, and with the
      * SIM's SPN and GID1 prefix only when that SIM is still in.
@@ -479,7 +479,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             // The hash also tells the owner's own report in OCD's observed/summary.json from others' reports.
             store.update {
                 it.copy(reportsOpened = (it.reportsOpened - prefilled.hash + prefilled.hash).takeLast(OwnerState.MAX_OPENED))
-                    .logged(System.currentTimeMillis(), "report", "opened the prefilled OCD Check report ${prefilled.hash}; nothing is sent until the owner submits it")
+                    .logged(System.currentTimeMillis(), "report", "opened the prefilled OCD Android report ${prefilled.hash}; nothing is sent until the owner submits it")
             }
         }
         open(prefilled)

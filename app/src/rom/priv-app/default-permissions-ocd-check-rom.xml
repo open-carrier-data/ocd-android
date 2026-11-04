@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    For a ROM build of OCD Check (OCD round 31): the runtime permissions the background work needs,
+    For a ROM build of OCD Android (OCD round 31): the runtime permissions the background work needs,
     granted by DefaultPermissionGrantPolicy on the first boot of a system app. Goes to
     <partition>/etc/default-permissions/. The person can revoke them (fixed="false").
 
