@@ -39,6 +39,7 @@ import io.github.open_carrier_data.check.owner.core.Groups
 import io.github.open_carrier_data.check.owner.core.IdleBlock
 import io.github.open_carrier_data.check.owner.core.IdleInputs
 import io.github.open_carrier_data.check.owner.core.DatasetRetry
+import io.github.open_carrier_data.check.owner.core.ActivationMoment
 import io.github.open_carrier_data.check.owner.core.IdleMoment
 import io.github.open_carrier_data.check.owner.core.RestartWindow
 import io.github.open_carrier_data.check.owner.core.InstallRefusal
@@ -318,7 +319,8 @@ object OwnerDatasetStep {
      * adb trigger), which does all of it in this moment (2026-10-25, "what can be done now should be done now"): no
      * screen-off, charging or idle wait, only the refusals that name a harm (a call, emergency callback or SMS mode,
      * 10 minutes after an emergency call, roaming) and a halt. A background pass waits for the idle moment, as it must
-     * not disturb the person using the phone.
+     * not disturb the person using the phone. On a ROM with skip-notify (round 47) only its tests do: the activation
+     * goes first, at the first moment [ActivationMoment] allows.
      */
     suspend fun run(context: Context, store: StateStore, phone: OwnerPhone, sims: List<OwnerSim>, testNow: Boolean = false): String {
         val client = client(context)
@@ -341,9 +343,15 @@ object OwnerDatasetStep {
         val state = store.read()
         val halt = state.stop ?: status.changesHalted.reason?.takeIf { status.changesHalted.on } ?: "changes halted".takeIf { status.changesHalted.on }
         if (halt != null) return (notes + "changes halted until you tap Resume: $halt").joinToString("; ")
-        if (status.pullAgain) OwnerScheduler.pull(context, force = true)
+        // Round 47: with skip-notify the 15-minute job answers pull_again, within the limits of a metered network.
+        if (status.pullAgain && !status.skipsUnchanged) OwnerScheduler.pull(context, force = true)
         // While the voice-loss hold serves the build's dataset, nothing is activated: the idle moment at home is the split's.
         if (!status.voiceLoss.hold) stage(context, store, client, status, testNow)?.let { notes += it }
+        val activatesFirst = !testNow && status.skipsUnchanged && !status.voiceLoss.hold
+        if (activatesFirst) {
+            activationBlock(context, store, phone, present)?.let { return (notes + "waits to install: $it").joinToString("; ") }
+            activate(context, store, phone, client, present)?.let { notes += it }
+        }
         if (testNow) {
             ownerBlock(store, phone, present)?.let { return (notes + "not now: $it").joinToString("; ") }
         } else {
@@ -353,7 +361,7 @@ object OwnerDatasetStep {
             notes += holdSplit(context, store, phone, client, status, present, testNow, deadline)
             return notes.joinToString("; ")
         }
-        activate(context, store, phone, client, present)?.let { notes += it }
+        if (!activatesFirst) activate(context, store, phone, client, present)?.let { notes += it }
         notes += campaigns(context, store, phone, client, present, testNow, deadline)
         return notes.joinToString("; ").ifEmpty { "nothing to do" }
     }
@@ -404,6 +412,10 @@ object OwnerDatasetStep {
 
     /** The idle moment (testsDecide's conditions); null when it holds. */
     suspend fun idleBlock(context: Context, store: StateStore, phone: OwnerPhone, sims: List<OwnerSim>): IdleBlock? = IdleMoment.blocker(idleInputs(context, store, phone, sims))
+
+    /** Round 47: what stops an activation: every SIM's refusals, then [ActivationMoment]; null when it may go in. */
+    private suspend fun activationBlock(context: Context, store: StateStore, phone: OwnerPhone, sims: List<OwnerSim>): String? =
+        ownerBlock(store, phone, sims) ?: ActivationMoment.blocker(idleInputs(context, store, phone, sims))?.plain
 
     /** What the idle moment reads, in one pass. The quiet after a call counts real calls, not the app's own mailbox calls. */
     suspend fun idleInputs(context: Context, store: StateStore, phone: OwnerPhone, sims: List<OwnerSim>): IdleInputs {

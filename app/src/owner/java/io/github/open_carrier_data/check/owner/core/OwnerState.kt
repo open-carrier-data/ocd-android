@@ -224,7 +224,7 @@ data class OwnerState(
     val lastResult: LastResult? = null,
     /** The last read-only check of the background job. */
     val lastCheckAtMs: Long? = null,
-    /** The last pull attempt of the background job (once a day, on Wi-Fi). */
+    /** The last pull attempt of the background job (without skip-notify once a day, on Wi-Fi). */
     val lastPullAtMs: Long? = null,
     /** Since when a triggered entry waits for a night window; after [QuietPlan.NIGHT_GRACE_MS] any silent window does. */
     val triggerSinceMs: Long? = null,
@@ -274,6 +274,8 @@ data class OwnerState(
     val datasetLine: String? = null,
     /** The last pull over a metered network: at most one a day there (round 30). */
     val lastMeteredPullAtMs: Long? = null,
+    /** The 15-minute job's ETag and waits ([MainCheck], round 47). */
+    val mainCheck: MainCheckState = MainCheckState(),
     /** Open test campaigns, one per SIM at most ([Campaign]): carried across idle moments when a cap stops one. */
     val campaigns: List<Campaign> = emptyList(),
     val campaignEnds: List<CampaignEnd> = emptyList(),

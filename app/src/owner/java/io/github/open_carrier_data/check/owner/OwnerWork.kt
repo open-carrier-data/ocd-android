@@ -57,6 +57,11 @@ import io.github.open_carrier_data.check.owner.core.OwnerFeature
 import io.github.open_carrier_data.check.owner.core.OwnerPhone
 import io.github.open_carrier_data.check.owner.core.OwnerRunner
 import io.github.open_carrier_data.check.owner.core.OwnerSim
+import io.github.open_carrier_data.check.owner.core.DataException
+import io.github.open_carrier_data.check.owner.core.HeldSet
+import io.github.open_carrier_data.check.owner.core.MainCheck
+import io.github.open_carrier_data.check.owner.core.MainNet
+import io.github.open_carrier_data.check.owner.core.ManifestHint
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.Plan
 import io.github.open_carrier_data.check.owner.core.QuietBlock
@@ -79,6 +84,7 @@ import kotlinx.coroutines.withContext
 import java.time.ZonedDateTime
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import kotlin.random.Random
 
 /**
  * Every owner job runs as WorkManager work, one short step at a time (a
@@ -111,6 +117,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                     Result.success()
                 }
                 STEP_QUIET -> quiet(store)
+                STEP_MAIN_CHECK -> mainCheck(store)
                 STEP_CLEANUP -> cleanup(store)
                 // Round 30: stage, activate (in the idle moment, or at once for "Test now"), test, record; also the voice-loss trigger.
                 STEP_DATASET, STEP_VOICE_CHECK -> withPhone(store) { _, sims, phone ->
@@ -119,7 +126,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                     if (testNow) runCatching { android.util.Log.i(OwnerActivity.TEST_NOW_TAG, "dataset step started, ${android.os.SystemClock.elapsedRealtime() / 1000} s after boot") }
                     val line = OwnerDatasetStep.run(applicationContext, store, phone, sims, testNow)
                     if (testNow) runCatching { android.util.Log.i(OwnerActivity.TEST_NOW_TAG, "dataset step ended: ${line.take(900)}") }
-                    if (!line.startsWith("no dataset installer")) store.update { it.logged(System.currentTimeMillis(), "dataset", (if (testNow) "test now: " else "") + line) }
+                    if (!line.startsWith("no dataset installer")) quietLog(store, "dataset", (if (testNow) "test now: " else "") + line)
                     Result.success()
                 }
                 // The emergency data test by hand (its first use, with adb logcat streamed): one session on the SIM in the slot.
@@ -259,6 +266,59 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     }
 
     /**
+     * Round 47: the 15-minute job on a ROM with skip-notify ([MainCheck]). No idle, screen or night condition: a look at
+     * main's manifest, the normal pull by SHA only for a difference, then the dataset step when a pulled set waits.
+     * Without skip-notify it does nothing, and the quiet job keeps its daily pull and its timing.
+     */
+    private suspend fun mainCheck(store: FileStateStore): Result {
+        val context = applicationContext
+        if (OwnerScheduler.runActive(context)) return Result.success()
+        val status = OwnerDatasetStep.status(context, store)
+        if (!status.skipsUnchanged) return Result.success()
+        val now = System.currentTimeMillis()
+        val net = MainNet(QuietReader.unmetered(context), QuietReader.roaming(context), QuietReader.dataSaver(context))
+        val data = OwnerData(context, store)
+        val state = store.read()
+        fun held(s: OwnerState) = HeldSet(
+            pinned = s.pin != null,
+            pulled = s.pulled?.let { ManifestHint(it.datasetDigest, it.dataDigest) },
+            installed = status.installed?.let { ManifestHint(it.datasetDigest, it.dataDigest) },
+        )
+        if (MainCheck.mayRead(state.mainCheck, net, now)) {
+            if (net.unmetered != true) store.update { it.copy(mainCheck = it.mainCheck.copy(lastMeteredCheckAtMs = now)) }
+            // A failed read tries again next run; a 403 or 429 has set its wait in the read.
+            val read = try {
+                data.mainManifest(state.mainCheck.mark?.etag)
+            } catch (e: java.io.IOException) {
+                null
+            } catch (e: DataException) {
+                null
+            }
+            if (read != null) {
+                val pull = MainCheck.pullDue(read, state.mainCheck, held(state), net, status.pullAgain, state.lastPullAtMs, state.lastMeteredPullAtMs, now)
+                if (pull) {
+                    store.update { it.copy(lastPullAtMs = now, lastMeteredPullAtMs = if (net.unmetered == true) it.lastMeteredPullAtMs else now) }
+                    try {
+                        val line = data.pull(verbose = false)
+                        if (!line.startsWith("up to date")) quietLog(store, "pull", "background: $line")
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        quietLog(store, "pull", "background pull failed: ${e.message?.take(120)}")
+                    }
+                }
+                // Only a change is written: on an unmetered network the job runs 96 times a day, and the state file is large.
+                val before = store.read()
+                val settled = MainCheck.settled(before.mainCheck, read, held(before), pull, now)
+                if (settled != before.mainCheck) store.update { it.copy(mainCheck = settled) }
+            }
+        }
+        val after = store.read()
+        if (MainCheck.activationWaits(after.pulled, after.install, status, after.stop != null, QuietReader.screenOn(context), net.roaming)) OwnerScheduler.dataset(context)
+        return Result.success()
+    }
+
+    /**
      * The hourly quiet job: nothing while the screen is on or a call is up;
      * the light check every [CHECK_EVERY_MS] (and each hour of the night); the
      * night's one feature when the silent window is open (on the rom build only
@@ -292,11 +352,12 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             val checkDue = !periodic || last == null || now - last >= CHECK_EVERY_MS || now < last || night || state.triggerSinceMs != null
             if (!checkDue) return Result.success()
             // main's newest validated commit, once a day on Wi-Fi (round 29); every six hours while nothing is pinned yet.
+            // Round 47: not on a ROM with skip-notify, where the 15-minute job pulls (mainCheck).
             val pullDue = state.lastPullAtMs == null || now - state.lastPullAtMs!! >= (if (state.pin == null) CHECK_EVERY_MS else PULL_EVERY_MS) || now < state.lastPullAtMs!!
             // Round 30: on metered data at most one pull a day, and only with the dataset installer; other pulls wait for Wi-Fi.
             val meteredOk = look.wifiConnected != true && state.datasetStatus?.available == true &&
                 (state.lastMeteredPullAtMs == null || now - state.lastMeteredPullAtMs!! >= TimeUnit.DAYS.toMillis(1) || now < state.lastMeteredPullAtMs!!)
-            if ((look.wifiConnected == true || meteredOk) && (pullDue || state.datasetStatus?.pullAgain == true)) {
+            if (MainCheck.quietJobPulls(state.datasetStatus) && (look.wifiConnected == true || meteredOk) && (pullDue || state.datasetStatus?.pullAgain == true)) {
                 store.update { it.copy(lastPullAtMs = now, lastMeteredPullAtMs = if (meteredOk) now else it.lastMeteredPullAtMs) }
                 runCatching { OwnerData(context, store).pull(verbose = false) }
                     .onSuccess { line -> if (!line.startsWith("up to date")) store.update { it.logged(now, "pull", "background: $line") } }
@@ -936,6 +997,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val STEP_SELF_SMS = "self_sms"
         const val STEP_DROP_KEEP = "drop_keep"
         const val STEP_DATASET = "dataset"
+        const val STEP_MAIN_CHECK = "main_check"
         const val STEP_VOICE_CHECK = "voice_check"
         const val STEP_EMERGENCY_DATA = "emergency_data"
         const val STEP_EMERGENCY_DEFAULT_FIRST_USE = "emergency_default_first_use"
@@ -969,6 +1031,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
 object OwnerScheduler {
     const val WEEKLY = "owner-weekly"
     const val QUIET = "owner-quiet"
+    const val MAIN_CHECK = "owner-main-check"
     const val RUN = "owner-run"
     const val CLEANUP = "owner-cleanup"
     const val PULL = "owner-pull"
@@ -991,6 +1054,7 @@ object OwnerScheduler {
         wm.cancelUniqueWork(WEEKLY)
         if (!on) {
             wm.cancelUniqueWork(QUIET)
+            wm.cancelUniqueWork(MAIN_CHECK)
             return
         }
         val request = PeriodicWorkRequestBuilder<OwnerWorker>(1, TimeUnit.HOURS)
@@ -999,6 +1063,18 @@ object OwnerScheduler {
             .addTag(QUIET)
             .build()
         wm.enqueueUniquePeriodicWork(QUIET, ExistingPeriodicWorkPolicy.UPDATE, request)
+        ensureMainCheck(wm)
+    }
+
+    /** Round 47: the 15-minute job ([MainCheck]), at WorkManager's floor. It needs a network and nothing else; the flex window and the first delay are its jitter. */
+    private fun ensureMainCheck(wm: WorkManager) {
+        val request = PeriodicWorkRequestBuilder<OwnerWorker>(MainCheck.PERIOD_MINUTES, TimeUnit.MINUTES, MainCheck.FLEX_MINUTES, TimeUnit.MINUTES)
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setInitialDelay(Random.nextLong(TimeUnit.MINUTES.toMillis(MainCheck.PERIOD_MINUTES)), TimeUnit.MILLISECONDS)
+            .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_MAIN_CHECK))
+            .addTag(MAIN_CHECK)
+            .build()
+        wm.enqueueUniquePeriodicWork(MAIN_CHECK, ExistingPeriodicWorkPolicy.UPDATE, request)
     }
 
     /** Whether a test chain is queued or running. */
