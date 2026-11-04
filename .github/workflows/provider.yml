@@ -5,7 +5,7 @@ name: Provider
 # its Android glue against the SDK's android.jar, the proof that its code does not depend on where
 # a ROM puts it, its byte record of the move (cut.json), and the layout that keeps Soong away from
 # the Gradle app. The app's half of the contract runs in
-# test.yml (testOwnerUnitTest). No Android tree and no ROM build here.
+# test.yml (testDebugUnitTest). No Android tree and no ROM build here.
 
 on:
   workflow_dispatch:
@@ -98,7 +98,7 @@ jobs:
           done
           # No default writer (round 37): each writer genrule's default command fails the build.
           [ "$(grep -c '>&2 && exit 1",$' carriersettings/Android.bp)" -eq 2 ] || { echo "a writer genrule has a default" >&2; exit 1; }
-          ! grep -n 'c9b9e2e3e8cd7ddaedbd60df5b91a6f5af6f039e3d4d6e413d2cdb5ffe3877a8' -r carriersettings protocol || { echo "the owner build's certificate is named in the published module" >&2; exit 1; }
+          ! grep -n 'c9b9e2e3e8cd7ddaedbd60df5b91a6f5af6f039e3d4d6e413d2cdb5ffe3877a8' -r carriersettings protocol || { echo "a signing certificate is named in the published module" >&2; exit 1; }
           # No emergency data test first use declared for other phones (round 37): no ocd-build.json here.
           [ -z "$(git ls-files | grep -E '(^|/)ocd-build\.json$' || true)" ] || { echo "an ocd-build.json is published" >&2; exit 1; }
           # The provider asks for no INTERNET (two APKs, never one).

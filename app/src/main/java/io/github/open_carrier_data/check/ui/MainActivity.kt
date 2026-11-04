@@ -22,7 +22,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // No-op in debug and release; the owner build checks for its own leftovers here.
+        // A hand install does nothing here; a ROM's system app checks for its own leftovers.
         OwnerHook.onAppStart(applicationContext)
         // Round 32 U1: only where a ROM set the daily check (off by default); otherwise the pull waits for the person's tap.
         io.github.open_carrier_data.check.phone.DailyDataCheck.schedule(applicationContext)

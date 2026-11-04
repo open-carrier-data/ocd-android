@@ -119,8 +119,7 @@ class EpdgW1Test {
 
     @Test
     fun `W2 is not built - no IKE packet and no hand-built packet to a carrier server`() {
-        val sources = listOf("src/main/java", "src/readonly/java", "src/owner/java")
-            .flatMap { root -> File(root).walkTopDown().filter { it.extension == "kt" }.toList() }
+        val sources = File("src/main/java").walkTopDown().filter { it.extension == "kt" }.toList()
         assertTrue(sources.size > 10)
         val ike = Regex("IkeSession|android\\.net\\.ipsec|IKE_SA_INIT\\s*\\(|ikeSaInit|DatagramChannel|:\\s*(500|4500)\\b")
         for (file in sources) assertNull(file.name, ike.find(file.readText())?.value)

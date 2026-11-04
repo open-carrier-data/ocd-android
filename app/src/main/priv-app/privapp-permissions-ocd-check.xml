@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    OCD Android as a privileged system app: the one build, signed by each ROM builder with his own key.
+    Install to /system_ext/etc/permissions/ next to the APK in
+    /system_ext/priv-app/OcdCheck/OcdCheck.apk (or the /product pair). The ROM builder sets
+    OcdCarrierSettings's writer certificate to his key (SM5).
+
+    The ROM enforces this list (ro.control_privapp_permissions=enforce): a privileged permission
+    the APK asks for and this file neither grants nor denies stops system_server at boot.
+    OneBuildTest keeps the two in step. Install this file together with the APK that matches it.
+
+    MODIFY_PHONE_STATE: CarrierConfigManager.overrideConfig(subId, bundle), never persistent;
+          telecom's isInEmergencyCall for the refusals; also guards the Settings entry's activity.
+    READ_PRIVILEGED_PHONE_STATE: the emergency state and IMS for the refusals and the evidence.
+    READ_PRECISE_PHONE_STATE: the IMS registration callback and the telephony callbacks.
+    WRITE_APN_SETTINGS: the APN trials and their revert.
+    DUMP, PACKAGE_USAGE_STATS: dumpsys for the refusals, the evidence and the revert proof.
+
+    CONNECTIVITY_USE_RESTRICTED_NETWORKS is denied by default. The emergency data test needs it, and
+    SM10 grants it only in a build whose builder ran the first use of the test on that device family
+    and IMS stack (logcat streamed, round 30's five first-run checks) and then turned the test on in
+    the build. Only in such a build, replace the deny-permission line with
+    <permission name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />.
+-->
+<permissions>
+    <privapp-permissions package="io.github.open_carrier_data.check">
+        <permission name="android.permission.MODIFY_PHONE_STATE" />
+        <permission name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
+        <permission name="android.permission.READ_PRECISE_PHONE_STATE" />
+        <permission name="android.permission.WRITE_APN_SETTINGS" />
+        <permission name="android.permission.DUMP" />
+        <permission name="android.permission.PACKAGE_USAGE_STATS" />
+        <!-- Round 42 (entitlement note): USE_ICC_AUTH, Android 16's SIM-auth permission; nothing uses it yet. -->
+        <permission name="android.permission.USE_ICC_AUTH" />
+        <deny-permission name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />
+    </privapp-permissions>
+
+    <!-- overrideConfig(int, PersistableBundle) is a @SystemApi, reached by reflection. -->
+    <hidden-api-whitelisted-app package="io.github.open_carrier_data.check" />
+</permissions>
