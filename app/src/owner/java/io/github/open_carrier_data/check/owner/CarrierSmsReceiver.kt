@@ -9,8 +9,6 @@ import android.telephony.SubscriptionManager
 import io.github.open_carrier_data.check.core.CarrierSms
 import io.github.open_carrier_data.check.owner.core.AccountReadMark
 import io.github.open_carrier_data.check.owner.core.AccountSource
-import io.github.open_carrier_data.check.owner.core.OwnerState
-import io.github.open_carrier_data.check.owner.core.TesterBuild
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -31,8 +29,8 @@ class CarrierSmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
         val store = FileStateStore(context)
-        // Off by default; on rom behind the active-tests opt-in (SM9).
-        if (!allowed(store.read())) return
+        // Off by default, on its own switch (round 42's disclosed switch).
+        if (!store.read().carrierSmsOn) return
         val subId = intent.getIntExtra(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, SubscriptionManager.INVALID_SUBSCRIPTION_ID)
         val messages = runCatching { Telephony.Sms.Intents.getMessagesFromIntent(intent) }.getOrNull()?.filterNotNull().orEmpty()
         if (messages.isEmpty()) return
@@ -58,7 +56,4 @@ class CarrierSmsReceiver : BroadcastReceiver() {
             }
         }
     }
-
-    private fun allowed(state: OwnerState): Boolean =
-        state.carrierSmsOn && (OwnerTester.build == TesterBuild.OWNER || state.activeTests.on)
 }

@@ -82,14 +82,13 @@ object OwnerEmergencyData {
      * One session on [sim]: the row's request, and (only after a counted failure) Android's default through round 31's
      * temporary set (CarrierSettings installs the installed commit's APN file without this SIM's emergency rows, the
      * request goes out with Android's default `sos`, CarrierSettings restores the full set, or keeps the set without the
-     * row for this cell when the default won). [manual]: the owner's (or a ROM builder's) run over adb, the first use;
-     * it skips only the due rules and the build switch, never a condition. Returns the log line, or null when nothing
-     * was due.
+     * row for this cell when the default won). Round 47: only a ROM builder's run over adb, the first use (SM10); it never
+     * runs by itself and no person gets a tap for it. Every condition holds. Returns the log line, or null.
      */
-    suspend fun session(context: Context, store: StateStore, phone: OwnerPhone, client: DatasetClient, sim: OwnerSim, manual: Boolean): String? {
+    suspend fun session(context: Context, store: StateStore, phone: OwnerPhone, client: DatasetClient, sim: OwnerSim): String? {
         var cycle: DefaultCycle? = null
         try {
-            return sessionBody(context, store, phone, client, sim, manual) { cycle = it }
+            return sessionBody(context, store, phone, client, sim) { cycle = it }
         } finally {
             // Whatever ended the session (a cancelled worker, an error), the temporary set never stays in place by the app's doing.
             val c = cycle
@@ -98,20 +97,16 @@ object OwnerEmergencyData {
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun sessionBody(context: Context, store: StateStore, phone: OwnerPhone, client: DatasetClient, sim: OwnerSim, manual: Boolean, onCycle: (DefaultCycle) -> Unit): String? {
+    private suspend fun sessionBody(context: Context, store: StateStore, phone: OwnerPhone, client: DatasetClient, sim: OwnerSim, onCycle: (DefaultCycle) -> Unit): String? {
         val state = store.read()
         val firstUse = state.emergencyFirstUse
         val status = OwnerDatasetStep.status(context, store)
         if (!status.available) return "emergency data test: no dataset installer on this ROM"
-        // Round 31 (SM9, SM10): in a ROM build only with the person's opt-in and the ROM builder's switch; the owner build after its first use.
-        if (!manual) OwnerTester.policy(state).emergencyRefusal(status.emergencyTestOn)?.let { return null }
-        if (firstUse?.result == EmergencyFirstUse.NOT_MEANINGFUL && !manual) return null
         if (!OwnerAccess.restrictedNetworksGranted(context)) return "emergency data test not run: this build does not grant CONNECTIVITY_USE_RESTRICTED_NETWORKS"
         val explain = ExplainView.parse(sim.subId, client.explain(sim.subId)) ?: return "emergency data test: explain not readable"
         val row: ExplainRow? = explain.emergencyRow
         val basis = EmergencyData.basis(OwnerBasis.current(context, state).rom, status.build.imsStackId, status.build.imsStackVersion, runCatching { Build.getRadioVersion() }.getOrNull())
         val now = System.currentTimeMillis()
-        if (!manual) EmergencyData.due(state.emergencySessions, sim.key, row?.rowKey, basis, now) ?: return null
         val session = OwnerSession(phone, store, sim)
         val inputs = inputs(context, store, phone, session, sim, status, now)
         val refusal = EmergencyData.refusal(inputs)

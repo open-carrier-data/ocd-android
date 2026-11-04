@@ -8,7 +8,6 @@ import io.github.open_carrier_data.check.core.EpdgLookup
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.ProbeRunMark
 import io.github.open_carrier_data.check.owner.core.SimKey
-import io.github.open_carrier_data.check.owner.core.TesterBuild
 import io.github.open_carrier_data.check.core.UserPlaneClass
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -63,17 +62,6 @@ class AccountStateTest {
     fun `marks are per SIM`() {
         val mine = AccountReadMark(sim, now, AccountState.BLOCKED, AccountSource.SMS)
         assertEquals(AccountState.UNKNOWN, AccountReadMark.fresh(listOf(mine), other, now, zone).first)
-    }
-
-    @Test
-    fun `the balance read runs only on the opt-in, and on rom also behind the active-tests opt-in`() {
-        // The allowed() check reads only the toggles, so a MemoryStore-free OwnerState is enough.
-        val off = OwnerState()
-        assertFalse(OwnerBalance.allowed(off))
-        val on = OwnerState(balanceUssdOn = true)
-        // On the owner build the toggle alone enables it; the rom build needs the active-tests opt-in too.
-        val enabled = OwnerBalance.allowed(on)
-        assertEquals(OwnerTester.build == TesterBuild.OWNER, enabled)
     }
 
     @Test

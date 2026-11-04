@@ -62,9 +62,9 @@ object OwnerApnCandidates {
      * Runs the candidates for [failure] on [sim]; returns the plain line for the log and the caller. Never throws.
      * The line is cleaned like a provider reason ([ProviderReason]): no credential, phone number, IMSI or ICCID.
      */
-    suspend fun afterFailure(context: Context, store: StateStore, phone: OwnerPhone, client: DatasetClient, status: DatasetStatus, sim: OwnerSim, failure: LeadFailure): String {
+    suspend fun afterFailure(context: Context, store: StateStore, phone: OwnerPhone, client: DatasetClient, status: DatasetStatus, sim: OwnerSim, failure: LeadFailure, tap: Boolean = false): String {
         val line = try {
-            run(context, store, phone, client, status, sim, failure)
+            run(context, store, phone, client, status, sim, failure, tap)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -75,13 +75,13 @@ object OwnerApnCandidates {
 
     private const val LINE_MAX = 2_000
 
-    private suspend fun run(context: Context, store: StateStore, phone: OwnerPhone, client: DatasetClient, status: DatasetStatus, sim: OwnerSim, failure: LeadFailure): String {
+    private suspend fun run(context: Context, store: StateStore, phone: OwnerPhone, client: DatasetClient, status: DatasetStatus, sim: OwnerSim, failure: LeadFailure, tap: Boolean): String {
         val slot = "slot ${sim.slot + 1}"
         val state = store.read()
         val now = System.currentTimeMillis()
         val gate = ApnCandidateGate.Inputs(
             status = status,
-            activeTests = OwnerTester.policy(state).activeTests,
+            tap = tap,
             roaming = QuietReader.roaming(context),
             reregistrationsLeft = TestCaps.reregistrationsLeft(state.caps, sim.key, now),
             stop = state.stop,

@@ -28,6 +28,8 @@ class EmergencyDataTest {
         stopped = null, nowMs = now,
     )
 
+    private val attempt = EimsAttempt(connected = true, cellular = true, profileMatches = true, families = setOf("ipv4"), failCause = null, dataWorks = true, releasedInTime = true)
+
     @Test
     fun `it never runs in a call, after a call or an emergency call, in an emergency mode, roaming, with an EIMS network, or over Wi-Fi`() {
         assertNull(EmergencyData.refusal(ok))
@@ -50,28 +52,6 @@ class EmergencyDataTest {
     }
 
     private fun s(outcome: String, at: Long, row: String? = "a:2", basis: String = "b1") = EmergencySession(sim.subId, sim.mccmnc, row, basis, EmergencyData.day(at), outcome, at)
-
-    @Test
-    fun `due on a new SIM, a changed row, a new build, and before the 90-day record expires, once a day, paused after three failed days`() {
-        assertEquals("a SIM first seen", EmergencyData.due(emptyList(), sim, "a:2", "b1", now))
-        val passed = listOf(s("passed", now - 10 * day))
-        assertNull(EmergencyData.due(passed, sim, "a:2", "b1", now))
-        assertEquals("the SIM's emergency row changed", EmergencyData.due(passed, sim, "a:3", "b1", now))
-        assertEquals("a new build, IMS stack or modem firmware", EmergencyData.due(passed, sim, "a:2", "b2", now))
-        assertEquals("the 90-day record is about to expire", EmergencyData.due(listOf(s("passed", now - 77 * day)), sim, "a:2", "b1", now))
-        // One session per SIM per day, no retry on the same day.
-        assertNull(EmergencyData.due(listOf(s("not_counted", now - 3_600_000)), sim, "a:2", "b1", now))
-        // A refusal (a condition did not hold) is no session.
-        assertEquals("no decided session yet", EmergencyData.due(listOf(s("refused", now - 3_600_000)), sim, "a:2", "b1", now))
-        // Three days on which both failed: paused until the row or the build changes.
-        val failed = (1..3).map { s("both_failed", now - it * day) }
-        assertNull(EmergencyData.due(failed, sim, "a:2", "b1", now))
-        assertNotNull(EmergencyData.due(failed, sim, "a:2", "b2", now))
-        // A stop event: never again for that cell until a judged round.
-        assertNull(EmergencyData.due(listOf(s("stopped", now - 5 * day)), sim, "a:2", "b1", now))
-    }
-
-    private val attempt = EimsAttempt(connected = true, cellular = true, profileMatches = true, families = setOf("ipv4"), failCause = null, dataWorks = true, releasedInTime = true)
 
     @Test
     fun `verdicts - pass, counted failure, operator barring, Wi-Fi and everything else not counted`() {

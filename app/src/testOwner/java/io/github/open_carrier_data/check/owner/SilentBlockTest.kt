@@ -122,8 +122,8 @@ class SilentBlockTest {
         assertFalse(passive.contains("requestNetwork"))
         val work = source("OwnerWork.kt")
         assertTrue(work.contains("if ((measuredFailure || checkNow) && safe())"))
-        // The balance read stays behind a measured failure; "check now" alone sends no USSD.
-        assertTrue(work.contains("if (measuredFailure) runCatching { OwnerBalance.readIfDue("))
+        // Round 47: no USSD from the check at all; the balance read is its own tap.
+        assertFalse(work.substringAfter("private suspend fun diagnoseCauses(").substringBefore("private suspend fun balanceNow(").contains("OwnerBalance."))
         assertTrue(work.contains("checkNow = checkNow,"))
         val probe = source("OwnerProbe.kt")
         assertTrue(probe.contains("if (ProbePolicy.refusal(roaming, dataOff) != null) return null"))

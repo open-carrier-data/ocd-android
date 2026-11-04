@@ -17,8 +17,6 @@ import io.github.open_carrier_data.check.owner.core.AccountReadMark
 import io.github.open_carrier_data.check.owner.core.AccountSource
 import io.github.open_carrier_data.check.owner.core.BalanceHalt
 import io.github.open_carrier_data.check.owner.core.OwnerSim
-import io.github.open_carrier_data.check.owner.core.OwnerState
-import io.github.open_carrier_data.check.owner.core.TesterBuild
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.TimeUnit
@@ -36,8 +34,8 @@ import java.util.concurrent.TimeUnit
  * reply needs a menu step or failed", and a missing reply as "balance not read: no reply from the
  * carrier". After any send that read nothing, that SIM gets no further send until the next day
  * ([BalanceHalt]). A brand whose first reply is a menu (LIDL Connect) gets nothing sent at all, only
- * the code and the item's text for the owner to pick by hand. A small daily cap, off
- * by default, and on the rom build behind SM9's opt-in. The read-only builds have no CALL_PHONE and
+ * the code and the item's text for the owner to pick by hand. A small daily cap, and only on the
+ * person's tap (round 47). The read-only builds have no CALL_PHONE and
  * never reach this (src/owner only). Its result feeds the verdict as an [AccountReadMark].
  */
 @RequiresApi(Build.VERSION_CODES.O)
@@ -48,31 +46,18 @@ object OwnerBalance {
     const val DAILY_CAP = 3
     private val DAY_MS: Long = TimeUnit.DAYS.toMillis(1)
 
-    /** Whether the balance read may run in this build: the toggle on, and on rom the active-tests opt-in too. */
-    fun allowed(state: OwnerState): Boolean =
-        state.balanceUssdOn && (OwnerTester.build == TesterBuild.OWNER || state.activeTests.on)
-
     /** Sends within the daily cap when [atMs] is counted; the most recent [DAILY_CAP] within a day. */
     fun underCap(asked: List<Long>, nowMs: Long): Boolean =
         asked.count { nowMs - it in 0..DAY_MS } < DAILY_CAP
 
     /**
-     * Reads the balance for [sim] when it is due (opt-in on, a measured failure, home network,
-     * under the daily cap, no fresh balance today), records the masked result and the send, and
-     * returns the account read, or null when it did not run.
+     * Reads the balance for [sim] on the person's tap (round 47: never by itself): home network, under the
+     * daily cap, no fresh balance today. Records the masked result and the send, and returns the account
+     * read, or null when it did not run.
      */
     @SuppressLint("MissingPermission")
-    suspend fun readIfDue(
-        context: Context,
-        store: FileStateStore,
-        sim: OwnerSim,
-        measuredFailure: Boolean,
-        roaming: Boolean?,
-        nowMs: Long,
-    ): AccountRead? {
-        if (!measuredFailure) return null
+    suspend fun readOnTap(context: Context, store: FileStateStore, sim: OwnerSim, roaming: Boolean?, nowMs: Long): AccountRead? {
         val state = store.read()
-        if (!allowed(state)) return null
         if (roaming != false) return null // home network only, and a SIM whose roaming cannot be read is refused
         // Keyed by brand, never by network: an unidentified brand gets nothing sent, only the record and a hint.
         val choice = BalanceUssd.choose(sim.identity.mccmnc, sim.identity.spn)

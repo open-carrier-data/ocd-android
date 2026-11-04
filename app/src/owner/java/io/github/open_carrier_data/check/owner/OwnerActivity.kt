@@ -25,7 +25,6 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkManager
 import io.github.open_carrier_data.check.owner.core.CallLevels
-import io.github.open_carrier_data.check.owner.core.CallsOutMode
 import io.github.open_carrier_data.check.owner.core.CallsTested
 import io.github.open_carrier_data.check.owner.core.MmsProbe
 import io.github.open_carrier_data.check.owner.core.CarrierOffer
@@ -302,7 +301,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         when {
             line?.startsWith("queued already") == true -> say("A test is already running")
             line?.startsWith("refused: ") == true -> say("Not tested: this app is older than the ROM's installer")
-            line?.startsWith("off: ") == true -> say("Not tested: turn on \"${io.github.open_carrier_data.check.owner.core.OptInWords.TITLE}\" in Details first")
+            line?.startsWith("off: ") == true -> say("Not tested: ${line.removePrefix("off: ")}")
             line?.startsWith("not counted: ") == true -> say("Not tested: the tests are not calibrated on this phone's IMS stack")
             line?.startsWith("queued") != true -> say("Couldn't start the test")
         }
@@ -360,12 +359,6 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Round 26: the app's own mailbox call, live or as a dry run that only logs what it would dial. */
-    fun setCallsOutLive(on: Boolean) = viewModelScope.launch {
-        val mode = if (on) CallsOutMode.LIVE else CallsOutMode.DRY_RUN
-        store.update { it.copy(callsOutMode = mode).logged(System.currentTimeMillis(), "calls_out", if (on) "mailbox calls on: at night, muted, only when your own calls showed nothing" else "mailbox calls off: the app only notes what it would dial") }
-        refresh()
-    }
-
     fun dryRunCallsOut() {
         OwnerScheduler.dryRunCallsOut(getApplication())
         say("Checking the mailbox call without dialling. See the log")
@@ -378,41 +371,21 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** The optional data SMS to the phone's own number; off by default, as it may cost an SMS. */
-    fun setSelfSms(on: Boolean) = viewModelScope.launch {
-        store.update { it.copy(selfSmsOn = on).logged(System.currentTimeMillis(), "self_sms", if (on) "the weekly test SMS to your own number is on" else "the weekly test SMS is off") }
-        refresh()
+    /** Round 47: one mailbox call on the person's own tap; the row says what it may cost. */
+    fun callMailboxNow() {
+        OwnerScheduler.callMailboxNow(getApplication())
+        say("Mailbox call queued")
     }
 
-    /** Round 42 item 4: the balance USSD opt-in; off by default. */
-    fun setBalanceUssd(on: Boolean) = viewModelScope.launch {
-        store.update { it.copy(balanceUssdOn = on).logged(System.currentTimeMillis(), "balance", if (on) "balance reads on: your carrier's free balance code after a data failure, never a menu digit" else "balance reads off") }
-        refresh()
+    /** Round 47: one balance read on the person's own tap. */
+    fun balanceNow() {
+        OwnerScheduler.balanceNow(getApplication())
+        say("Balance read queued")
     }
 
     /** Round 42 item 5: the carrier-SMS reading opt-in; off by default. */
     fun setCarrierSms(on: Boolean) = viewModelScope.launch {
         store.update { it.copy(carrierSmsOn = on).logged(System.currentTimeMillis(), "carrier_sms", if (on) "carrier status messages on: only your carrier's own senders, only a class kept, never a reply" else "carrier status messages off") }
-        refresh()
-    }
-
-    /**
-     * Round 31 (SM9), ROM builds: the person's opt-in for the active tests, off by default. On, the
-     * mailbox calls go live and the test SMS is on (both only where the allowlist marks them free) and
-     * the probe ladder and W1 may run (round 42, item 2); off, all go back off and only the passive
-     * checks run. The owner build has its own switches.
-     */
-    fun setActiveTests(on: Boolean) = viewModelScope.launch {
-        if (OwnerTester.build == io.github.open_carrier_data.check.owner.core.TesterBuild.OWNER) return@launch
-        val now = System.currentTimeMillis()
-        store.update {
-            it.copy(
-                activeTests = io.github.open_carrier_data.check.owner.core.ActiveTestsOptIn(on, now),
-                callsOutMode = if (on) CallsOutMode.LIVE else CallsOutMode.DRY_RUN,
-                selfSmsOn = on,
-            ).logged(now, "opt_in", if (on) "the person turned the test calls on (mailbox calls, test SMS, setting trials, test requests for data and Wi-Fi calling, the emergency data test where the ROM has it on)" else "the person turned the test calls off: only the passive checks run")
-        }
-        // The tester declaration (SM7) follows at once in the dataset step.
-        OwnerScheduler.dataset(getApplication())
         refresh()
     }
 
@@ -517,13 +490,11 @@ class OwnerActivity : ComponentActivity() {
             openReport = ::openIssue,
             closeReport = viewModel::closeReport,
             pickPlan = { offer, options -> viewModel.pickPlan(offer, options, ::reportHeldBack) },
-            setCallsOutLive = { viewModel.setCallsOutLive(it) },
+            callMailboxNow = { viewModel.callMailboxNow() },
             dryRunCallsOut = viewModel::dryRunCallsOut,
-            setSelfSms = { viewModel.setSelfSms(it) },
             selfSmsNow = { viewModel.selfSmsNow() },
-            setBalanceUssd = { viewModel.setBalanceUssd(it) },
+            balanceNow = { viewModel.balanceNow() },
             setCarrierSms = { viewModel.setCarrierSms(it) },
-            setActiveTests = { viewModel.setActiveTests(it) },
         )
         // The adb extras, once per start: never again when the activity is recreated (one may cost an SMS).
         if (savedInstanceState == null) extras(intent)

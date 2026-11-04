@@ -104,7 +104,6 @@ class MessagesTest {
 
     @Test
     fun `the data SMS to the phone's own number is off by default, always on the app's port, and never works`() {
-        assertFalse(OwnerState().selfSmsOn)
         assertEquals("off", SelfSms.refusal(on = false, ownNumber = "+491701234567", smsOverIms = true, roaming = false))
         assertEquals("no_port", SelfSms.refusal(on = true, ownNumber = "+491701234567", smsOverIms = true, roaming = false, port = 0))
         assertEquals("own_number_unknown", SelfSms.refusal(on = true, ownNumber = null, smsOverIms = true, roaming = false))

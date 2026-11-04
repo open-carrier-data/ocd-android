@@ -15,8 +15,6 @@ import io.github.open_carrier_data.check.owner.core.CallLevels
 import io.github.open_carrier_data.check.owner.core.CallMethod
 import io.github.open_carrier_data.check.owner.core.CallRecord
 import io.github.open_carrier_data.check.owner.core.CallsLevel
-import io.github.open_carrier_data.check.owner.core.CallsOutNight
-import io.github.open_carrier_data.check.owner.core.CallsOutPlan
 import io.github.open_carrier_data.check.owner.core.Hold
 import io.github.open_carrier_data.check.owner.core.LiveOverride
 import io.github.open_carrier_data.check.owner.core.OwnerFeature
@@ -248,39 +246,6 @@ class ProvisionalTest {
     }
 
     // --- when the app places its own call ---
-
-    @Test
-    fun `passive first - the mailbox call is due after an apply, a pointer or weekly, only without a real call that showed it`() {
-        val now = applied + 2 * 60_000
-        val on = mapOf(sim to mapOf(OwnerFeature.VOWIFI to true, OwnerFeature.VOLTE to true))
-        val sims = listOf(OwnerFixtures.SIM)
-        // After an apply.
-        val afterApply = OwnerState(provisional = listOf(keep()))
-        assertEquals(listOf(CallsOutPlan.AFTER_APPLY), CallsOutPlan.due(sims, afterApply, on, emptyMap(), "rom-1", "n1", now).map { it.why })
-        val realSinceApply = afterApply.copy(calls = listOf(call(applied + 60_000, CallDirection.OUTGOING)))
-        assertTrue(CallsOutPlan.due(sims, realSinceApply, on, emptyMap(), "rom-1", "n1", now).isEmpty())
-        // A pointer: due unless a real outgoing call passed on its bearer within 3 days.
-        val pointed = mapOf(sim to setOf("vowifi:on"))
-        assertEquals(listOf(CallsOutPlan.POINTER), CallsOutPlan.due(sims, OwnerState(), on, pointed, "rom-1", "n1", now).map { it.why })
-        val twoDays = OwnerState(calls = listOf(call(now - 2 * day, CallDirection.OUTGOING)))
-        assertTrue(CallsOutPlan.due(sims, twoDays, on, pointed, "rom-1", "n1", now).isEmpty())
-        val fourDays = OwnerState(calls = listOf(call(now - 4 * day, CallDirection.OUTGOING)))
-        assertEquals(listOf(CallsOutPlan.POINTER), CallsOutPlan.due(sims, fourDays, on, pointed, "rom-1", "n1", now).map { it.why })
-        // A pointer at a feature that is off makes no call.
-        assertTrue(CallsOutPlan.due(sims, OwnerState(), mapOf(sim to mapOf(OwnerFeature.VOWIFI to false)), pointed, "rom-1", "n1", now).isEmpty())
-        // Weekly per kept voice entry.
-        val kept = OwnerState(overrides = listOf(LiveOverride(0, sim, OwnerFeature.VOLTE.key, true, Hold.KEPT, applied - 30 * day)))
-        assertEquals(listOf(OwnerFeature.VOLTE to CallsOutPlan.WEEKLY), CallsOutPlan.due(sims, kept, on, emptyMap(), "rom-1", "n1", now).map { it.feature to it.why })
-        val keptRecent = kept.copy(calls = listOf(call(now - 5 * day, CallDirection.OUTGOING, bearer = ProvenBearer.LTE)))
-        assertTrue(CallsOutPlan.due(sims, keptRecent, on, emptyMap(), "rom-1", "n1", now).isEmpty())
-        // Nothing kept, nothing pointed, nothing applied: no call, ever.
-        assertTrue(CallsOutPlan.due(sims, OwnerState(), on, emptyMap(), "rom-1", "n1", now).isEmpty())
-        // One per feature and bearer a night.
-        val called = kept.copy(callsOutNights = listOf(CallsOutNight(sim, OwnerFeature.VOLTE, ProvenBearer.LTE, "n1")))
-        assertTrue(CallsOutPlan.due(sims, called, on, emptyMap(), "rom-1", "n1", now).isEmpty())
-    }
-
-    // --- what this phone's own calls showed ---
 
     @Test
     fun `the local line names level, method, build and date, says incoming not tested for calls out, and expires after 90 days`() {

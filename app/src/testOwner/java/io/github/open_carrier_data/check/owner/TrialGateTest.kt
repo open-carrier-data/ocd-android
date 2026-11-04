@@ -1,10 +1,7 @@
 package io.github.open_carrier_data.check.owner
 
-import io.github.open_carrier_data.check.owner.core.ActiveTestsOptIn
 import io.github.open_carrier_data.check.owner.core.ImsStack
-import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.StackCalibration
-import io.github.open_carrier_data.check.owner.core.TesterBuild
 import io.github.open_carrier_data.check.owner.core.TesterPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,91 +12,49 @@ import org.junit.Test
 import java.io.File
 
 /**
- * OCD rule round 31 (SM9, which narrowed round 29's A4 first-run opt-in to the active tests): the owner
- * build runs the round 29 setting trials (a non-persistent override, a temporary access point row, the
- * restart check's override) as before; the rom build only after the person's opt-in. Until now a rom
- * install with no dataset installer (the switch off, an old CarrierSettings) fell through the quiet job
- * to `OwnerScheduler.runPlanned` and "Test now" queued the same chain, and nothing on the way read
- * `activeTests`, while every round 30 and 31 path (the campaigns, the candidates, the calls, the SMS,
- * the emergency data test, the probe ladder) did. The rom build's cases are in src/testRom (TrialGateTest there).
- *
- * SM8 (tests calibrated per IMS stack), the same gate: SM7 counts "a stack not yet calibrated" as no tester next to
- * "the person did not opt in", and the round 30 and 31 campaigns set no override on such a stack. The chain read the
- * opt-in only, so on PHH IMS or a vendor IMS it set overrides and recorded their registration verdicts in the entry
- * ledger and the pointer reports. It now asks the same [StackCalibration] and, with no dataset installer to say
- * which stack runs, reads it from the installed ImsService packages the reports and the calls already use.
+ * OCD rule round 47: a setting trial needs OcdCarrierSettings speaking round 31 and a calibrated stack (SM8). A healthy
+ * phone gets none by itself: only a measured failure on that phone, or the person's tap on Test now, starts one.
  */
 class TrialGateTest {
-    private val optedIn = OwnerState(activeTests = ActiveTestsOptIn(on = true, atMs = 1_761_800_000_000L))
-
     private val calibrated = "aosp_imsstack"
     private val uncalibrated = listOf("phh_ims", "samsung_ims", "other", "not_known", "", null)
+
+    private fun policy(stack: String? = calibrated, provider: Boolean = true) = TesterPolicy(provider, stack)
 
     private val sources = File("src/owner/java").walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
 
     private val work = File("src/owner/java/io/github/open_carrier_data/check/owner/OwnerWork.kt").readText()
 
     @Test
-    fun `the owner build runs the setting trials with no opt-in, on the calibrated stack`() {
-        assertEquals(TesterBuild.OWNER, OwnerTester.build)
-        assertNull(OwnerTester.policy(OwnerState()).trialRefusal(calibrated))
-        // The opt-in is the rom build's; the owner build does not use it.
-        assertNull(OwnerTester.policy(optedIn).trialRefusal(calibrated))
+    fun `a trial needs the provider and a calibrated stack`() {
+        assertNull(policy().trialRefusal)
+        assertEquals(TesterPolicy.NO_PROVIDER, policy(provider = false).trialRefusal?.code)
+        assertEquals(TesterPolicy.NO_PROVIDER, TesterPolicy().trialRefusal?.code)
     }
 
     @Test
-    fun `the three builds' cases, by the policy`() {
-        assertTrue(TesterPolicy(TesterBuild.OWNER).activeTests)
-        assertFalse(TesterPolicy(TesterBuild.ROM, optIn = false).activeTests)
-        assertTrue(TesterPolicy(TesterBuild.ROM, optIn = true).activeTests)
-    }
-
-    @Test
-    fun `on the calibrated stack the gate is the active-tests rule the probe ladder, the campaigns and the policy follow, in whatever build this is`() {
-        for (state in listOf(OwnerState(), optedIn)) {
-            val allowed = OwnerTester.policy(state).trialRefusal(calibrated) == null
-            assertEquals(TesterPolicy(OwnerTester.build, state.activeTests.on).activeTests, allowed)
-            assertEquals(OwnerProbe.allowed(state), allowed)
+    fun `SM8 - no setting trial starts on a stack the tests are not calibrated on`() {
+        for (stack in uncalibrated) {
+            val refusal = policy(stack).trialRefusal
+            assertNotNull("$stack", refusal)
+            assertEquals(TesterPolicy.NOT_CALIBRATED, refusal!!.code)
+            assertEquals(StackCalibration.notCounted(stack), refusal.plain)
         }
-    }
-
-    @Test
-    fun `SM8 - no setting trial starts on a stack the tests are not calibrated on, in either build, with or without the opt-in`() {
-        for (policy in listOf(TesterPolicy(TesterBuild.OWNER), TesterPolicy(TesterBuild.ROM, optIn = false), TesterPolicy(TesterBuild.ROM, optIn = true))) {
-            for (stack in uncalibrated) {
-                val refusal = policy.trialRefusal(stack)
-                assertNotNull("$policy on $stack", refusal)
-                // The stack is read first, so the opt-in is never named as the way to make the trials run, and the words are the round 30 and 31 paths'.
-                assertEquals(TesterPolicy.NOT_CALIBRATED, refusal!!.code)
-                assertEquals(StackCalibration.notCounted(stack), refusal.plain)
-            }
-        }
-        val phh = TesterPolicy(TesterBuild.ROM, optIn = true).trialRefusal("phh_ims")!!
+        val phh = policy("phh_ims").trialRefusal!!
         assertTrue(phh.plain, "phh_ims" in phh.plain && "only passive evidence counts" in phh.plain)
     }
 
     @Test
-    fun `SM8 and SM9 - on the calibrated stack only the opt-in refuses, and its words stay`() {
-        assertNull(TesterPolicy(TesterBuild.OWNER).trialRefusal(calibrated))
-        assertNull(TesterPolicy(TesterBuild.ROM, optIn = true).trialRefusal(calibrated))
-        val off = TesterPolicy(TesterBuild.ROM, optIn = false).trialRefusal(calibrated)!!
-        assertEquals(TesterPolicy.OPT_IN_OFF, off.code)
-        assertEquals("the active tests are off on this phone; only the passive checks run", off.plain)
-    }
-
-    @Test
     fun `the stack the gate reads is the installed ImsService's name the reports and the calls use, and only AOSP ImsStack counts`() {
-        assertNull(TesterPolicy(TesterBuild.OWNER).trialRefusal(ImsStack.of(listOf("com.android.imsstack"))))
-        assertNotNull(TesterPolicy(TesterBuild.OWNER).trialRefusal(ImsStack.of(listOf("me.phh.ims"))))
-        assertNotNull(TesterPolicy(TesterBuild.OWNER).trialRefusal(ImsStack.of(listOf("com.sec.imsservice"))))
-        assertNotNull(TesterPolicy(TesterBuild.OWNER).trialRefusal(ImsStack.of(listOf("com.example.ims"))))
+        assertNull(policy(ImsStack.of(listOf("com.android.imsstack"))).trialRefusal)
+        assertNotNull(policy(ImsStack.of(listOf("me.phh.ims"))).trialRefusal)
+        assertNotNull(policy(ImsStack.of(listOf("com.sec.imsservice"))).trialRefusal)
+        assertNotNull(policy(ImsStack.of(listOf("com.example.ims"))).trialRefusal)
         // An ImsService the phone does not show is no calibrated stack either.
-        assertNotNull(TesterPolicy(TesterBuild.OWNER).trialRefusal(ImsStack.of(emptyList())))
-        // One list: the gate adds none beside the round 30 and 31 paths' StackCalibration.
+        assertNotNull(policy(ImsStack.of(emptyList())).trialRefusal)
         val tester = File("src/owner/java/io/github/open_carrier_data/check/owner/core/Tester.kt").readText()
         assertEquals(1, Regex("setOf\\(\"aosp_imsstack\"\\)").findAll(tester).count())
-        assertTrue(tester.contains("StackCalibration.notCounted(stackId)?.let { TrialRefusal(NOT_CALIBRATED, it) }"))
-        assertTrue(File("src/owner/java/io/github/open_carrier_data/check/owner/OwnerCalls.kt").readText().contains("policy(state).trialRefusal(CallBuild.stack(context))"))
+        assertTrue(File("src/owner/java/io/github/open_carrier_data/check/owner/OwnerCalls.kt").readText().contains("TesterPolicy(state.datasetStatus?.round31 == true, CallBuild.stack(context))"))
     }
 
     @Test
@@ -116,52 +71,30 @@ class TrialGateTest {
     }
 
     @Test
-    fun `nothing else starts a trial, and a revert never asks`() {
-        // The runner's three trial entry points are called from those three steps only.
-        for (call in listOf("runner.testFeature(", "runner.testApns(", "runner.rebootProbe(")) {
-            assertEquals(call, 1, sources.sumOf { Regex(Regex.escape(call)).findAll(it.readText()).count() })
-            assertEquals(call, 1, Regex(Regex.escape(call)).findAll(work).count())
+    fun `round 47 - the quiet job plans nothing, and the passive reads and the dataset step still run`() {
+        for (gone in listOf("QuietPlan.plan(", "callsOutDue(", "runPlanned(", "runCallsOut(", "OwnerEmergencyData.session(context, store, phone, OwnerDatasetStep.client(context), sim, manual = false)")) {
+            assertFalse(gone, gone in work)
         }
-        // The chain is queued from the quiet job and from "Test now" only, both behind the gate (below).
-        assertEquals(1, Regex("OwnerScheduler\\.runPlanned\\(").findAll(work).count())
-        assertEquals(1, sources.sumOf { Regex("OwnerScheduler\\.rebootProbe\\(").findAll(it.readText()).count() })
-        // The cleanup, the reconcile and the provisional revert take a change back and have no gate.
+        val quiet = work.substring(work.indexOf("private suspend fun quiet("), work.indexOf("     * The message check of the light check"))
+        for (still in listOf("diagnoseCauses(store, phone, sims)", "OwnerDatasetStep.run(context, store, phone, sims)", "messageChecks(store, phone, sims, look, night)")) {
+            assertTrue(still, still in quiet)
+        }
+    }
+
+    @Test
+    fun `a cleanup never asks the gate, it only takes a change back`() {
         val cleanup = work.substringAfter("private suspend fun cleanup(store: FileStateStore): Result {").substringBefore("private suspend fun quiet(")
         assertFalse(cleanup.contains("requireTrials") || cleanup.contains("trialRefusal"))
     }
 
     @Test
-    fun `the quiet job plans no trial before the gate, and the light check and the dataset step come before it`() {
-        val quiet = work.substring(work.indexOf("private suspend fun quiet("), work.indexOf("private suspend fun callsOutDue("))
-        val gate = quiet.indexOf("OwnerTester.trialRefusal(context, store.read())?.let { why ->")
-        assertTrue(gate > 0)
-        assertEquals("one gate", gate, quiet.lastIndexOf("OwnerTester.trialRefusal(context, store.read())?.let { why ->"))
-        // The passive reads and the round 30 dataset step (gated on activeTests inside) are not cut off by it.
-        for (before in listOf("diagnoseCauses(store, phone, sims)", "OwnerDatasetStep.run(context, store, phone, sims)", "OwnerEmergencyData.session(", "if (round30) {")) {
-            assertTrue(before, quiet.indexOf(before) in 0 until gate)
-        }
-        // Everything of the round 29 chain comes after: the plan, the mailbox calls, the chain.
-        for (after in listOf("QuietPlan.plan(", "callsOutDue(store, sims, phone", "OwnerScheduler.runPlanned(", "OwnerScheduler.runCallsOut(")) {
-            assertTrue(after, quiet.indexOf(after) > gate)
-        }
-        // The gate ends the run the way the older-app refusal does: told in the log and in the last result, nothing queued.
-        val body = quiet.substring(gate, quiet.indexOf("return Result.success()", gate))
-        assertTrue(body, body.contains("quietLog(store, \"check\", \"light check: no tests: ${'$'}{why.plain}\")"))
-        assertTrue(body, body.contains("\"checked; nothing tested: ${'$'}{why.plain}\""))
-    }
-
-    @Test
-    fun `Test now queues no trial chain before the gate`() {
+    fun `Test now without an installer tests nothing, and says why`() {
         val tests = work.substring(work.indexOf("suspend fun runTests("), work.indexOf("/** Whether the work of a unique name is still to run. */"))
         val gate = tests.indexOf("OwnerTester.trialRefusal(context, FileStateStore(context).read())?.let { why ->")
         assertTrue(gate > 0)
-        // The dataset installer's own path (gated on the stack and activeTests inside) comes first, the chain's steps after.
         assertTrue(tests.indexOf("if (status.available) {") in 0 until gate)
-        assertTrue(tests.indexOf("beginUniqueWork(RUN") > gate)
-        // The opt-in's refusal keeps its "off: " answer; SM8's is the round 30 and 31 paths' own "not counted: " words.
-        assertTrue(tests.substring(gate).contains("return if (why.code == TesterPolicy.NOT_CALIBRATED) why.plain else \"off: ${'$'}{why.plain}\""))
+        assertFalse(tests.contains("beginUniqueWork(RUN"))
         assertTrue(StackCalibration.notCounted("phh_ims")!!.startsWith("not counted: "))
-        // The screen says so instead of "Couldn't start the test".
         val activity = File("src/owner/java/io/github/open_carrier_data/check/owner/OwnerActivity.kt").readText()
         val couldNot = activity.indexOf("line?.startsWith(\"queued\") != true -> say(\"Couldn't start the test\")")
         assertTrue(activity.indexOf("line?.startsWith(\"off: \")") in 0 until couldNot)
@@ -169,8 +102,8 @@ class TrialGateTest {
     }
 
     @Test
-    fun `the restart check is offered only where the trials may start - the calibrated stack, and in a rom build the opt-in`() {
+    fun `the restart check is offered only where a trial may start`() {
         val screen = File("src/owner/java/io/github/open_carrier_data/check/owner/OwnerScreen.kt").readText()
-        assertTrue(screen.contains("val trialsAllowed = remember(state.activeTests.on) { OwnerTester.trialRefusal(context, state) == null }\n    if (!state.rebootCleared && trialsAllowed) {\n        SectionTitle(\"Restart check\")"))
+        assertTrue(screen.contains("val trialsAllowed = remember(state.datasetStatus?.round31) { OwnerTester.trialRefusal(context, state) == null }\n    if (!state.rebootCleared && trialsAllowed) {\n        SectionTitle(\"Restart check\")"))
     }
 }

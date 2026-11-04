@@ -101,7 +101,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.open_carrier_data.check.owner.core.CheckedLine
 import io.github.open_carrier_data.check.owner.core.FeatureLadder
-import io.github.open_carrier_data.check.owner.core.CallsOutMode
 import io.github.open_carrier_data.check.owner.core.HeaderNotes
 import io.github.open_carrier_data.check.owner.core.Ladders
 import io.github.open_carrier_data.check.owner.core.LeftoversLine
@@ -135,17 +134,15 @@ class OwnerActions(
     val clearStop: () -> Unit,
     val grantShizuku: () -> Unit,
     val sendReport: () -> Unit,
-    val setCallsOutLive: (Boolean) -> Unit,
+    /** Round 47: one mailbox call on the person's own tap. */
+    val callMailboxNow: () -> Unit = {},
     val dryRunCallsOut: () -> Unit,
-    val setSelfSms: (Boolean) -> Unit,
     /** One test SMS to the phone's own number now. */
     val selfSmsNow: () -> Unit = {},
-    /** Round 42 item 4: the opt-in for the balance USSD read (off by default). */
-    val setBalanceUssd: (Boolean) -> Unit = {},
+    /** Round 47: one balance read on the person's own tap. */
+    val balanceNow: () -> Unit = {},
     /** Round 42 item 5: the opt-in for reading the carrier's own plan SMS (off by default). */
     val setCarrierSms: (Boolean) -> Unit = {},
-    /** Round 31 (SM9), ROM builds only: the person's opt-in for the active tests. */
-    val setActiveTests: (Boolean) -> Unit = {},
     /** Round 47 item 2: the report the person just read goes to the browser; closing it sends nothing. */
     val openReport: (io.github.open_carrier_data.check.owner.core.IssueReport.Prefilled) -> Unit = {},
     val closeReport: () -> Unit = {},
@@ -323,7 +320,11 @@ private fun OwnerContent(ui: OwnerUi, options: TestOptions, setOptions: (TestOpt
     val testing = ui.state.runs.lastOrNull { it.endedMs == null }?.sim?.let { key -> sims.orEmpty().firstOrNull { it.owns(key) } }
     val status = StatusSentence.of(ui.state, sims, ladders.values.flatten(), running = running, testing = testing)
     // The header's text starts where the cards' text does: one left edge for every line on the page.
-    Column(Modifier.padding(horizontal = 16.dp)) { StatusHeader(ui, sims, status, options, actions) }
+    Column(Modifier.padding(horizontal = 16.dp)) {
+        StatusHeader(ui, sims, status, options, actions)
+        // Round 47: the one static line that says what the app does without being asked; there is no first-run notice.
+        Summary(io.github.open_carrier_data.check.owner.core.OnItsOwn.LINE, Modifier.padding(top = 8.dp))
+    }
 
     // Before the first check and without a SIM there is nothing to show yet: the headline and Test now are the page.
     if (status.kind != StatusKind.NO_SIM && status.kind != StatusKind.NOT_CHECKED) {
@@ -674,19 +675,14 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         item { SwitchRow("Test missing access point names", null, options.apns) { setOptions(options.copy(apns = it)) } }
     }
 
-    val owner = OwnerTester.build == io.github.open_carrier_data.check.owner.core.TesterBuild.OWNER
-    // Round 31 (SM9): in a ROM build, the person's one opt-in for the active tests, off by default.
-    if (!owner) ActiveTestsOptIn(ui, actions)
-
-    // Round 26: calls are measured by the phone; nobody dials or listens.
+    // Round 47: real calls are measured by the phone; a test call is the person's tap.
     SectionTitle("Calls")
     Group {
-        if (owner) item {
-            SwitchRow(
-                "Test calls out automatically",
-                if (state.callsOutMode == CallsOutMode.LIVE) "At night, muted, to your own mailbox, when your own calls didn't show it" else "Off: only notes what it would dial",
-                state.callsOutMode == CallsOutMode.LIVE,
-                actions.setCallsOutLive,
+        item {
+            ToolRow(
+                "Call my mailbox now",
+                "One call to your SIM's own mailbox, with normal sound, and you can hang up. It stays in your call log. It may cost a call on your tariff and may mark a new message as heard",
+                onClick = actions.callMailboxNow,
             )
         }
         item {
@@ -715,16 +711,18 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
                 }
             }
         }
-        if (owner) item {
-            SwitchRow(
-                "Check incoming SMS over IMS",
-                "A hidden SMS to your own number about once a week. It may cost an SMS on your tariff. ${ui.selfSmsLine.orEmpty()}".trim(),
-                state.selfSmsOn,
-                actions.setSelfSms,
+        // Round 47: the SIM's number can be stale on a reissued or ported SIM, and the words say so after one that did not come back.
+        val lost = state.selfSms.lastOrNull()?.result == "not_received"
+        item {
+            ToolRow(
+                "Send a test SMS now",
+                listOfNotNull(
+                    "One hidden SMS to your own number; it may cost an SMS",
+                    "The last one did not come back, so the stored number may be wrong and this SMS could reach someone else".takeIf { lost },
+                    ui.selfSmsLine,
+                ).joinToString(". "),
+                onClick = actions.selfSmsNow,
             )
-        }
-        if (owner || state.activeTests.on) item {
-            ToolRow("Send a test SMS now", if (owner) "One hidden SMS to your own number; it may cost an SMS" else "One hidden SMS to your own number, only where it is free for your carrier", onClick = actions.selfSmsNow)
         }
     }
 
@@ -744,35 +742,31 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         }
     }
 
-    // Round 42 items 4 and 5: the two account-state reads, opt-in and off by default. On the rom build
-    // they also ride on the active-tests opt-in (SM9); shown there only once that is on.
-    if (owner || state.activeTests.on) {
-        SectionTitle("Why a feature fails (account state)")
-        Group {
-            item {
-                SwitchRow(
-                    "Read the plan balance",
-                    "After a data failure, send your carrier's own free balance code (like *100#) and read the reply. It never presses a menu digit: where the code answers with a menu, nothing is sent and the code and the item to pick are shown for you to dial by hand. Home network only, a few times a day at most.",
-                    state.balanceUssdOn,
-                    actions.setBalanceUssd,
-                )
+    // Round 42 items 4 and 5, round 47: the balance is the person's tap; carrier status messages stay on their switch, off by default.
+    SectionTitle("Why a feature fails (account state)")
+    Group {
+        item {
+            ToolRow(
+                "Read the plan balance",
+                "Sends your carrier's own balance code (like *100#) and reads the reply. It never presses a menu digit: where the code answers with a menu, nothing is sent and the code and the item to pick are shown for you to dial by hand. Home network only, a few times a day at most",
+                onClick = actions.balanceNow,
+            )
+        }
+        // The latest balance record of each slot: a masked figure, or why nothing was read and what to dial by hand.
+        val balanceLines = state.log.filter { it.kind == "balance" && it.text.startsWith("slot ") }
+            .groupBy { it.text.substringBefore(':') }.values.map { it.last().text.take(240) }
+        if (balanceLines.isNotEmpty()) item {
+            Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                balanceLines.forEach { Summary(it.replaceFirstChar(Char::uppercase)) }
             }
-            // The latest balance record of each slot: a masked figure, or why nothing was read and what to dial by hand.
-            val balanceLines = state.log.filter { it.kind == "balance" && it.text.startsWith("slot ") }
-                .groupBy { it.text.substringBefore(':') }.values.map { it.last().text.take(240) }
-            if (state.balanceUssdOn && balanceLines.isNotEmpty()) item {
-                Column(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    balanceLines.forEach { Summary(it.replaceFirstChar(Char::uppercase)) }
-                }
-            }
-            item {
-                SwitchRow(
-                    "Read carrier status messages",
-                    "Read the plan messages from your carrier's own senders (option paused, volume used up, option active again) to tell the plan's state. It keeps only the state, the network and the time, never the text or the sender, and never replies.",
-                    state.carrierSmsOn,
-                    actions.setCarrierSms,
-                )
-            }
+        }
+        item {
+            SwitchRow(
+                "Read carrier status messages",
+                "Read the plan messages from your carrier's own senders (option paused, volume used up, option active again) to tell the plan's state. It keeps only the state, the network and the time, never the text or the sender, and never replies.",
+                state.carrierSmsOn,
+                actions.setCarrierSms,
+            )
         }
     }
 
@@ -879,9 +873,8 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         }
     }
 
-    // The restart check leaves a test override live until the restart: offered on an IMS stack the tests are calibrated on (SM8),
-    // and in a rom build once the opt-in is on (SM9).
-    val trialsAllowed = remember(state.activeTests.on) { OwnerTester.trialRefusal(context, state) == null }
+    // The restart check leaves a test override live until the restart: offered only where a trial may start (SM8).
+    val trialsAllowed = remember(state.datasetStatus?.round31) { OwnerTester.trialRefusal(context, state) == null }
     if (!state.rebootCleared && trialsAllowed) {
         SectionTitle("Restart check")
         Group {
@@ -906,7 +899,7 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         item {
             Summary(
                 "Never touches emergency calling. Nothing changes during a call, while roaming, or within 10 minutes of an emergency call. " +
-                    "The only number it ever calls is your own mailbox, muted, at night. " +
+                    "It calls nothing by itself. The only number it can call is your own mailbox, when you tap for it. " +
                     io.github.open_carrier_data.check.owner.core.DatasetWords.WAY_BACK,
                 Modifier.padding(16.dp),
             )
@@ -915,34 +908,6 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
 
     SectionTitle("Log")
     Group { item { Log(state) } }
-}
-
-/**
- * Round 31 (SM9), ROM builds only: the person's opt-in for the active tests (dialled test calls,
- * test SMS, setting trials, the probe ladder and W1, and the emergency data test where the ROM builder
- * turned it on). Off by default; the words say what the app then does before the switch goes on.
- */
-@Composable
-private fun ActiveTestsOptIn(ui: OwnerUi, actions: OwnerActions) {
-    val on = ui.state.activeTests.on
-    var confirm by remember { mutableStateOf(false) }
-    SectionTitle("Tests")
-    Group {
-        item {
-            SwitchRow(io.github.open_carrier_data.check.owner.core.OptInWords.TITLE, if (on) io.github.open_carrier_data.check.owner.core.OptInWords.ON else io.github.open_carrier_data.check.owner.core.OptInWords.OFF, on) { want ->
-                if (want) confirm = true else actions.setActiveTests(false)
-            }
-        }
-    }
-    if (confirm) {
-        AlertDialog(
-            onDismissRequest = { confirm = false },
-            title = { Text("Turn on test calls?") },
-            text = { Text(io.github.open_carrier_data.check.owner.core.OptInWords.explain(ui.dataset?.emergencyTestOn == true)) },
-            confirmButton = { TextButton(onClick = { confirm = false; actions.setActiveTests(true) }) { Text("Turn on") } },
-            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } },
-        )
-    }
 }
 
 /** Round 47 item 2: the whole report and what sending it means, before the browser opens OCD's form. */

@@ -15,26 +15,22 @@
     <!-- Re-applies the kept values of the SIM in each slot after a boot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--
-        Round 26 (runtime permissions, not privileged; granted by
+        Runtime permissions, not privileged; granted by
         priv-app/default-permissions-ocd-check-owner.xml in a ROM build and by `pm grant`
-        on a hand install): the night's muted call to the SIM's own allowlisted mailbox
-        (CALL_PHONE), and the removal of exactly that call's call log entry
-        (READ_CALL_LOG, WRITE_CALL_LOG); the optional data SMS to the phone's own number
-        on the app's port (SEND_SMS, RECEIVE_SMS), off unless the owner turns it on.
+        on a hand install. Round 47: all on the person's tap. CALL_PHONE: the test call to the
+        SIM's own allowlisted mailbox, and the balance USSD. SEND_SMS, RECEIVE_SMS: the data SMS
+        to the phone's own number on the app's port.
     -->
     <uses-permission
         android:name="android.permission.CALL_PHONE"
         tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
-    <uses-permission android:name="android.permission.READ_CALL_LOG" />
-    <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
     <uses-permission
         android:name="android.permission.SEND_SMS"
         tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
     <uses-permission
         android:name="android.permission.RECEIVE_SMS"
         tools:ignore="PermissionImpliesUnsupportedChromeOsHardware" />
-    <!-- Normal permissions: the microphone muted during the mailbox call; the SIM's MMS network for the MMSC probe. -->
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Normal permissions: the SIM's MMS network for the MMSC probe. -->
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <!--
         No CHANGE_WIFI_STATE and no READ_LOGS since 2026-10-20: the owner build never
@@ -173,11 +169,6 @@
             android:authorities="${applicationId}.settings"
             android:exported="true"
             tools:ignore="ExportedContentProvider" />
-
-        <!-- The notification's "Stop test" (round 30 removed Undo, round 31 safe mode). -->
-        <receiver
-            android:name=".owner.NoticeActionReceiver"
-            android:exported="false" />
 
         <!-- The revert alarm armed before each background change: queues the cleanup if a step died. -->
         <receiver

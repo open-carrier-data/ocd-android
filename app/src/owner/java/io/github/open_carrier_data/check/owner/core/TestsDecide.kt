@@ -468,27 +468,6 @@ object CampaignPlanner {
     }
 }
 
-/**
- * X5 (spec 5.4): a held off is tried as an override and released only by a record of what it
- * needs: an outgoing call that went ACTIVE on the remaining path (VoLTE's and the provisioning
- * keys' off: over Wi-Fi calling; Wi-Fi calling's off: over LTE), or for SMS over IMS an SMS
- * delivered with the off in effect. "Registered" never proves a voice off.
- */
-object X5Test {
-    /** The bearer a voice off must still carry a call on; null for SMS over IMS. */
-    fun remainingBearer(key: String): String? = when (key) {
-        "carrier_volte_available_bool", "carrier_volte_provisioning_required_bool", "carrier_volte_provisioned_bool" -> "iwlan"
-        "carrier_wfc_ims_available_bool" -> "lte"
-        else -> null
-    }
-
-    fun isSms(key: String): Boolean = key == "imssms.sms_over_ims_supported_bool"
-
-    /** Whether the off passed: a calls-out pass on the remaining bearer, or the SMS delivered. */
-    fun passed(key: String, calls: List<CallEvidence>, smsDelivered: Boolean?): Boolean =
-        if (isSms(key)) smsDelivered == true else calls.any { it.bearer == remainingBearer(key) && it.result == CallEvidence.PASSED }
-}
-
 /** The voice-loss trigger (testsDecide (b) and its conditions): always on, at home and roaming. */
 object VoiceLoss {
     /**

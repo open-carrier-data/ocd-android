@@ -13,20 +13,20 @@ import io.github.open_carrier_data.check.core.SpnTarget
 import io.github.open_carrier_data.check.core.StreamClass
 import io.github.open_carrier_data.check.owner.core.CallDevice
 import io.github.open_carrier_data.check.owner.core.CallMethod
+import io.github.open_carrier_data.check.owner.core.CallRecord
 import io.github.open_carrier_data.check.owner.core.CallsLevel
 import io.github.open_carrier_data.check.owner.core.CallsOutDue
-import io.github.open_carrier_data.check.owner.core.CallsOutMode
-import io.github.open_carrier_data.check.owner.core.CallsOutPlan
 import io.github.open_carrier_data.check.owner.core.EmergencySeen
 import io.github.open_carrier_data.check.owner.core.MailboxCaller
 import io.github.open_carrier_data.check.owner.core.MailboxGuard
 import io.github.open_carrier_data.check.owner.core.MemoryStore
-import io.github.open_carrier_data.check.owner.core.MuteState
 import io.github.open_carrier_data.check.owner.core.OwnerFeature
 import io.github.open_carrier_data.check.owner.core.OwnerSim
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.PointerLedger
 import io.github.open_carrier_data.check.owner.core.Refusal
+import io.github.open_carrier_data.check.owner.core.TestCaps
+import io.github.open_carrier_data.check.owner.core.update
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -55,13 +55,10 @@ class CallsOutTest {
         /** Telecom says an emergency call is up from this many asks on. */
         var emergencyAfterAsks: Int? = null
         private var asks = 0
-        var canMute = true
-        var leave: String? = null
         val placed = mutableListOf<Pair<String, Int>>()
         var ends = 0
         val events = mutableListOf<String>()
-        var restoredOk = true
-        var deleted: Triple<String, Long, Long>? = null
+        var ended = 0
 
         override suspend fun isEmergencyNumber(number: String, subId: Int): Boolean {
             if (emergencyThrows) error("no telephony")
@@ -71,21 +68,6 @@ class CallsOutTest {
         override suspend fun inEmergencyCall(): Boolean? {
             asks++
             return if (emergencyAfterAsks?.let { asks >= it } == true) true else inEmergency
-        }
-
-        override suspend fun mute(): MuteState? {
-            if (!canMute) return null
-            events += "mute"
-            return MuteState(volumeBefore = 4, mutedBefore = false, micMutedBefore = false, muted = true)
-        }
-
-        override suspend fun muteAgain(state: MuteState) {
-            events += "mute again"
-        }
-
-        override suspend fun restore(state: MuteState): Boolean {
-            events += "restore"
-            return restoredOk
         }
 
         override suspend fun place(number: String, subId: Int): Boolean {
@@ -102,12 +84,9 @@ class CallsOutTest {
             return true
         }
 
-        override suspend fun deleteLogEntry(number: String, fromMs: Long, toMs: Long): Int {
-            deleted = Triple(number, fromMs, toMs)
-            return 1
+        override fun callEnded() {
+            ended++
         }
-
-        override suspend fun leaveReason(): String? = leave
     }
 
     /**
@@ -191,7 +170,7 @@ class CallsOutTest {
     }
 
     private val sim = OwnerFixtures.SIM
-    private val wifiDue = CallsOutDue(0, sim.key, OwnerFeature.VOWIFI, ProvenBearer.IWLAN, CallsOutPlan.AFTER_APPLY)
+    private val wifiDue = CallsOutDue(0, sim.key, OwnerFeature.VOWIFI, ProvenBearer.IWLAN, "tap_request")
 
     /** The S20 at home: privileged route, IMS registered for calls over Wi-Fi with Wi-Fi calling on. */
     private fun phone(): CallingPhone = CallingPhone().apply {
@@ -204,8 +183,8 @@ class CallsOutTest {
     private fun caller(phone: CallingPhone, device: FakeDevice, stack: String = "phh_ims") =
         MailboxCaller(phone, phone.store, device, "rom-1", "TQ1 eng, $stack", stack, "SM-G981B", { PointerLedger.cell(io.github.open_carrier_data.check.core.DeviceInfo("samsung", "SM-G981B", "x1s", 16, io.github.open_carrier_data.check.core.RomFamily.LINEAGEOS), it) })
 
-    private fun run(phone: CallingPhone, device: FakeDevice, mode: CallsOutMode = CallsOutMode.LIVE, night: Boolean = true, due: CallsOutDue = wifiDue, stack: String = "phh_ims") =
-        runBlocking { caller(phone, device, stack).run(sim, due, table, mode, night, "2026-10-21") }
+    private fun run(phone: CallingPhone, device: FakeDevice, dryRun: Boolean = false, due: CallsOutDue = wifiDue, stack: String = "phh_ims", on: OwnerSim = sim) =
+        runBlocking { caller(phone, device, stack).run(on, due, table, dryRun) }
 
     // --- only the SIM's own mailbox, never an emergency or service number ---
 
@@ -274,14 +253,15 @@ class CallsOutTest {
     // --- the call itself ---
 
     @Test
-    fun `a muted mailbox call over Wi-Fi goes ACTIVE, is measured, ended by the phone, and counts as calls out`() {
+    fun `a tapped mailbox call over Wi-Fi goes ACTIVE, is measured, ended by the phone, and counts as calls out`() {
         val phone = phone()
         val device = FakeDevice(phone)
         val outcome = run(phone, device)
         assertEquals(outcome.reason, "passed", outcome.result)
         assertEquals(listOf("5500" to sim.subId), device.placed)
-        // Muted before the dial, again once up, given back at the end; the app ended the call itself, once.
-        assertEquals(listOf("mute", "place 5500", "mute again", "end", "restore"), device.events)
+        // Round 47: nothing is muted; the app ended the call itself, once, and the watch counts calls again.
+        assertEquals(listOf("place 5500", "end"), device.events)
+        assertEquals(1, device.ended)
         val record = outcome.record!!
         assertEquals(CallMethod.MAILBOX_CALL, record.method)
         assertEquals(CallDirection.OUTGOING, record.direction)
@@ -292,11 +272,8 @@ class CallsOutTest {
         assertEquals(true, record.disconnectFresh)
         // Held about 15 s after ACTIVE: the packet window is at least 10 s.
         assertTrue(record.rtp!!.windowMs!! >= 10_000)
-        // Exactly this call's log entry, by number and time.
-        assertEquals("5500", device.deleted?.first)
         val state = phone.store.state
         assertEquals(listOf(record), state.calls)
-        assertEquals(1, state.callsOutNights.size)
         assertEquals(CallsLevel.CALLS_OUT, state.retested.single().level)
         assertEquals("vowifi:on", state.retested.single().entry)
         assertTrue(state.retested.single().line(java.time.ZoneOffset.UTC).contains("incoming not tested"))
@@ -309,22 +286,18 @@ class CallsOutTest {
     fun `the dry run passes every guard, logs what it would dial, and dials nothing`() {
         val phone = phone()
         val device = FakeDevice(phone)
-        val outcome = run(phone, device, mode = CallsOutMode.DRY_RUN)
+        val outcome = run(phone, device, dryRun = true)
         assertEquals("dry_run", outcome.result)
         assertTrue(device.events.isEmpty())
         assertTrue(phone.writes.isEmpty())
         val line = phone.store.state.log.last { it.kind == "calls_out" }.text
         assertTrue(line, line.startsWith("dry run: would dial the LIDL Connect (Vodafone network) mailbox 5500 on slot 1 for Wi-Fi calling over Wi-Fi"))
         assertTrue(line, "every guard passed" in line && "nothing dialled" in line)
-        // A dry run outside the night names the refusal it would meet, and still dials nothing.
-        val day = run(phone, device, mode = CallsOutMode.DRY_RUN, night = false)
-        assertEquals("dry_run", day.result)
-        assertTrue(phone.store.state.log.last().text, "outside_the_night_window" in phone.store.state.log.last().text)
         assertTrue(device.placed.isEmpty())
     }
 
     @Test
-    fun `round 25's LB6 refusals, the stop flag, the night and an unreadable emergency state each refuse before any dial`() {
+    fun `round 25's LB6 refusals, the stop flag and an unreadable emergency state each refuse before any dial`() {
         val cases = listOf<Pair<String, (CallingPhone, FakeDevice) -> Unit>>(
             Refusal.CALL_ACTIVE.wire to { p, _ -> p.call = true },
             Refusal.EMERGENCY_CALLBACK_MODE.wire to { p, _ -> p.ecbm = true },
@@ -348,27 +321,19 @@ class CallsOutTest {
             assertTrue(why, device.placed.isEmpty())
             assertTrue(why, device.events.isEmpty())
         }
-        val phone = phone()
-        val device = FakeDevice(phone)
-        assertEquals("outside_the_night_window", run(phone, device, night = false).reason)
-        assertTrue(device.placed.isEmpty())
-        // A stream that cannot be muted: no call.
-        val noMute = FakeDevice(phone).apply { canMute = false }
-        assertEquals("voice_stream_not_muted", run(phone, noMute).reason)
-        assertTrue(noMute.placed.isEmpty())
     }
 
     @Test
-    fun `an emergency mark during the call aborts at once - the sound back, no call touched, nothing kept`() {
+    fun `an emergency mark during the call aborts at once - no call touched, nothing kept`() {
         val phone = phone().apply { emergencyAfterMs = 3_000 }
         val device = FakeDevice(phone)
         val outcome = run(phone, device)
         assertEquals("aborted", outcome.result)
         assertEquals("emergency", outcome.reason)
         assertEquals(0, device.ends)
-        assertEquals(listOf("mute", "place 5500", "mute again", "restore"), device.events)
+        assertEquals(listOf("place 5500"), device.events)
+        assertEquals(1, device.ended)
         assertTrue(phone.store.state.calls.isEmpty())
-        assertNull(device.deleted)
         // Telecom's own emergency call flag does the same.
         val phone2 = phone()
         val device2 = FakeDevice(phone2).apply { emergencyAfterAsks = 4 }
@@ -476,19 +441,10 @@ class CallsOutTest {
     }
 
     @Test
-    fun `a pulled charger ends the call early and it does not count`() {
-        val phone = phone()
-        val device = FakeDevice(phone).apply { leave = "unplugged" }
-        val outcome = run(phone, device)
-        assertTrue(outcome.reason, "unplugged" in outcome.reason.orEmpty())
-        assertTrue(outcome.result != "passed")
-    }
-
-    @Test
     fun `VoLTE's call while IMS runs over Wi-Fi moves IMS to LTE inside the non-persistent override, and reverts it with proof`() {
         val phone = phone()
         val device = FakeDevice(phone)
-        val lteDue = CallsOutDue(0, sim.key, OwnerFeature.VOLTE, ProvenBearer.LTE, CallsOutPlan.WEEKLY)
+        val lteDue = CallsOutDue(0, sim.key, OwnerFeature.VOLTE, ProvenBearer.LTE, "tap_request")
         val outcome = run(phone, device, due = lteDue)
         assertTrue(phone.writes.toString(), "set carrier_wfc_ims_available_bool=false" in phone.writes)
         assertEquals("clear", phone.writes.last { it == "clear" })
@@ -500,16 +456,45 @@ class CallsOutTest {
     }
 
     @Test
-    fun `at most one call per feature and bearer a night`() {
+    fun `round 47 - a tap needs no night, is not muted, and stays in the call log`() {
+        val code = java.io.File("src/owner/java/io/github/open_carrier_data/check/owner/core/MailboxCall.kt").readText()
+        for (gone in listOf("night", "MuteState", "muteAgain", "voice_stream_not_muted", "deleteLogEntry")) assertFalse(gone, gone in code.substringAfter("class MailboxCaller("))
+        val device = java.io.File("src/owner/java/io/github/open_carrier_data/check/owner/OwnerCalls.kt").readText()
+        for (gone in listOf("AudioManager", "CallLog", "isMicrophoneMute", "setStreamVolume")) assertFalse(gone, gone in device)
+    }
+
+    @Test
+    fun `round 47 - OwnCall's end is set when the call ends, also when Telecom did not place it`() {
+        val phone = phone().apply { ringAfterMs = 4_000 }
+        val device = FakeDevice(phone)
+        run(phone, device)
+        assertEquals(1, device.ended)
+        val code = java.io.File("src/owner/java/io/github/open_carrier_data/check/owner/OwnerCalls.kt").readText()
+        assertTrue(code.substringAfter("override fun callEnded() {").contains("OwnCall.untilElapsedMs = SystemClock.elapsedRealtime()"))
+    }
+
+    @Test
+    fun `round 47 - the daily cap of 10 calls holds in the caller`() {
         val phone = phone()
-        // A call that did not count still uses the night's one call.
-        phone.callTypeOverride = 13
-        assertEquals("not_counted_retry", run(phone, FakeDevice(phone)).result)
-        val state = phone.store.state.copy(
-            provisional = listOf(io.github.open_carrier_data.check.owner.core.ProvisionalKeep(0, sim.key, OwnerFeature.VOWIFI, true, ProvenBearer.IWLAN, 0, Long.MAX_VALUE)),
-        )
-        val switches = mapOf(sim.key to mapOf(OwnerFeature.VOWIFI to true))
-        assertTrue(CallsOutPlan.due(listOf(sim), state, switches, emptyMap(), "rom-1", "2026-10-21", phone.now).isEmpty())
-        assertEquals(listOf(CallsOutPlan.AFTER_APPLY), CallsOutPlan.due(listOf(sim), state, switches, emptyMap(), "rom-1", "2026-10-22", phone.now).map { it.why })
+        val device = FakeDevice(phone)
+        val record = CallRecord(phone.nowMs(), 0, sim.key, CallMethod.MAILBOX_CALL, CallDirection.OUTGOING, rang = false, answered = true, active = true, build = "rom-1", stack = "aosp_imsstack")
+        phone.store.update { s -> s.copy(calls = List(TestCaps.CALLS_PER_DAY) { record }) }
+        val outcome = run(phone, device)
+        assertEquals("refused", outcome.result)
+        assertTrue(outcome.reason, "daily_cap" in outcome.reason.orEmpty())
+        assertTrue(device.placed.isEmpty())
+    }
+
+    @Test
+    fun `round 47 - a tap never dials an unlisted SPN, nor a code marked unverified`() {
+        for ((spn, why) in listOf("fraenk" to "mailbox_for_display_only", "" to "mailbox_for_display_only", "congstar" to "mailbox_unverified")) {
+            val other = OwnerSim(0, sim.subId, SimIdentity("26201", spn, null, emptySet()), "x", 5)
+            val phone = phone()
+            val device = FakeDevice(phone)
+            val outcome = run(phone, device, due = wifiDue.copy(sim = other.key), on = other)
+            assertEquals("refused", outcome.result)
+            assertTrue(outcome.reason, why in outcome.reason.orEmpty())
+            assertTrue(device.placed.isEmpty())
+        }
     }
 }

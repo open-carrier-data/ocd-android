@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit
  *   full rate or, on a stack with verified counters, DTX), no SIP failure
  *   cause, and the call ended normally (the app's own mailbox call: the
  *   phone hung up itself). A real call the owner makes anyway, measured
- *   passively, counts the same as the app's muted call to the SIM's own
+ *   passively, counts the same as the person's tapped call to the SIM's own
  *   mailbox; that call is only the fallback.
  * - Works (L3): calls out plus an incoming call on the same bearer that rang,
  *   was answered, did not come from a mailbox code, went ACTIVE with the
@@ -53,7 +53,7 @@ import java.util.concurrent.TimeUnit
 /** How a call came to be measured. */
 @Serializable
 enum class CallMethod(val wire: String, val plain: String) {
-    /** The app's own muted call to the SIM's allowlisted mailbox (the fallback). */
+    /** The person's tapped call to the SIM's allowlisted mailbox. */
     MAILBOX_CALL("mailbox_call", "an automatic call to your mailbox"),
 
     /** A real call the owner made or took anyway, measured passively. */
@@ -95,7 +95,7 @@ data class CallRecord(
     /** The ROM build ([TestBasis.rom]) and the IMS stack the call ran on: the level's software key. */
     val build: String,
     val stack: String,
-    /** The app's own call: the voice-call stream was muted (true) or turned to its lowest volume. */
+    /** Old records only: the call ran muted (true) or at its lowest volume; a tapped call has normal sound (null). */
     val muted: Boolean? = null,
 ) {
     companion object {
@@ -391,13 +391,6 @@ object CallLevels {
 @Serializable
 enum class CallsLevel { CALLS_OUT, WORKS }
 
-/** Whether the app places its own mailbox call: [DRY_RUN] runs every guard and logs what it would dial, and dials nothing. */
-@Serializable
-enum class CallsOutMode(val wire: String) {
-    DRY_RUN("dry_run"),
-    LIVE("live"),
-}
-
 /** The SIM card itself: the subscription and the network code (the carrier ID can arrive later). */
 fun SimKey.sameCard(other: SimKey): Boolean = subId == other.subId && mccmnc == other.mccmnc
 
@@ -480,69 +473,8 @@ object Provisional {
     internal fun imsOn(r: CallRecord): ProvenBearer? = r.bearer?.takeIf { it.counted }?.bearer ?: CallLevels.imsBearerAtStart(r)
 }
 
-/** One mailbox call placed (or tried) in a night, for "at most one call per feature and bearer a night". */
-@Serializable
-data class CallsOutNight(val sim: SimKey, val feature: OwnerFeature, val bearer: ProvenBearer, val night: String)
-
-/** A mailbox call due tonight. */
+/** A mailbox call the person asked for, on one SIM, feature and bearer. */
 data class CallsOutDue(val slot: Int, val sim: SimKey, val feature: OwnerFeature, val bearer: ProvenBearer, val why: String)
-
-/**
- * When the app places its own mailbox call (round 26 check 4 and the
- * coordinator's refinement of 2026-10-20: passive first, the mailbox call is
- * only the fallback):
- * - after an apply: a provisional keep without calls out since it was applied;
- * - after a pointer: others' report points at a voice entry's on value of
- *   this SIM's cell, the feature is on, and no real outgoing call on its
- *   bearer passed within 3 days;
- * - weekly per kept voice entry: no calls-out evidence on its bearer within
- *   the last 7 days.
- * At most one call per feature and bearer a night.
- */
-object CallsOutPlan {
-    val PASSIVE_RECENT_MS: Long = TimeUnit.DAYS.toMillis(3)
-    val WEEKLY_MS: Long = TimeUnit.DAYS.toMillis(7)
-    const val AFTER_APPLY = "after_apply"
-    const val POINTER = "pointer"
-    const val WEEKLY = "weekly"
-
-    /**
-     * [switches]: each SIM's effective switches by feature; [pointed]: the
-     * voice entries ("volte:on") others' reports point at, per SIM.
-     */
-    fun due(
-        sims: List<OwnerSim>,
-        state: OwnerState,
-        switches: Map<SimKey, Map<OwnerFeature, Boolean?>>,
-        pointed: Map<SimKey, Set<String>>,
-        build: String,
-        night: String,
-        nowMs: Long,
-    ): List<CallsOutDue> {
-        val out = mutableListOf<CallsOutDue>()
-        for (sim in sims) {
-            for (feature in listOf(OwnerFeature.VOWIFI, OwnerFeature.VOLTE)) {
-                val bearer = CallLevels.bearerOf(feature) ?: continue
-                if (state.callsOutNights.any { it.sim.sameCard(sim.key) && it.feature == feature && it.bearer == bearer && it.night == night }) continue
-                val provisional = state.provisional.firstOrNull { it.sim.sameCard(sim.key) && it.feature == feature && it.callsOutAtMs == null }
-                // A voice value kept as an override (builds before round 30; its weekly calls out renews it).
-                val kept = state.overrides.any { it.hold == Hold.KEPT && it.slot == sim.slot && it.sim.sameCard(sim.key) && it.key == feature.key && it.value }
-                val on = switches[sim.key]?.get(feature) == true
-                val why = when {
-                    provisional != null &&
-                        CallLevels.callsOutEvidence(state.calls, sim.key, bearer, build, provisional.appliedAtMs, nowMs) == null -> AFTER_APPLY
-                    on && QuietPlan.entry(feature, true) in pointed[sim.key].orEmpty() &&
-                        CallLevels.callsOutEvidence(state.calls, sim.key, bearer, build, nowMs - PASSIVE_RECENT_MS, nowMs) == null -> POINTER
-                    kept && CallLevels.callsOutEvidence(state.calls, sim.key, bearer, build, nowMs - WEEKLY_MS, nowMs) == null &&
-                        state.provisional.none { it.sim.sameCard(sim.key) && it.feature == feature && it.callsOutAtMs == null } -> WEEKLY
-                    else -> null
-                } ?: continue
-                out += CallsOutDue(sim.slot, sim.key, feature, bearer, why)
-            }
-        }
-        return out.sortedBy { listOf(AFTER_APPLY, POINTER, WEEKLY).indexOf(it.why) }
-    }
-}
 
 /**
  * What this phone's own calls showed (round 26 rule change 9; round 47, item 2:
