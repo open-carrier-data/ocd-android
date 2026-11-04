@@ -44,6 +44,30 @@ class CallTestTest {
     }
 
     @Test
+    fun `round 46 - the app dials only a SIM's own brand, and the network fallback stays display only`() {
+        // A by_spn entry and a network's own SPN (any case) are dialable, with their free flags.
+        assertTrue(CallTargets.dialableFor(targets, "26202", "LIDL Connect", notEmergency)!!.freeCalls)
+        assertEquals("5500", CallTargets.dialableFor(targets, "26202", "vodafone.DE", notEmergency)!!.number)
+        assertEquals("3311", CallTargets.dialableFor(targets, "26201", "Telekom.de", notEmergency)!!.number)
+        assertEquals("333", CallTargets.dialableFor(targets, "26203", "o2 - de", notEmergency)!!.number)
+        // An unlisted MVNO on the network, an empty SPN and no SPN are shown the code, never dialled.
+        for (spn in listOf("fraenk", "ALDI TALK", "Vodafone but not quite", "", "   ", null)) {
+            assertEquals(spn, "3311", CallTargets.mailboxFor(targets, "26201", spn, notEmergency)!!.number)
+            assertNull(spn, CallTargets.dialableFor(targets, "26201", spn, notEmergency))
+        }
+        // A brand listed on another network does not count here.
+        assertNull(CallTargets.dialableFor(targets, "26203", "Telekom.de", notEmergency))
+        assertNull(CallTargets.dialableFor(targets, "26201", "LIDL Connect", notEmergency))
+        // The emergency answer still decides, and every German network entry names its own SPNs.
+        assertNull(CallTargets.dialableFor(targets, "26202", "LIDL Connect") { it == "5500" })
+        assertNull(CallTargets.dialableFor(targets, null, "LIDL Connect", notEmergency))
+        for ((code, entry) in targets.byMccMnc) assertTrue(code, entry.ownSpns.isNotEmpty())
+        // 1&1 is listed but not free: dialable on a tap only (the policy's rule), and congstar stays unverified.
+        assertFalse(CallTargets.dialableFor(targets, "26223", "1&1", notEmergency)!!.freeCalls)
+        assertTrue(CallTargets.dialableFor(targets, "26201", "congstar", notEmergency)!!.unverified)
+    }
+
+    @Test
     fun `each SIM gets its own mailbox, the SPN rule first (lab mailbox_for)`() {
         val lidl = CallTargets.mailboxFor(targets, "26202", "LIDL Connect", notEmergency)!!
         assertEquals("5500", lidl.number)

@@ -110,7 +110,9 @@ object MailboxGuard {
         val mccmnc = sim.identity.mccmnc
         val spn = sim.identity.spn
         // The table's own entry for this SIM first (the SPN rule, then the network code), with the fixed checks.
-        val candidate = CallTargets.mailboxFor(file, mccmnc, spn) { false } ?: return null to "no_mailbox_for_this_sim"
+        CallTargets.mailboxFor(file, mccmnc, spn) { false } ?: return null to "no_mailbox_for_this_sim"
+        // Round 46: the network's entry is for its own brand; for any other SPN it is display only, even on a tap.
+        val candidate = CallTargets.dialableFor(file, mccmnc, spn) { false } ?: return null to "mailbox_for_display_only"
         refusal(candidate.number)?.let { return null to it }
         val emergency = try {
             device.isEmergencyNumber(candidate.number, sim.subId)
@@ -118,7 +120,7 @@ object MailboxGuard {
             return null to "emergency_check_unreadable"
         }
         if (emergency) return null to "android_says_emergency_number"
-        val mailbox = CallTargets.mailboxFor(file, mccmnc, spn) { emergency } ?: return null to "not_allowed"
+        val mailbox = CallTargets.dialableFor(file, mccmnc, spn) { emergency } ?: return null to "not_allowed"
         if (mailbox.number != candidate.number) return null to "not_allowed"
         if (mailbox.unverified) return null to "mailbox_unverified"
         return mailbox to null
