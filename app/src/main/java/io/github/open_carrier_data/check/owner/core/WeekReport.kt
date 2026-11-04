@@ -211,8 +211,8 @@ object WeekReports {
      * whatever came first. An emergency call never reaches the ledger ([CallRecord.of]). Only the rung leaves.
      */
     fun measured(state: OwnerState, sim: SimKey, weekStartMs: Long, weekEndMs: Long, rom: String): Map<String, String> = buildMap {
-        val calls = state.calls.filter { countable(it, sim) }
-        val inWeek = calls.filter { it.atMs >= weekStartMs && it.atMs < weekEndMs }
+        val calls = state.calls.filter { countable(it, sim) && it.atMs < weekEndMs }
+        val inWeek = calls.filter { it.atMs >= weekStartMs }
         val since = state.week.voiceInstalls.lastOrNull { it.sim.sameCard(sim) }?.atMs ?: 0L
         val from = maxOf(since, state.week.yesAtMs ?: 0L)
         val held = state.week.callHoldAtMs?.let { it >= weekStartMs && it < weekEndMs } == true

@@ -129,11 +129,9 @@ object QosCheck {
     fun resolved(config: StackConfig, ccm: Map<String, Boolean>?, key: String): Boolean? {
         fun layer(name: String) = config.layers[name]?.get(key)
         val lower = layer(StackDump.INTERNAL_OVERRIDE) ?: (ccm?.get(key)) ?: if (ccm == null) null else layer(StackDump.CARRIER_INTERNAL) ?: layer(StackDump.DEFAULT_INTERNAL)
-        val publicOn = if (key == OVERRIDE_PUBLIC) {
-            false
-        } else {
-            resolved(config, ccm, OVERRIDE_PUBLIC) ?: if (ccm == null) return null else true
-        }
+        // The stack reads this one key before the public layers and the test override go on.
+        if (key == OVERRIDE_PUBLIC) return lower
+        val publicOn = resolved(config, ccm, OVERRIDE_PUBLIC) ?: if (ccm == null) return null else true
         val top = layer(StackDump.TEST_OVERRIDE)
         val public = if (publicOn) layer(StackDump.CARRIER_PUBLIC) ?: layer(StackDump.DEFAULT_PUBLIC) else null
         return top ?: public ?: lower
