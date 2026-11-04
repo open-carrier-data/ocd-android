@@ -13,7 +13,6 @@ import io.github.open_carrier_data.check.owner.core.ApnRowKeys
 import io.github.open_carrier_data.check.owner.core.ApnSelection
 import io.github.open_carrier_data.check.owner.core.ApnSetCandidate
 import io.github.open_carrier_data.check.owner.core.ApnTrial
-import io.github.open_carrier_data.check.owner.core.ApnTrialReview
 import io.github.open_carrier_data.check.owner.core.ApnTrialVerdict
 import io.github.open_carrier_data.check.owner.core.CandidateInput
 import io.github.open_carrier_data.check.owner.core.CapEvent
@@ -98,7 +97,7 @@ object OwnerApnCandidates {
         if (ApnTrial.lookedAtRecently(state.apnTrials, sim.key, commit, failure, now)) return "$slot: ${failure.plain}; its APN candidates were looked at within the last day on this data"
         val input = withContext(Dispatchers.IO) { input(context, store, client, status, sim, failure, commit) }
             ?: return "$slot: ${failure.plain}; APN candidates not run: the installed commit's dataset is not on this phone"
-        val (candidateInput, profileId) = input
+        val (candidateInput, _) = input
         val all = ApnCandidates.forFailure(candidateInput)
         val due = all.filter { ApnTrial.due(store.read().apnTrials, sim.key, commit, it.id) }.take(ApnCandidateGate.MAX_PER_FAILURE)
         if (due.isEmpty()) {
@@ -119,15 +118,10 @@ object OwnerApnCandidates {
                 s.copy(apnTrials = ApnTrial.add(s.apnTrials, ApnTrial(System.currentTimeMillis(), sim.subId, sim.identity.mccmnc, commit, failure, c.id, c.kind, c.rule, c.plain, outcome, line)))
             }
             lines += line
-            if (outcome == ApnTrial.PASSED) {
-                val review = ApnTrialReview.of(profileId ?: sim.identity.mccmnc, c, failure, commit, System.currentTimeMillis())
-                store.update { s -> if (s.pendingReviews.any { it.key == review.key } || review.key in s.reviewsSent) s else s.copy(pendingReviews = (s.pendingReviews + review).takeLast(40)) }
-                break
-            }
+            if (outcome == ApnTrial.PASSED) break
             // A provider without the method, or one that refused, runs no further candidate now.
             if (outcome == ApnTrial.NOT_RUN) break
         }
-        OwnerDatasetStep.publish(context, store)
         return "$slot: ${failure.plain}; APN candidates: ${lines.joinToString("; ")}"
     }
 

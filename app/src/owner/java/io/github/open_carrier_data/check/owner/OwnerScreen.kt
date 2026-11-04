@@ -35,7 +35,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -50,7 +49,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -96,9 +94,6 @@ import androidx.compose.ui.text.font.DeviceFontFamilyName
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.open_carrier_data.check.owner.core.CheckedLine
@@ -109,6 +104,7 @@ import io.github.open_carrier_data.check.owner.core.Ladders
 import io.github.open_carrier_data.check.owner.core.LeftoversLine
 import io.github.open_carrier_data.check.owner.core.PointerLedger
 import io.github.open_carrier_data.check.owner.core.MobileDataLine
+import io.github.open_carrier_data.check.owner.core.ReportWords
 import io.github.open_carrier_data.check.owner.core.ScheduleLine
 import io.github.open_carrier_data.check.owner.core.SimView
 import io.github.open_carrier_data.check.owner.core.Status
@@ -145,9 +141,9 @@ class OwnerActions(
     val setCarrierSms: (Boolean) -> Unit = {},
     /** Round 31 (SM9), ROM builds only: the person's opt-in for the active tests. */
     val setActiveTests: (Boolean) -> Unit = {},
-    /** Round 29: stores the owner's token for automatic reports; the callback says whether it was stored. */
-    val saveToken: (String, (Boolean) -> Unit) -> Unit = { _, _ -> },
-    val removeToken: () -> Unit = {},
+    /** Round 47 item 2: the report the person just read goes to the browser; closing it sends nothing. */
+    val openReport: (io.github.open_carrier_data.check.owner.core.IssueReport.Prefilled) -> Unit = {},
+    val closeReport: () -> Unit = {},
 )
 
 /** The options under "When you tap Test now" in Details. Off values run at night on their own. */
@@ -809,22 +805,22 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         item { ToolRow("Check without changing anything", onClick = actions.checkNow) }
         item { ToolRow("Show Wi-Fi calling details", ui.details?.joinToString("\n"), onClick = actions.readDetails) }
         item { ToolRow("Remove leftovers", LeftoversLine.of(state.log, System.currentTimeMillis(), zone) { dateFormat.format(Date(it)) }, onClick = actions.cleanup) }
-        item {
-            ToolRow("Open report on GitHub", "Nothing is sent until you submit it", enabled = state.runs.any { it.features.isNotEmpty() }, onClick = actions.sendReport)
-        }
     }
 
-    // Round 29: settled results sent as report issues with the owner's own fine-grained token; without one, nothing is sent.
-    // Round 31 (SM11): a ROM build sends nothing by itself and has no token; a report is one the person opens and submits.
-    SectionTitle("Reports")
+    // Round 47 item 2, the same on every build: nothing leaves by itself. A report is one the person reads and submits under their own login.
+    SectionTitle(ReportWords.SECTION)
     Group {
         item {
-            if (owner) TokenRow(ui, actions) else Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-                Title("Nothing is sent by itself")
-                Summary("Results stay on this phone. To share one, tap Open report on GitHub, read it and submit it yourself")
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Title(ReportWords.SECTION_TITLE)
+                Summary(ReportWords.SECTION_TEXT)
             }
         }
+        item {
+            ToolRow(ReportWords.BUTTON, ReportWords.BUTTON_TEXT, enabled = state.runs.any { it.features.isNotEmpty() }, onClick = actions.sendReport)
+        }
     }
+    ui.reportDraft?.let { ReportDraft(it, actions) }
 
     Spacer(Modifier.padding(top = 24.dp))
     Group {
@@ -942,36 +938,21 @@ private fun ActiveTestsOptIn(ui: OwnerUi, actions: OwnerActions) {
     }
 }
 
-/**
- * Automatic reports (OCD round 29): without a token, the field to enter one; with one, what was
- * sent last and "Remove token". The typed text stays in memory only (never saved state, never
- * shown), and the field clears once the token is stored.
- */
+/** Round 47 item 2: the whole report and what sending it means, before the browser opens OCD's form. */
 @Composable
-private fun TokenRow(ui: OwnerUi, actions: OwnerActions) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Title("Send reports automatically")
-        if (ui.tokenSet) {
-            Summary(listOfNotNull("On: settled results go to Open Carrier Data as issues under your GitHub account", ui.state.autoLine).joinToString(". "))
-            OutlinedButton(onClick = actions.removeToken) { Text("Remove token") }
-        } else {
-            Summary(
-                "Off: reports open in the browser for you to submit. To send settled results automatically, enter a fine-grained " +
-                    "GitHub token with only Issues read and write on open-carrier-data/open-carrier-data",
-            )
-            var text by remember { mutableStateOf("") }
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text("GitHub token") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Button(onClick = { actions.saveToken(text) { stored -> if (stored) text = "" } }, enabled = text.isNotBlank()) { Text("Save token") }
-        }
-    }
+private fun ReportDraft(draft: io.github.open_carrier_data.check.owner.core.IssueReport.Prefilled, actions: OwnerActions) {
+    AlertDialog(
+        onDismissRequest = actions.closeReport,
+        title = { Text(ReportWords.FORM_TITLE) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(ReportWords.FORM_TEXT)
+                SelectionContainer { Text(draft.text, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+            }
+        },
+        confirmButton = { TextButton(onClick = { actions.openReport(draft) }) { Text(ReportWords.FORM_OPEN) } },
+        dismissButton = { TextButton(onClick = actions.closeReport) { Text(ReportWords.FORM_CANCEL) } },
+    )
 }
 
 /** The newest 20 entries inline, the rest behind "Show all"; selectable, so a line can be copied. */

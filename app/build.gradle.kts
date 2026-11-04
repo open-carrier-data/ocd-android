@@ -71,8 +71,8 @@ android {
         }
         // OCD round 31 (scope, SM1 to SM12): the build another ROM ships in its own image. The same
         // tester code as the owner build (src/owner), with the person's opt-in for the active tests
-        // (off by default), calls and SMS only where the allowlist marks them free, no token and no
-        // automatic report; results stay on the phone. Unsigned here: the ROM builder signs it with
+        // (off by default), and calls and SMS only where the allowlist marks them free; results stay on
+        // the phone. Unsigned here: the ROM builder signs it with
         // his own key and sets CarrierSettings's writer certificate to it (SM5). Never the owner key.
         // Its package is the read-only app's (io.github.open_carrier_data.check), which a ROM ships instead of it; it is
         // CarrierSettings's OCD_WRITER_PACKAGE choice beside the owner's (spec R31.11).

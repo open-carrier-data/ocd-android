@@ -11,7 +11,6 @@ import io.github.open_carrier_data.check.core.MediaWindowBuilder
 import io.github.open_carrier_data.check.core.PrivacyScan
 import io.github.open_carrier_data.check.core.ProvenBearer
 import io.github.open_carrier_data.check.core.RtpFlow
-import io.github.open_carrier_data.check.owner.core.AutoReport
 import io.github.open_carrier_data.check.owner.core.CallMethod
 import io.github.open_carrier_data.check.owner.core.CallRecord
 import io.github.open_carrier_data.check.owner.core.CallsTested
@@ -23,7 +22,6 @@ import io.github.open_carrier_data.check.owner.core.LiveOverride
 import io.github.open_carrier_data.check.owner.core.OcdAnswer
 import io.github.open_carrier_data.check.owner.core.OwnerFeature
 import io.github.open_carrier_data.check.owner.core.OwnerState
-import io.github.open_carrier_data.check.owner.core.PostResult
 import io.github.open_carrier_data.check.owner.core.ReportCell
 import io.github.open_carrier_data.check.owner.core.RunResult
 import io.github.open_carrier_data.check.owner.core.SchemaSubset
@@ -32,7 +30,6 @@ import io.github.open_carrier_data.check.owner.core.SelfSmsCheck
 import io.github.open_carrier_data.check.owner.core.Settled
 import io.github.open_carrier_data.check.owner.core.SettledLevel
 import io.github.open_carrier_data.check.owner.core.SimKey
-import io.github.open_carrier_data.check.owner.core.TokenForm
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -50,16 +47,14 @@ import java.util.concurrent.TimeUnit
 
 /**
  * OCD round 29, "corrections into the database": the settled results the pointer report
- * carries (a pass at L2 or L3, SMS both ways, a clean measured failure under rounds 26 to 28),
- * the automatic report that sends only those with the owner's token, and the token's form. The
- * reports are checked against the copy of OCD's public schema in testOwner/resources/public.
+ * carries (a pass at L2 or L3, SMS both ways, a clean measured failure under rounds 26 to 28).
+ * The reports are checked against the copy of OCD's public schema in testOwner/resources/public.
  */
-class AutoReportTest {
+class SettledTest {
     private fun resource(name: String): String =
         requireNotNull(javaClass.getResourceAsStream("/public/$name")) { name }.use { it.readBytes().decodeToString() }
 
     private val schema = Json.parseToJsonElement(resource("ocd-check-report.schema.json")).jsonObject
-    private val form = resource("ocd-check-report.yml")
 
     private val zone: ZoneId = ZoneId.of("Europe/Berlin")
     private val day = TimeUnit.DAYS.toMillis(1)
@@ -248,80 +243,6 @@ class AutoReportTest {
         val plain = IssueReport.report(run(), cell.copy(romBuild = null), calls)!!
         assertNull(plain.getValue("device").jsonObject["build"])
         assertEquals(emptyList<String>(), SchemaSubset.problems(plain, schema))
-    }
-
-    @Test
-    fun `the automatic report carries only the settled results, in the form's shape`() {
-        val issue = IssueReport.automatic(run(), cell, calls, settled)!!
-        assertEquals("[OCD Android report] SM-G981B on 26202 (LIDL Connect)", issue.title)
-        val report = Json.parseToJsonElement(issue.text).jsonObject
-        assertEquals(listOf("volte:on", "vowifi:on"), report.getValue("results").jsonArray.map { it.jsonObject.getValue("entry").jsonPrimitive.content })
-        assertEquals(emptyList<String>(), SchemaSubset.problems(report, schema))
-        // The body GitHub writes for the form: the bot reads the report under "Report" and a ticked box under "Privacy check".
-        assertTrue(Regex("(?m)^      label: ${IssueReport.REPORT_HEADING}$").containsMatchIn(form))
-        assertTrue(Regex("(?m)^      label: ${IssueReport.PRIVACY_HEADING}$").containsMatchIn(form))
-        assertTrue(issue.body.startsWith("### Report\n\n```json\n{\n"))
-        assertTrue(issue.body.contains("\n```\n\n### Privacy check\n\n- [X] "))
-        assertEquals(IssueReport.hash(issue.text), issue.hash)
-        // The same body, for a check with the public bot's tool (tools/observed_reports.py check_issue).
-        java.io.File("build/test-results").mkdirs()
-        java.io.File("build/test-results/ocd-check-auto-issue.md").writeText(issue.body)
-        // The bot scans the text outside the report too: no identifier, and never the word its scan reads as a secret.
-        val outside = issue.body.replace(issue.text, "")
-        assertTrue(PrivacyScan.scanValue("body", outside).isEmpty())
-        assertFalse(outside.contains("token", ignoreCase = true))
-        assertNull("nothing settled: nothing to send", IssueReport.automatic(run(), cell, calls, emptyMap()))
-        assertNull("an identifier stops it", IssueReport.automatic(run(), cell.copy(spn = "+491701234567"), calls, settled))
-    }
-
-    // --- what is sent, and when ---
-
-    @Test
-    fun `a settled result is sent once, again only when it changes or after 14 days`() {
-        val state = OwnerState(runs = listOf(run()))
-        val plan = AutoReport.plan(state, { calls }, { settled }, t0)
-        assertEquals(1, plan.size)
-        assertEquals(2, plan[0].keys.size)
-        val sent = AutoReport.after(state, plan[0], PostResult.Created(301), t0, zone)
-        assertEquals("Sent #301 on 2026-10-24", sent.autoLine)
-        assertTrue("the owner's own report is not others'", plan[0].issue.hash in sent.reportsOpened)
-        assertEquals(listOf(301, 301), sent.autoSent.map { it.issue })
-        assertTrue(sent.log.last().text.startsWith("sent report #301 automatically (sha256:"))
-        assertEquals(emptyList<AutoReport.Due>(), AutoReport.plan(sent, { calls }, { settled }, t0 + 13 * day))
-        assertEquals(1, AutoReport.plan(sent, { calls }, { settled }, t0 + 14 * day).size)
-        // Calls out becomes works: a new key, sent at once.
-        val works = settled + ("vowifi:on" to SettledLevel("l3", "iwlan", "mailbox_call+real_call", "2026-10-25"))
-        val next = AutoReport.plan(sent, { calls }, { works }, t0 + day)
-        assertEquals(1, next.size)
-        assertEquals(listOf("vowifi:on"), AutoReport.due(next[0].keys, sent.autoSent, t0 + day).map { it.split("|")[6] })
-        // Nothing settled, or the newest run of the SIM without a cell: nothing.
-        assertEquals(emptyList<AutoReport.Due>(), AutoReport.plan(state, { calls }, { emptyMap() }, t0))
-    }
-
-    @Test
-    fun `a refused token stops sending until a token is entered again, and nothing logs the token`() {
-        val state = OwnerState(runs = listOf(run()))
-        val due = AutoReport.plan(state, { calls }, { settled }, t0).single()
-        val refused = AutoReport.after(state, due, PostResult.Refused(401), t0, zone)
-        assertNotNull(refused.autoRefusedAtMs)
-        assertTrue(refused.autoLine!!.startsWith("GitHub refused the token (HTTP 401)"))
-        assertEquals(emptyList<AutoReport.Due>(), AutoReport.plan(refused, { calls }, { settled }, t0 + day))
-        assertEquals(1, AutoReport.plan(refused.copy(autoRefusedAtMs = null), { calls }, { settled }, t0 + day).size)
-        val failed = AutoReport.after(state, due, PostResult.Failed("no connection (UnknownHostException)"), t0, zone)
-        assertEquals(emptyList<String>(), failed.autoSent.map { it.key })
-        val everything = listOf(refused, failed).joinToString { it.encode() }
-        assertFalse(everything.contains("github_pat_"))
-        assertFalse(everything.contains("Bearer"))
-    }
-
-    @Test
-    fun `only a fine-grained token is taken`() {
-        assertNull(TokenForm.problem("github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab"))
-        assertNull("blank space around a pasted token is fine", TokenForm.problem("  github_pat_11ABCDEFG0123456789_abcdefghij \n"))
-        assertTrue(TokenForm.problem("ghp_0123456789abcdefghijklmnopqrstuvwxyzAB")!!.startsWith("This is a classic token"))
-        assertEquals("Enter the token", TokenForm.problem(" "))
-        val wrong = TokenForm.problem("not-a-token-1234")!!
-        assertFalse("the reason never echoes the text", wrong.contains("not-a-token"))
     }
 
     @Test

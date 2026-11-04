@@ -104,7 +104,7 @@ object OwnerEmergencyData {
         val status = OwnerDatasetStep.status(context, store)
         if (!status.available) return "emergency data test: no dataset installer on this ROM"
         // Round 31 (SM9, SM10): in a ROM build only with the person's opt-in and the ROM builder's switch; the owner build after its first use.
-        if (!manual) OwnerTester.policy(state).emergencyRefusal(status.emergencyTestOn, firstUse?.passed == true)?.let { return null }
+        if (!manual) OwnerTester.policy(state).emergencyRefusal(status.emergencyTestOn)?.let { return null }
         if (firstUse?.result == EmergencyFirstUse.NOT_MEANINGFUL && !manual) return null
         if (!OwnerAccess.restrictedNetworksGranted(context)) return "emergency data test not run: this build does not grant CONNECTIVITY_USE_RESTRICTED_NETWORKS"
         val explain = ExplainView.parse(sim.subId, client.explain(sim.subId)) ?: return "emergency data test: explain not readable"
@@ -210,7 +210,6 @@ object OwnerEmergencyData {
             val a = client.applyApnRecords()
             log(store, "apply_apn_records after the default won: ${if (a.ok) "job ${a.str("job_id")}" else a.line}")
         }
-        OwnerDatasetStep.publish(context, store)
         val noRecord = if (result != null && !recordsAllowed) " (no record before a first use is recorded as passed)" else ""
         return "emergency data test: $outcome$noRecord" + (notRun?.let { "; Android's default $it" } ?: "") + (line?.let { "; $it" } ?: "")
     }

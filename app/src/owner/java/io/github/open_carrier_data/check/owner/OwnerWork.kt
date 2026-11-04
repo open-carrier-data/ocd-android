@@ -120,7 +120,6 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                     val line = OwnerDatasetStep.run(applicationContext, store, phone, sims, testNow)
                     if (testNow) runCatching { android.util.Log.i(OwnerActivity.TEST_NOW_TAG, "dataset step ended: ${line.take(900)}") }
                     if (!line.startsWith("no dataset installer")) store.update { it.logged(System.currentTimeMillis(), "dataset", (if (testNow) "test now: " else "") + line) }
-                    OwnerScheduler.autoReport(applicationContext)
                     Result.success()
                 }
                 // The emergency data test by hand (its first use, with adb logcat streamed): one session on the SIM in the slot.
@@ -170,13 +169,6 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 STEP_SELF_SMS -> selfSmsNow(store)
                 STEP_DROP_KEEP -> dropKeep(store)
                 STEP_FINISH -> finish(store)
-                STEP_AUTO_REPORT -> try {
-                    // Round 29: the settled results as report issues, with the owner's token; it logs what it sent, never the token.
-                    OwnerAutoReports.run(applicationContext, store)
-                    Result.success()
-                } catch (e: java.io.IOException) {
-                    if (runAttemptCount < 3) Result.retry() else Result.success()
-                }
                 else -> Result.failure()
             }
         } catch (e: CancellationException) {
@@ -371,9 +363,8 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 quietLog(store, "dataset", "the dataset step failed: ${e.javaClass.simpleName}: ${e.message?.take(120)}")
                 store.read().datasetStatus?.available == true
             }
-            // An app older than the ROM's installer tests nothing at night either: the light check and the reports only.
+            // An app older than the ROM's installer tests nothing at night either: the light check only.
             io.github.open_carrier_data.check.owner.core.OlderApp.refusal(store.read().datasetStatus)?.let { why ->
-                OwnerScheduler.autoReport(context)
                 store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, "checked; nothing tested: $why")) }
                 quietLog(store, "check", "light check: no tests: $why")
                 return Result.success()
@@ -384,7 +375,6 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                         .onSuccess { line -> if (line != null) quietLog(store, "emergency_data", "slot ${sim.slot + 1}: $line") }
                         .onFailure { e -> if (e is CancellationException) throw e }
                 }
-                OwnerScheduler.autoReport(context)
                 store.update { it.copy(lastCheckAtMs = now, triggerSinceMs = null, lastResult = LastResult(now, store.read().datasetLine ?: "checked")) }
                 return Result.success()
             }
@@ -396,8 +386,6 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 quietLog(store, "check", "light check: no tests: ${why.plain}")
                 return Result.success()
             }
-            // Round 29: settled results go out as report issues when the owner set a token (its own work, with a network).
-            OwnerScheduler.autoReport(context)
             state = store.read()
             // Others' reports for each SIM's own cell: they only move an entry earlier (read only when there are any).
             val observed = state.observed
@@ -885,7 +873,6 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         store.update { it.withRun(ended).copy(lastResult = LastResult(System.currentTimeMillis(), line, changed = ended.changes.isNotEmpty(), failed = ended.failures.isNotEmpty())) }
         // Failures were told when they happened; the changes are told now.
         if (ended.changes.isNotEmpty()) OwnerNotifications.notice(applicationContext, Notices.changed(ended.changes))
-        OwnerScheduler.autoReport(applicationContext)
         return Result.success()
     }
 
@@ -948,7 +935,6 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val STEP_CALLS_OUT = "calls_out"
         const val STEP_SELF_SMS = "self_sms"
         const val STEP_DROP_KEEP = "drop_keep"
-        const val STEP_AUTO_REPORT = "auto_report"
         const val STEP_DATASET = "dataset"
         const val STEP_VOICE_CHECK = "voice_check"
         const val STEP_EMERGENCY_DATA = "emergency_data"
@@ -985,7 +971,6 @@ object OwnerScheduler {
     const val QUIET = "owner-quiet"
     const val RUN = "owner-run"
     const val CLEANUP = "owner-cleanup"
-    const val AUTO_REPORT = "owner-auto-report"
     const val PULL = "owner-pull"
     const val DATASET = "owner-dataset"
     const val VOICE_CHECK = "owner-voice-check"
@@ -1121,18 +1106,6 @@ object OwnerScheduler {
             "owner-probe", ExistingWorkPolicy.KEEP,
             step(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_PROBE), null, expedite = true),
         )
-    }
-
-    /** Round 29: sends the settled results as report issues with the owner's token; nothing without one. */
-    fun autoReport(context: Context) {
-        if (OwnerTester.build != io.github.open_carrier_data.check.owner.core.TesterBuild.OWNER) return
-        if (!OwnerToken.isSet(context)) return
-        val request = OneTimeWorkRequestBuilder<OwnerWorker>()
-            .setInputData(workDataOf(OwnerWorker.KEY_STEP to OwnerWorker.STEP_AUTO_REPORT))
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
-            .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(AUTO_REPORT, ExistingWorkPolicy.KEEP, request)
     }
 
     fun pull(context: Context, force: Boolean = false) {

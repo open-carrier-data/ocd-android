@@ -197,6 +197,37 @@ class ObservedTest {
         top["cells"] = JsonArray(cells)
     }
 
+    /** [cells] with retested_by_ocd gone from statuses and every cell, as public main will read after round 47. */
+    private fun withoutRetested(bytes: ByteArray): ByteArray {
+        val top = Json.parseToJsonElement(bytes.decodeToString()).jsonObject.toMutableMap()
+        top["statuses"] = JsonObject(top.getValue("statuses").jsonObject - "retested_by_ocd")
+        top["cells"] = JsonArray(top.getValue("cells").jsonArray.map { JsonObject(it.jsonObject - "retested_by_ocd") })
+        return JsonObject(top).toString().toByteArray()
+    }
+
+    @Test
+    fun `a summary reads the same with retested_by_ocd, as main has it today, and without it, as main will`() {
+        val carrying = fixture.decodeToString()
+        assertTrue("the fixture carries the field in its statuses and its cells", "\"retested_by_ocd\": null" in carrying && "\"retested_by_ocd\": \"" in carrying)
+        val dropped = withoutRetested(fixture)
+        assertFalse(dropped.decodeToString().contains("retested_by_ocd"))
+        val before = pull(Raw(fixture, records())) as ObservedPull.Fetched
+        val after = pull(Raw(dropped, records())) as ObservedPull.Fetched
+        assertEquals(before.info.pointers, after.info.pointers)
+        assertEquals(before.info.cells, after.info.cells)
+        assertEquals(before.info.own, after.info.own)
+        // The public summary without a cell, both ways.
+        assertTrue(pull(Raw(publicSummary)) is ObservedPull.Fetched)
+        assertTrue(pull(Raw(withoutRetested(publicSummary))) is ObservedPull.Fetched)
+        // The schema neither requires it nor lets a cell carry a status, and every other unknown key is still refused.
+        val statuses = schema.getValue("properties").jsonObject.getValue("statuses").jsonObject
+        val cell = schema.getValue("\$defs").jsonObject.getValue("cell").jsonObject
+        assertFalse(statuses.getValue("required").jsonArray.contains(JsonPrimitive("retested_by_ocd")))
+        assertFalse(cell.getValue("required").jsonArray.contains(JsonPrimitive("retested_by_ocd")))
+        assertEquals(JsonPrimitive(false), statuses["additionalProperties"])
+        assertEquals(JsonPrimitive(false), cell["additionalProperties"])
+    }
+
     @Test
     fun `a malformed or oversized summary is ignored and the previous copy stays`() {
         val bad = mapOf(

@@ -280,17 +280,18 @@ class ProvisionalTest {
         assertTrue(CallsOutPlan.due(sims, called, on, emptyMap(), "rom-1", "n1", now).isEmpty())
     }
 
-    // --- "re-tested by OCD" ---
+    // --- what this phone's own calls showed ---
 
     @Test
-    fun `re-tested by OCD names level, method, build and date, says incoming not tested for calls out, and expires after 90 days`() {
+    fun `the local line names level, method, build and date, says incoming not tested for calls out, and expires after 90 days`() {
         val out = RetestedEntry("cell", "vowifi:on", ProvenBearer.IWLAN, CallsLevel.CALLS_OUT, "mailbox_call", "TQ1, phh_ims", applied)
         assertEquals(
-            "re-tested by OCD: calls out over Wi-Fi, incoming not tested (build TQ1, phh_ims, 2026-10-21) (audio from packet counts)",
+            "measured on this phone: calls out over Wi-Fi, incoming not tested (build TQ1, phh_ims, 2026-10-21) (audio from packet counts)",
             out.line(ZoneOffset.UTC),
         )
         val works = out.copy(level = CallsLevel.WORKS, method = "mailbox_call+real_call")
-        assertEquals("re-tested by OCD: works, calls both ways over Wi-Fi (build TQ1, phh_ims, 2026-10-21) (audio from packet counts)", works.line(ZoneOffset.UTC))
+        assertEquals("measured on this phone: works, calls both ways over Wi-Fi (build TQ1, phh_ims, 2026-10-21) (audio from packet counts)", works.line(ZoneOffset.UTC))
+        assertFalse("a local line never says by OCD", (out.line(ZoneOffset.UTC) + works.line(ZoneOffset.UTC)).contains("OCD"))
         assertFalse(out.expired(applied + 89 * day))
         assertTrue(out.expired(applied + 90 * day))
         assertTrue(Retested.current(listOf(out), applied + 91 * day).isEmpty())

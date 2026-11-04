@@ -6,16 +6,17 @@ import kotlinx.serialization.Serializable
 /*
  * OCD round 31 ("scope", SM7 to SM12): the tester runs in two builds.
  *
- * - The owner build (build type `owner`): the owner's own phones only. Its token sends settled
- *   results and measured records to main (SM11), and its tests run under the owner's own switches.
+ * - The owner build (build type `owner`): the owner's own phones only. Its tests run under the owner's own switches.
  * - The ROM build (build type `rom`): the build another ROM ships in its own image, signed with that
  *   ROM's key (SM5). It pulls, hands the dataset to CarrierSettings and runs the passive checks
  *   (IMS registration, data validation, the no-regression check) without asking. The active tests
  *   (dialled test calls, test SMS, trials that change carrier settings, the emergency data test and,
  *   since round 42, the mobile-data probe ladder and the Wi-Fi-calling name lookup) run only after
  *   the person turns them on (SM9, off by default), and calls and SMS go only where OCD's allowlist
- *   marks them free for that carrier. Nothing leaves the phone by itself: no automatic report, no
- *   token, and results stay on the phone as local records (SM11).
+ *   marks them free for that carrier.
+ *
+ * In both builds nothing leaves the phone by itself (round 47, item 2): results stay on the phone as local
+ * records, and a report goes only when the person taps, reads it and submits it under their own GitHub login.
  *
  * In both builds, active verdicts count only on an IMS stack that one calls-out pass has calibrated
  * (SM8); today that is AOSP ImsStack. On any other stack results read "not counted": no candidates,
@@ -48,9 +49,6 @@ data class TesterPolicy(val build: TesterBuild, val optIn: Boolean = false) {
     /** Dialled test calls, test SMS, override trials, the emergency data test and the probe ladder with W1 (SM9). */
     val activeTests: Boolean get() = owner || optIn
 
-    /** Settled results and measured records go to main with the owner's token: the owner build only (SM11). */
-    val sendsWithToken: Boolean get() = owner
-
     /** Why a dialled test call to [mailbox] may not go out in this build, or null (SM9). */
     fun callRefusal(mailbox: Mailbox?): String? = when {
         !activeTests -> OPT_IN_OFF
@@ -68,12 +66,10 @@ data class TesterPolicy(val build: TesterBuild, val optIn: Boolean = false) {
     /**
      * Why the emergency data test may not run, or null (SM9 and SM10). [buildSwitch]: the ROM
      * builder's switch, which CarrierSettings reports from the build after the device family's
-     * first use passed (null when this ROM build does not say). The owner build also runs it
-     * after the owner's own recorded first use, which the app re-sends with every hand-off.
+     * first use passed (null when this ROM build does not say).
      */
-    fun emergencyRefusal(buildSwitch: Boolean?, ownerFirstUsePassed: Boolean): String? = when {
+    fun emergencyRefusal(buildSwitch: Boolean?): String? = when {
         !activeTests -> OPT_IN_OFF
-        owner -> if (buildSwitch == true || ownerFirstUsePassed) null else "the first use of the emergency data test has not passed on this phone"
         buildSwitch != true -> "the ROM builder has not turned the emergency data test on in this build"
         else -> null
     }

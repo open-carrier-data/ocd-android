@@ -1,7 +1,6 @@
 package io.github.open_carrier_data.check.owner.core
 
 import io.github.open_carrier_data.check.core.PrivacyScan
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -15,14 +14,12 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 /*
  * Measured records (OCD round 30, "perDevice"; the spec's 2.10 and 6.4): a correction measured on
  * this phone becomes a record keyed by device, carrier profile, ROM family and IMS stack. The phone
- * serves it at once through CarrierSettings's put_record, and the app publishes it to main through
- * the data side's owner-only intake (an issue opened with the owner's token). Records state only
- * what was measured; they never hold a phone number, IMSI, ICCID, IMEI, SIP URI or IP address, and
+ * serves it at once through CarrierSettings's put_record, and it stays on this phone (round 47, item
+ * 2: every record is `tester: local`, and the app opens no issue). Records state only what was measured; they never hold a phone number, IMSI, ICCID, IMEI, SIP URI or IP address, and
  * an emergency data result never says that emergency calls work.
  */
 
@@ -223,6 +220,15 @@ data class RecordInput(
 
 object MeasuredRecord {
     val VALID_DAYS = 90L
+
+    /**
+     * Results that do not lapse (round 47, item 1, CarrierSettings's BundleBuilder.expired): nothing renews them any
+     * more, and a lapse would bring back a row that failed or a value that broke voice with no test behind it.
+     */
+    val NO_LAPSE = setOf(RecordResult.EMERGENCY_DEFAULT_WON.wire, RecordResult.WINNER_AFTER_FAILURE.wire)
+
+    /** Whether a record with [result] and [validUntil] has lapsed on [today]. */
+    fun lapsed(result: String?, validUntil: LocalDate, today: LocalDate): Boolean = validUntil.isBefore(today) && result !in NO_LAPSE
     val LEVELS = setOf("L2", "L3", "sms_both_ways", "no_regression", "emergency_data")
     val METHODS = setOf("mailbox_call", "real_call", "mailbox_call+real_call", "self_sms", "observed", "override_trial", "eims_request")
     val BEARERS = setOf("lte", "nr", "iwlan")
@@ -284,7 +290,7 @@ object MeasuredRecord {
             "last_measured" to JsonPrimitive(last.toString()),
             "valid_until" to JsonPrimitive(last.plusDays(VALID_DAYS).toString()),
             "data" to JsonObject(linkedMapOf("commit" to JsonPrimitive(i.dataCommit), "data_digest" to JsonPrimitive(i.dataDigest))),
-            "tester" to JsonPrimitive("owner"),
+            "tester" to JsonPrimitive("local"),
             "differs_between_sims" to JsonNull,
             "second_agent_read" to JsonNull,
         )
@@ -326,7 +332,7 @@ object NeighbourRecords {
             s(r, "kind") == "measured" && s(target, "type") == "config" && s(target, "key") == key && s(r, "value_kind") == "value" &&
                 s(device, "codename") == cell.codename && s(device, "model")?.uppercase(Locale.ROOT) == cell.model.uppercase(Locale.ROOT) &&
                 text == carrierText && !sameCell &&
-                s(r, "valid_until")?.let { runCatching { !LocalDate.parse(it).isBefore(today) }.getOrNull() } == true
+                s(r, "valid_until")?.let { runCatching { !MeasuredRecord.lapsed(s(r, "result"), LocalDate.parse(it), today) }.getOrNull() } == true
         }.sortedByDescending { s(it, "last_measured").orEmpty() }.mapNotNull { it["value"]?.takeIf { v -> v !is JsonNull } }
     }
 
@@ -373,93 +379,10 @@ object RecordCheck {
             else -> return "this app writes config and emergency data records only"
         }
         val until = (record["valid_until"] as? JsonPrimitive)?.contentOrNull?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: return "no valid_until"
-        if (until.isBefore(LocalDate.parse(MeasuredRecord.day(todayMs)))) return "expired"
+        if (MeasuredRecord.lapsed(MeasuredRecord.result(record), until, LocalDate.parse(MeasuredRecord.day(todayMs)))) return "expired"
         val hits = PrivacyScan.scan(record, "record", HEX_FIELDS)
         if (hits.isNotEmpty()) return "the privacy scan refused ${hits.joinToString { "${it.path} (${it.rule})" }}"
         if (((record["data"] as? JsonObject)?.get("commit") as? JsonPrimitive)?.contentOrNull?.let(DataSource.SHA::matches) != true) return "no data commit"
         return null
-    }
-}
-
-/** A record this app sent to main, for "send again only when it changed, or every 14 days". */
-@Serializable
-data class SentRecord(val recordKey: String, val lastMeasured: String, val result: String, val atMs: Long, val issue: Int? = null)
-
-/**
- * The issue a measured record goes to main in: one record per issue, opened with the owner's
- * token, labelled for the data side's owner-only intake. The record is the JSON block, exactly as
- * put_record took it; the data side folds it into generated/devices/device-records.json.
- */
-object RecordReport {
-    const val LABEL = "ocd-device-record"
-    const val TITLE_PREFIX = "[OCD device record] "
-    val RENEW_MS: Long = TimeUnit.DAYS.toMillis(14)
-    const val MAX_SENT = 200
-
-    data class Issue(val title: String, val body: String, val recordKey: String)
-
-    fun issue(record: JsonObject): Issue {
-        val target = (record["target"] as? JsonObject)
-        val what = MeasuredRecord.targetKey(record) ?: (target?.get("type") as? JsonPrimitive)?.contentOrNull ?: "record"
-        val carrier = record["carrier"] as? JsonObject
-        val scope = (carrier?.get("profile_id") as? JsonPrimitive)?.contentOrNull
-            ?: listOfNotNull((carrier?.get("mcc") as? JsonPrimitive)?.contentOrNull, (carrier?.get("mnc") as? JsonPrimitive)?.contentOrNull).joinToString("-")
-        val model = ((record["device"] as? JsonObject)?.get("model") as? JsonPrimitive)?.contentOrNull.orEmpty()
-        val title = "$TITLE_PREFIX${MeasuredRecord.result(record)}: $what for $scope on $model".take(240)
-        val body = buildString {
-            append("### Record\n\n```json\n")
-            append(MeasuredRecord.text(record))
-            append("\n```\n\n### Privacy check\n\n")
-            append("- [X] The OCD Android app's privacy scan passed: the record holds no IMSI, ICCID, IMEI, phone number, SIP URI or IP address.\n")
-        }
-        return Issue(title, body, MeasuredRecord.recordKey(record))
-    }
-
-    /** Records not sent yet, sent with another result or measurement day, or sent more than 14 days ago. */
-    fun due(records: List<JsonObject>, sent: List<SentRecord>, nowMs: Long): List<JsonObject> = records.filter { r ->
-        val key = MeasuredRecord.recordKey(r)
-        sent.none { it.recordKey == key && it.lastMeasured == MeasuredRecord.lastMeasured(r) && it.result == MeasuredRecord.result(r) && nowMs - it.atMs in 0 until RENEW_MS }
-    }
-
-    fun record(sent: List<SentRecord>, r: JsonObject, nowMs: Long, issue: Int?): List<SentRecord> =
-        (sent.filterNot { it.recordKey == MeasuredRecord.recordKey(r) } + SentRecord(MeasuredRecord.recordKey(r), MeasuredRecord.lastMeasured(r), MeasuredRecord.result(r), nowMs, issue))
-            .sortedBy { it.atMs }.takeLast(MAX_SENT)
-}
-
-/**
- * A source review the app opens on OCD's public repository with the owner's token (spec 12.3): a
- * "no value passed", an APN shrink refusal, or a coupling mismatch. Plain words, the profile, the
- * key or row, the data commit; never a SIM identifier. Opened once per [key].
- */
-@Serializable
-data class SourceReview(val key: String, val title: String, val body: String, val atMs: Long) {
-    companion object {
-        const val LABEL = "source-review"
-        const val TITLE_PREFIX = "[source review] "
-        const val MAX = 40
-
-        fun noValuePassed(profile: String, key: String, failing: JsonElement?, tried: List<Candidate>, commit: String, reason: String, nowMs: Long) = SourceReview(
-            "no_value_passed|$profile|$key|${commit.take(12)}",
-            "${TITLE_PREFIX}no value passed: $key for $profile",
-            "The OCD Android owner build measured a failure with OCD's value of `$key` for `$profile` (data commit `$commit`), " +
-                "and no other value passed under the same conditions, so the newest value stays and the test repeats in the next idle moment.\n\n" +
-                "- Value served: `${failing ?: "Android's default"}`\n- Failure: ${reason.take(300)}\n" +
-                "- Values tried: ${tried.joinToString { "`${it.plain}` (${it.origin})" }.ifEmpty { "none known" }}\n",
-            nowMs,
-        )
-
-        fun install(code: String, detail: String, commit: String, nowMs: Long) = SourceReview(
-            "install|$code|${commit.take(12)}",
-            "${TITLE_PREFIX}$code at main ${commit.take(12)}",
-            "CarrierSettings refused the dataset of main `$commit` with `$code`: ${detail.take(600)}\n",
-            nowMs,
-        )
-
-        fun coupling(profile: String, commit: String, nowMs: Long) = SourceReview(
-            "coupling|$profile|${commit.take(12)}",
-            "${TITLE_PREFIX}APN coupling mismatch for $profile",
-            "For a SIM served by `$profile` at main `$commit`, the APN rows TelephonyProvider selects do not all belong to that profile (coupling `mismatch`, spec 4.6).\n",
-            nowMs,
-        )
     }
 }

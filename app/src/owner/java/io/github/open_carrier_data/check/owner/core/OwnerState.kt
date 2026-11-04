@@ -250,7 +250,7 @@ data class OwnerState(
     val calls: List<CallRecord> = emptyList(),
     /** Changed voice values kept for now: past the night only after calls out, then until incoming is seen ([Provisional]). */
     val provisional: List<ProvisionalKeep> = emptyList(),
-    /** "Re-tested by OCD" from this phone's own measured calls, 90 days each ([Retested]). */
+    /** What this phone's own measured calls showed, 90 days each ([Retested]). */
     val retested: List<RetestedEntry> = emptyList(),
     /** Whether the app dials its own mailbox calls or only logs what it would dial ([CallsOutMode]). */
     val callsOutMode: CallsOutMode = CallsOutMode.DRY_RUN,
@@ -261,15 +261,6 @@ data class OwnerState(
     /** The optional data SMS to the phone's own number (off unless the owner turns it on; it may cost an SMS). */
     val selfSmsOn: Boolean = false,
     val selfSms: List<SelfSmsCheck> = emptyList(),
-    /**
-     * OCD round 29: the settled results the app sent itself as report issues, with the owner's
-     * token ([AutoReport]); a result is sent again only after [AutoReport.RENEW_MS].
-     */
-    val autoSent: List<SentResult> = emptyList(),
-    /** The last automatic report's outcome for the screen: sent, refused, or why nothing was sent. */
-    val autoLine: String? = null,
-    /** GitHub refused the token: nothing is sent until the owner enters a token again. */
-    val autoRefusedAtMs: Long? = null,
     /**
      * OCD round 30: what CarrierSettings's dataset installer last reported (`status`); null before
      * the first look. [DatasetStatus.available] false on a ROM without it.
@@ -290,12 +281,6 @@ data class OwnerState(
     val caps: List<CapEvent> = emptyList(),
     /** A round 30 override trial in place, registered before it is set; the cleanup clears it after a crash. */
     val trial30: Trial30? = null,
-    /** Measured records put into CarrierSettings and waiting to go to main with the owner's token (JSON). */
-    val pendingRecords: List<String> = emptyList(),
-    val recordsSent: List<SentRecord> = emptyList(),
-    /** Source reviews to open (no value passed, an APN shrink, a coupling mismatch), and the ones opened. */
-    val pendingReviews: List<SourceReview> = emptyList(),
-    val reviewsSent: List<String> = emptyList(),
     /** The emergency data test's sessions, its first use, and its own stop event. */
     val emergencySessions: List<EmergencySession> = emptyList(),
     val emergencyFirstUse: EmergencyFirstUse? = null,

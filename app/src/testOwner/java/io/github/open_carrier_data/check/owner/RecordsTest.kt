@@ -4,18 +4,18 @@ import io.github.open_carrier_data.check.owner.core.BuildCell
 import io.github.open_carrier_data.check.owner.core.ExplainView
 import io.github.open_carrier_data.check.owner.core.Groups
 import io.github.open_carrier_data.check.owner.core.MeasuredRecord
+import io.github.open_carrier_data.check.owner.core.NeighbourRecords
 import io.github.open_carrier_data.check.owner.core.RecordCarrier
 import io.github.open_carrier_data.check.owner.core.RecordCell
 import io.github.open_carrier_data.check.owner.core.RecordCheck
 import io.github.open_carrier_data.check.owner.core.RecordInput
-import io.github.open_carrier_data.check.owner.core.RecordReport
 import io.github.open_carrier_data.check.owner.core.RecordResult
 import io.github.open_carrier_data.check.owner.core.RecordTarget
 import io.github.open_carrier_data.check.owner.core.RecordValue
-import io.github.open_carrier_data.check.owner.core.SentRecord
 import io.github.open_carrier_data.check.owner.core.TypedValues
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -30,7 +30,7 @@ import org.junit.Test
 import java.time.LocalDate
 import java.time.ZoneOffset
 
-/** Round 30's measured records (spec 2.10 and 6.4): the key, the members, the candidate check, groups A and B, privacy, the issue. */
+/** Round 30's measured records (spec 2.10 and 6.4): the key, the members, the candidate check, groups A and B, privacy, what does not lapse. */
 class RecordsTest {
     private val cell = RecordCell("x1s", "SM-G981B", "lineageos", "24.0", "aosp_imsstack", null, 34)
     private val now = LocalDate.of(2026, 10, 26).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli() + 3_600_000
@@ -74,7 +74,7 @@ class RecordsTest {
         assertEquals(MeasuredRecord.MEMBERS, r.keys.toList())
         assertEquals("measured", r["kind"]!!.jsonPrimitive.content)
         assertEquals("measured", r["claim"]!!.jsonPrimitive.content)
-        assertEquals("owner", r["tester"]!!.jsonPrimitive.content)
+        assertEquals("local", r["tester"]!!.jsonPrimitive.content)
         assertEquals("2026-10-26", r["last_measured"]!!.jsonPrimitive.content)
         assertEquals("2027-01-24", r["valid_until"]!!.jsonPrimitive.content)
         assertEquals(commit, r["data"]!!.jsonObject["commit"]!!.jsonPrimitive.content)
@@ -141,7 +141,7 @@ class RecordsTest {
 
     @Test
     fun `an expired record and one the privacy scan refuses are never written`() {
-        val old = record(at = now - 100L * 86_400_000)
+        val old = record(at = now - 100L * 86_400_000, result = RecordResult.WORKS)
         assertEquals("expired", RecordCheck.problem(old, listOf(JsonPrimitive(true)), "bool", emptySet(), now))
         val ip = record(key = "iwlan.epdg_static_address_string", value = RecordValue.Value(JsonPrimitive("192.0.2.10")))
         assertTrue(RecordCheck.problem(ip, listOf(JsonPrimitive("192.0.2.10")), "string", emptySet(), now)!!.startsWith("the privacy scan refused"))
@@ -162,26 +162,35 @@ class RecordsTest {
     }
 
     @Test
-    fun `a record goes to main as one issue with exactly the record as its JSON block, labelled for the owner-only intake`() {
-        val r = record()
-        val issue = RecordReport.issue(r)
-        assertEquals("ocd-device-record", RecordReport.LABEL)
-        assertTrue(issue.title.startsWith("[OCD device record] winner_after_failure: carrier_volte_available_bool for open.26207.c07dcc040b58 on SM-G981B"))
-        val blocks = Regex("```json\\n(.*?)\\n```", RegexOption.DOT_MATCHES_ALL).findAll(issue.body).map { it.groupValues[1] }.toList()
-        assertEquals(1, blocks.size)
-        assertEquals(r, Json.parseToJsonElement(blocks.single()))
-        assertEquals(MeasuredRecord.recordKey(r), issue.recordKey)
+    fun `every record stays on this phone as local, on every build`() {
+        assertEquals("local", record()["tester"]!!.jsonPrimitive.content)
+        assertEquals(MeasuredRecord.MEMBERS, record().keys.toList())
     }
 
     @Test
-    fun `a record is sent again only with a new result or measurement day, or after 14 days`() {
-        val r = record()
-        val sent = RecordReport.record(emptyList(), r, now, 7)
-        assertTrue(RecordReport.due(listOf(r), sent, now + 3_600_000).isEmpty())
-        assertEquals(1, RecordReport.due(listOf(r), sent, now + 15L * 86_400_000).size)
-        val later = record(at = now + 86_400_000)
-        assertEquals(1, RecordReport.due(listOf(later), sent, now + 86_400_000).size)
-        assertEquals(listOf(SentRecord(MeasuredRecord.recordKey(r), "2026-10-26", "winner_after_failure", now, 7)), sent)
+    fun `emergency_default_won and winner_after_failure do not lapse, as in CarrierSettings's BundleBuilder expired`() {
+        val past = now - 100L * 86_400_000
+        val winner = record(at = past)
+        assertEquals("2026-10-16", winner["valid_until"]!!.jsonPrimitive.content)
+        assertNull(RecordCheck.problem(winner, listOf(JsonPrimitive(true)), "bool", emptySet(), now))
+        val won = record(target = RecordTarget.EmergencyData("a:a913d9286c805fdb"), value = RecordValue.None, result = RecordResult.EMERGENCY_DEFAULT_WON, at = past, basis = "Android's default won; says nothing about emergency calls")
+        assertNull(RecordCheck.problem(won, emptyList(), null, emptySet(), now))
+        // The rest of the results lapse as before, and a record without the field is still refused.
+        for (result in RecordResult.entries.filterNot { it.wire in MeasuredRecord.NO_LAPSE }) {
+            assertEquals(result.wire, "expired", RecordCheck.problem(record(at = past, result = result), listOf(JsonPrimitive(true)), "bool", emptySet(), now))
+        }
+        val noDate = JsonObject(winner + ("valid_until" to JsonNull))
+        assertEquals("no valid_until", RecordCheck.problem(noDate, listOf(JsonPrimitive(true)), "bool", emptySet(), now))
+    }
+
+    @Test
+    fun `a neighbouring cell's winner past its valid_until still comes first, another lapsed result does not`() {
+        val neighbour = RecordCell("x1s", "SM-G981B", "lineageos", "23.0", "aosp_imsstack", null, 34)
+        fun rec(result: RecordResult, value: Boolean) = MeasuredRecord.build(
+            RecordInput(neighbour, RecordCarrier.Profile("open.26207.c07dcc040b58"), RecordTarget.Config("carrier_volte_available_bool"), RecordValue.Value(JsonPrimitive(value)), result, "L2", "override_trial", "lte", 3, now - 100L * 86_400_000, now - 100L * 86_400_000, "measured", commit, digest),
+        )
+        val records = JsonArray(listOf(rec(RecordResult.WINNER_AFTER_FAILURE, true), rec(RecordResult.WORKS, false)))
+        assertEquals(listOf<JsonElement>(JsonPrimitive(true)), NeighbourRecords.values(records, cell, RecordCarrier.Profile("open.26207.c07dcc040b58"), "carrier_volte_available_bool", now))
     }
 
     @Test

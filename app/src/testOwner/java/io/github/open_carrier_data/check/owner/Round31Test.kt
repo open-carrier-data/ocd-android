@@ -182,19 +182,17 @@ class Round31Test {
         assertEquals(TesterPolicy.NOT_FREE, on.smsRefusal(notFree))
         assertEquals(TesterPolicy.NOT_FREE, on.smsRefusal(null))
         assertEquals(TesterPolicy.NOT_FREE, on.callRefusal(Mailbox("x", "333", "x", FreeFlags(calls = false, sms = true))))
-        assertFalse(off.sendsWithToken || on.sendsWithToken)
         // The emergency data test also needs the ROM builder's switch (SM10).
-        assertNotNull(off.emergencyRefusal(buildSwitch = true, ownerFirstUsePassed = true))
-        assertNotNull(on.emergencyRefusal(buildSwitch = null, ownerFirstUsePassed = true))
-        assertNotNull(on.emergencyRefusal(buildSwitch = false, ownerFirstUsePassed = true))
-        assertNull(on.emergencyRefusal(buildSwitch = true, ownerFirstUsePassed = false))
-        // The owner build keeps its own switches and its token.
+        assertNotNull(off.emergencyRefusal(buildSwitch = true))
+        assertNotNull(on.emergencyRefusal(buildSwitch = null))
+        assertNotNull(on.emergencyRefusal(buildSwitch = false))
+        assertNull(on.emergencyRefusal(buildSwitch = true))
+        // The owner build keeps its own switches; the emergency data test waits for the ROM builder's switch there too.
         val owner = TesterPolicy(TesterBuild.OWNER)
-        assertTrue(owner.activeTests && owner.sendsWithToken)
+        assertTrue(owner.activeTests)
         assertNull(owner.callRefusal(notFree))
-        assertNull(owner.emergencyRefusal(buildSwitch = null, ownerFirstUsePassed = true))
-        assertNull(owner.emergencyRefusal(buildSwitch = true, ownerFirstUsePassed = false))
-        assertNotNull(owner.emergencyRefusal(buildSwitch = null, ownerFirstUsePassed = false))
+        assertNull(owner.emergencyRefusal(buildSwitch = true))
+        assertNotNull(owner.emergencyRefusal(buildSwitch = null))
         // An unknown build name is the stricter ROM build; the opt-in is off in a fresh state.
         assertEquals(TesterBuild.ROM, TesterBuild.of("something"))
         assertFalse(OwnerState().activeTests.on)

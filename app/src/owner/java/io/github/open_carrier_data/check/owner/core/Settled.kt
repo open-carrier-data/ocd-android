@@ -9,8 +9,8 @@ import java.time.ZoneOffset
 
 /*
  * Settled results (OCD rule round 29, "corrections into the database"): what the pointer
- * report says this phone measured under rounds 26 to 28, so that OCD's public bot records the
- * owner's results as "re-tested by OCD" (observed/retested.json, 90 days). A settled result is
+ * report says this phone measured under rounds 26 to 28. To OCD it reads as every report does,
+ * "reported, not checked by OCD" (round 47, item 2). A settled result is
  * - a pass at L2 (calls out) or L3 (works, calls both ways) on the entry's bearer, from this
  *   phone's call ledger on this ROM build;
  * - SMS both ways (a data SMS to the phone's own number sent and received over IMS);
@@ -36,10 +36,7 @@ data class SettledLevel(
     val failed: Boolean = false,
     /** A failure's code, for example calls_out_failed. */
     val reason: String? = null,
-) {
-    /** What automatic submission remembers: the level and pass or failure, never the day. */
-    val key: String get() = "$level/${if (failed) "failed" else "passed"}/${bearer ?: "-"}"
-}
+)
 
 object Settled {
     const val L2 = "l2"
