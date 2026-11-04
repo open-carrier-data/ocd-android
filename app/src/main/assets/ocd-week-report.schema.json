@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/open-carrier-data/week-counts/main/schemas/ocd-week-report.schema.json",
   "title": "OCD Android's weekly report to the relay (ocd-week-report v1)",
-  "description": "What a ROM install of OCD Android sends once a week per SIM after the person's yes (OCD rule round 48, item 2). It holds no identifier, no free text, no day or time and no call details. Anything else is refused whole. Two rules no schema here can say: week is the current or the previous ISO week at the relay's clock, and each entry appears once. The body is at most 4096 bytes.",
+  "description": "What a ROM install of OCD Android sends once a week per SIM after the person's yes (OCD rule round 48, item 2). It holds no identifier, no free text, no day or time and no phone numbers, call lengths or counts, though a result can show that calls happened that week, on mobile or Wi-Fi, whether they worked, and that one was outgoing. Anything else is refused whole. Two rules no schema here can say: week is the current or the previous ISO week at the relay's clock, and each entry appears once. The body is at most 4096 bytes.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "schema_version", "week", "app_version", "device", "carrier", "results"],

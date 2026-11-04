@@ -174,7 +174,8 @@ class Round48WeekTest {
     @Test
     fun `the question reads as ruled, and no text says anonymous`() {
         val ruled = "Help improve carrier settings? Once a week, on Wi-Fi and never while roaming, this phone can send Open Carrier Data which carrier features and data settings " +
-            "signed in or worked, with your phone model, ROM family, Android version, IMS software and carrier. It sends no name, number or SIM ID, no location, no times and no call details. " +
+            "signed in or worked, with your phone model, ROM family, Android version, IMS software and carrier. It sends no name, phone numbers or SIM ID, no location, no day or time, and no call lengths or counts. " +
+            "But a result can show that this phone had calls that week, on mobile or Wi-Fi, whether they worked, and that one was outgoing. " +
             "Your internet address reaches OCD's relay at Cloudflare (USA) while sending and OCD does not keep it. Results are published only for groups of phones and hold no ID, " +
             "so what was sent cannot be taken back. You can stop any time in Settings > About phone > Open Carrier Data."
         assertEquals(ruled, "${WeekQuestion.TITLE} ${WeekQuestion.BODY}")
@@ -581,7 +582,7 @@ class Round48WeekTest {
 
     @Test
     fun `the words say what the rungs mean and what a yes reveals`() {
-        for (needed in listOf("calls both ways by packet counts", "outgoing only", "No sound was checked", "nothing here speaks for emergency calls", "the flag shows that calls happened that week")) {
+        for (needed in listOf("calls both ways by packet counts", "outgoing only", "No sound was checked", "nothing here speaks for emergency calls", "and a works, calls out or failed result shows that calls happened that week")) {
             assertTrue(needed, needed in WeekQuestion.DETAILS_TEXT)
             assertTrue(needed, needed in WeekWords.MEANS)
         }

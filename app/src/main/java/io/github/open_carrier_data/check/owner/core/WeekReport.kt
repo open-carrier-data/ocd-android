@@ -24,13 +24,14 @@ import java.util.concurrent.TimeUnit
 /*
  * OCD rule round 48, item 2: what leaves a phone by itself. Nothing does, unless the person said yes. After that one
  * yes, and only on a ROM install, the app sends one closed week report per SIM to OCD's relay, only on an unmetered
- * network and never while roaming. It holds no identifier, no free text, no day or time and no call details, and the
- * person can stop it at any time. A hand install never sends by itself. No result, sent or tapped, ever sets a value on
- * any phone.
+ * network and never while roaming. It holds no identifier, no free text, no day or time and no phone numbers, call
+ * lengths or counts, though a result can show that calls happened that week, on mobile or Wi-Fi, whether they worked,
+ * and that one was outgoing, and the person can stop it at any time. A hand install never sends by itself. No result,
+ * sent or tapped, ever sets a value on any phone.
  *
  * This file decides; OwnerWeekReport.kt only reads the phone and the network. The report's fields are closed
  * (assets/ocd-week-report.schema.json, schema ocd-week-report v1), and anything else is refused whole. It never holds a
- * plan, bearer, codename, build, firmware, SPN, GID1, Android carrier ID, data commit or digest, report hash, reason,
+ * plan, a bearer field, codename, build, firmware, SPN, GID1, Android carrier ID, data commit or digest, report hash, reason,
  * method, day, call count, direction field, duration, disconnect code, serving network, roaming state or any ID. Round 49
  * adds the rung calls_out, which shows that a week's passing call was outgoing, and packet counts never leave.
  */
@@ -396,11 +397,12 @@ class WeekStep(private val store: StateStore, private val device: WeekDevice, pr
     }
 }
 
-/** The one-time question, word for word as OCD's rule round 48 has it. */
+/** The one-time question, word for word as OCD's rule rounds 48 and 50 have it. */
 object WeekQuestion {
     const val TITLE = "Help improve carrier settings?"
     const val BODY = "Once a week, on Wi-Fi and never while roaming, this phone can send Open Carrier Data which carrier features and data settings signed in or worked, " +
-        "with your phone model, ROM family, Android version, IMS software and carrier. It sends no name, number or SIM ID, no location, no times and no call details. " +
+        "with your phone model, ROM family, Android version, IMS software and carrier. It sends no name, phone numbers or SIM ID, no location, no day or time, and no call lengths or counts. " +
+        "But a result can show that this phone had calls that week, on mobile or Wi-Fi, whether they worked, and that one was outgoing. " +
         "Your internet address reaches OCD's relay at Cloudflare (USA) while sending and OCD does not keep it. " +
         "Results are published only for groups of phones and hold no ID, so what was sent cannot be taken back. " +
         "You can stop any time in Settings > About phone > Open Carrier Data."
@@ -408,7 +410,7 @@ object WeekQuestion {
 
     /** Round 49: the words beside the result values, here and on the entry. */
     const val MEANS = "\"Works\" means calls both ways by packet counts, and \"calls out\" means outgoing only. No sound was checked, nothing here speaks for emergency calls, " +
-        "and the flag shows that calls happened that week."
+        "and a works, calls out or failed result shows that calls happened that week."
     const val PRIVACY_PAGE = "${DataSource.REPOSITORY_URL}/blob/${DataSource.BRANCH}/docs/privacy.md"
     const val NO = "No"
     const val YES = "Yes"
