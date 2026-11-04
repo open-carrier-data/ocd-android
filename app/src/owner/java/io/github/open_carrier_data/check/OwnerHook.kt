@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.work.ExistingWorkPolicy
 import io.github.open_carrier_data.check.owner.FileStateStore
+import io.github.open_carrier_data.check.owner.OwnerAutoReports
 import io.github.open_carrier_data.check.owner.OwnerActivity
 import io.github.open_carrier_data.check.owner.OwnerNotifications
 import io.github.open_carrier_data.check.owner.OwnerScheduler
@@ -29,6 +30,7 @@ object OwnerHook {
     const val PRESENT = true
 
     fun onAppStart(context: Context) {
+        OwnerAutoReports.forgetOldToken(context.noBackupFilesDir)
         val state = FileStateStore(context).read()
         OwnerScheduler.ensureQuiet(context, state.scheduleOn)
         OwnerScheduler.cleanup(context, policy = ExistingWorkPolicy.KEEP)

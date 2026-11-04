@@ -69,7 +69,6 @@ class ProbeGateTest {
                 "OwnerEmergencyData.kt", // the emergency data test: TesterPolicy.emergencyRefusal
                 "OwnerMessages.kt", // the test SMS: TesterPolicy.smsRefusal; the MMS ladder (item 6) is owner and rom, no opt-in
                 "OwnerProbe.kt", // the probe ladder and W1: OwnerProbe.allowed
-                "OwnerReports.kt", // report issues with the owner's token: TesterPolicy.sendsWithToken
             ),
             files,
         )

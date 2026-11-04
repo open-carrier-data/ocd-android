@@ -127,17 +127,3 @@ object D7Age {
         return entry.atEndOfMonth().isBefore(data.minusYears(3))
     }
 }
-
-/** A winner's source review (D8 rule 8, D7 rule 4): the scope, the failure and the candidate that passed; never a SIM identifier. */
-object ApnTrialReview {
-    fun of(profile: String, c: ApnSetCandidate, failure: LeadFailure, commit: String, nowMs: Long) = SourceReview(
-        "apn_candidate|$profile|${c.id}|${commit.take(12)}",
-        "${SourceReview.TITLE_PREFIX}APN candidate passed: ${c.kind} for $profile",
-        "The OCD Android owner build measured a failure on `$profile` (data commit `$commit`): ${failure.plain}. " +
-            "As a non-persistent trial through CarrierSettings's temporary set, ${c.plain} passed: ${failure.check}. " +
-            "The installed set was restored at once; nothing changed in the data.\n\n" +
-            "- Rule: ${c.rule}\n- Candidate: `${c.id}` (${c.kind})\n" +
-            "- Operations: ${c.ops.joinToString { op -> op.op + (op.rowKey?.let { " $it" } ?: "") + (op.types?.let { " type=$it" } ?: "") + (op.attributes?.let { a -> " ${a["apn"]} [${a["type"]}]" } ?: "") }}\n",
-        nowMs,
-    )
-}

@@ -28,6 +28,7 @@ import io.github.open_carrier_data.check.owner.core.CallLevels
 import io.github.open_carrier_data.check.owner.core.CallsOutMode
 import io.github.open_carrier_data.check.owner.core.CallsTested
 import io.github.open_carrier_data.check.owner.core.MmsProbe
+import io.github.open_carrier_data.check.owner.core.ReportWords
 import io.github.open_carrier_data.check.owner.core.Retested
 import io.github.open_carrier_data.check.owner.core.SelfSms
 import io.github.open_carrier_data.check.owner.core.sameCard
@@ -77,7 +78,7 @@ data class OwnerUi(
     val messageId: Long = 0,
     /** Wi-Fi calling details from the IWLAN dump, read when the owner asks; never the device log. */
     val details: List<String>? = null,
-    /** Round 26: "re-tested by OCD" from this phone's measured calls, and the last measured calls, in plain words. */
+    /** Round 26: what this phone's own measured calls showed, and the last measured calls, in plain words. */
     val retestedLines: List<String> = emptyList(),
     val callLines: List<String> = emptyList(),
     /** The MMS line per SIM ("not checked, the network no longer offers MMS", "access point reachable"). */
@@ -89,8 +90,8 @@ data class OwnerUi(
     val selfSmsLine: String? = null,
     /** Round 30: CarrierSettings's dataset installer as it last answered (serving, changes halted); null before the first look. */
     val dataset: io.github.open_carrier_data.check.owner.core.DatasetStatus? = null,
-    /** Round 29: the owner entered a token for automatic reports ([OwnerToken]); its value is never in the UI state. */
-    val tokenSet: Boolean = false,
+    /** Round 47 item 2: the report the person is reading, before the browser opens it; null otherwise. */
+    val reportDraft: IssueReport.Prefilled? = null,
 ) {
     /** Test now may start: system access, a SIM, nothing running, not paused. */
     val canTest: Boolean get() = gate?.canWrite == true && sims?.isNotEmpty() == true && stepsToGo == 0 && state.stop == null
@@ -144,7 +145,6 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
             apnCandidates = keys.mapValues { it.value.size },
             reportLines = withContext(Dispatchers.IO) { runCatching { reportLines(state, sims, keys) }.getOrDefault(emptyList()) },
             stepsToGo = OwnerScheduler.pending(run) + testNow,
-            tokenSet = withContext(Dispatchers.IO) { OwnerToken.isSet(context) },
         )
     }
 
@@ -410,34 +410,6 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
-    /** Round 29: stores the owner's fine-grained token for automatic reports, encrypted; never logged or shown. */
-    fun saveToken(text: String, done: (Boolean) -> Unit) = viewModelScope.launch {
-        val context = getApplication<Application>()
-        if (!OwnerTester.policy(store.read()).sendsWithToken) {
-            done(false)
-            return@launch
-        }
-        val problem = withContext(Dispatchers.IO) { OwnerToken.save(context, text) }
-        if (problem != null) {
-            say(problem)
-            done(false)
-            return@launch
-        }
-        store.update { it.copy(autoRefusedAtMs = null, autoLine = null).logged(System.currentTimeMillis(), "report", "the owner entered a token for automatic reports") }
-        done(true)
-        say("Token saved. Settled results are sent automatically")
-        OwnerScheduler.autoReport(context)
-        refresh()
-    }
-
-    /** Removes the token and its key; reports open in the browser again. */
-    fun removeToken() = viewModelScope.launch {
-        withContext(Dispatchers.IO) { OwnerToken.remove(getApplication()) }
-        store.update { it.copy(autoRefusedAtMs = null, autoLine = null).logged(System.currentTimeMillis(), "report", "the owner removed the token; reports open in the browser for him to submit") }
-        say("Token removed")
-        refresh()
-    }
-
     fun clearStop() = viewModelScope.launch {
         // The emergency data test's own stop stays until a judged round; Resume clears the app's flag and CarrierSettings's "changes halted".
         store.update { it.copy(stop = null).logged(System.currentTimeMillis(), "stop", "the owner tapped Resume") }
@@ -448,12 +420,13 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * The prefilled "OCD Android report" issue of the last finished test, or
-     * null when the privacy scan holds it back. A run recorded before the
-     * report cell existed is named with this phone as it is now, and with the
-     * SIM's SPN and GID1 prefix only when that SIM is still in.
+     * The prefilled "OCD Android report" issue of the last finished test,
+     * shown for the person to read, or [heldBack] when the privacy scan holds
+     * it back. A run recorded before the report cell existed is named with
+     * this phone as it is now, and with the SIM's SPN and GID1 prefix only
+     * when that SIM is still in.
      */
-    fun report(open: (IssueReport.Prefilled?) -> Unit) = viewModelScope.launch {
+    fun report(heldBack: () -> Unit) = viewModelScope.launch {
         val context = getApplication<Application>()
         val prefilled = withContext(Dispatchers.IO) {
             runCatching {
@@ -465,24 +438,30 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
                     val profile = bundle.profiles.firstOrNull { it.profileId == run.profileId }
                     OwnerData.reportCell(context, OwnerWorker.device(context), sim, profile, data.currentDir() != null, bundle)
                 } ?: return@runCatching null
-                // Round 29: the settled results of the run's SIM on this build ride along, as in the automatic report.
+                // Round 29: the settled results of the run's SIM on this build ride along.
                 val settled = runCatching { OwnerAutoReports.settled(context, store.read(), run.copy(cell = cell)) }.getOrDefault(emptyMap())
                 IssueReport.prefill(run, cell, OwnerData.callsTested(context), settled)
             }.getOrNull()
         }
-        if (prefilled != null) {
-            // The owner build's own trace of what it opened, for the owner's checks; the report holds no identifier.
-            val url = prefilled.url
-            val parts = url.chunked(LOG_CHUNK)
-            Log.i(REPORT_TAG, "report ${prefilled.hash}, URL ${url.length} characters in ${parts.size} parts")
-            parts.forEachIndexed { index, part -> Log.i(REPORT_TAG, "part ${index + 1}/${parts.size}: $part") }
-            // The hash also tells the owner's own report in OCD's observed/summary.json from others' reports.
-            store.update {
-                it.copy(reportsOpened = (it.reportsOpened - prefilled.hash + prefilled.hash).takeLast(OwnerState.MAX_OPENED))
-                    .logged(System.currentTimeMillis(), "report", "opened the prefilled OCD Android report ${prefilled.hash}; nothing is sent until the owner submits it")
-            }
+        if (prefilled != null) _ui.value = _ui.value.copy(reportDraft = prefilled) else heldBack()
+    }
+
+    fun closeReport() {
+        _ui.value = _ui.value.copy(reportDraft = null)
+    }
+
+    /** The person read [prefilled] and the browser opened it. Nothing is sent until they submit it there. */
+    fun reportOpened(prefilled: IssueReport.Prefilled) = viewModelScope.launch {
+        // The build's own trace of what it opened, for checks over adb; the report holds no identifier.
+        val url = prefilled.url
+        val parts = url.chunked(LOG_CHUNK)
+        Log.i(REPORT_TAG, "report ${prefilled.hash}, URL ${url.length} characters in ${parts.size} parts")
+        parts.forEachIndexed { index, part -> Log.i(REPORT_TAG, "part ${index + 1}/${parts.size}: $part") }
+        // The hash also tells this phone's own report in OCD's observed/summary.json from others' reports.
+        store.update {
+            it.copy(reportsOpened = (it.reportsOpened - prefilled.hash + prefilled.hash).takeLast(OwnerState.MAX_OPENED))
+                .logged(System.currentTimeMillis(), "report", "opened the prefilled OCD Android report ${prefilled.hash}; nothing is sent until the person submits it")
         }
-        open(prefilled)
     }
 
     companion object {
@@ -523,7 +502,9 @@ class OwnerActivity : ComponentActivity() {
             rebootProbe = viewModel::rebootProbe,
             clearStop = { viewModel.clearStop() },
             grantShizuku = { runCatching { Shizuku.requestPermission(4713) } },
-            sendReport = ::openIssue,
+            sendReport = ::readReport,
+            openReport = ::openIssue,
+            closeReport = viewModel::closeReport,
             setCallsOutLive = { viewModel.setCallsOutLive(it) },
             dryRunCallsOut = viewModel::dryRunCallsOut,
             setSelfSms = { viewModel.setSelfSms(it) },
@@ -531,8 +512,6 @@ class OwnerActivity : ComponentActivity() {
             setBalanceUssd = { viewModel.setBalanceUssd(it) },
             setCarrierSms = { viewModel.setCarrierSms(it) },
             setActiveTests = { viewModel.setActiveTests(it) },
-            saveToken = { text, done -> viewModel.saveToken(text, done) },
-            removeToken = { viewModel.removeToken() },
         )
         // The adb extras, once per start: never again when the activity is recreated (one may cost an SMS).
         if (savedInstanceState == null) extras(intent)
@@ -593,15 +572,17 @@ class OwnerActivity : ComponentActivity() {
         const val EXTRA_SELF_SMS_NOW = "self_sms_now"
     }
 
-    private fun openIssue() = viewModel.report { prefilled ->
-        if (prefilled == null) {
-            // The button waits for a finished test, so a missing report is the privacy check's or the data digest's.
-            android.widget.Toast.makeText(this, "Report held back: it may contain private data, or the test has no data digest", android.widget.Toast.LENGTH_LONG).show()
-            return@report
-        }
-        // Opens the prefilled form; the owner reads it and submits it himself. The app sends nothing.
+    // The button waits for a finished test, so a missing report is the privacy check's or the data digest's.
+    private fun readReport() = viewModel.report {
+        android.widget.Toast.makeText(this, ReportWords.HELD_BACK, android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    /** Opens the prefilled form; the person submits it there under their own login. The app sends nothing. */
+    private fun openIssue(prefilled: IssueReport.Prefilled) {
+        viewModel.closeReport()
         try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(prefilled.url)))
+            viewModel.reportOpened(prefilled)
             // The bot's comment gives the same hash for the same text.
             android.widget.Toast.makeText(this, "Report ${prefilled.hash.take(19)}…", android.widget.Toast.LENGTH_LONG).show()
         } catch (e: ActivityNotFoundException) {

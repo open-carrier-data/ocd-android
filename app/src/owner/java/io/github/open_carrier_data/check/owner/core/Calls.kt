@@ -545,10 +545,11 @@ object CallsOutPlan {
 }
 
 /**
- * "Re-tested by OCD" (round 26 rule change 9): set only from the owner's own
- * phones, from L2 or L3 measured by machine. It names the level, the method,
- * the build and the date, and it expires after 90 days. A "calls out" entry
- * always says "incoming not tested".
+ * What this phone's own calls showed (round 26 rule change 9; round 47, item 2:
+ * a local line, which no longer says "by OCD"): from L2 or L3 measured by
+ * machine on this phone. It names the level, the method, the build and the
+ * date, and it expires after 90 days. A "calls out" entry always says
+ * "incoming not tested".
  */
 @Serializable
 data class RetestedEntry(
@@ -570,8 +571,8 @@ data class RetestedEntry(
         val day = Instant.ofEpochMilli(atMs).atZone(zone).toLocalDate()
         val over = bearer.plain
         return when (level) {
-            CallsLevel.CALLS_OUT -> "re-tested by OCD: calls out over $over, incoming not tested (build $build, $day) (audio from packet counts)"
-            CallsLevel.WORKS -> "re-tested by OCD: works, calls both ways over $over (build $build, $day) (audio from packet counts)"
+            CallsLevel.CALLS_OUT -> "measured on this phone: calls out over $over, incoming not tested (build $build, $day) (audio from packet counts)"
+            CallsLevel.WORKS -> "measured on this phone: works, calls both ways over $over (build $build, $day) (audio from packet counts)"
         }
     }
 }
@@ -594,7 +595,7 @@ object Retested {
         if (incoming == null) out.method.wire else "${out.method.wire}+${incoming.method.wire}"
 }
 
-/** The state after one measured call: in the ledger, the provisional keeps it settles, and "re-tested by OCD". */
+/** The state after one measured call: in the ledger, the provisional keeps it settles, and [Retested]'s local line. */
 object CallLedger {
     /**
      * Adds [record] and returns the new state with the provisional keeps it

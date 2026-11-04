@@ -68,7 +68,6 @@ import io.github.open_carrier_data.check.owner.core.SafetyException
 import io.github.open_carrier_data.check.owner.core.SelfSms
 import io.github.open_carrier_data.check.owner.core.Settled
 import io.github.open_carrier_data.check.owner.core.Settlement
-import io.github.open_carrier_data.check.owner.core.SourceReview
 import io.github.open_carrier_data.check.owner.core.StageRequest
 import io.github.open_carrier_data.check.owner.core.StateStore
 import io.github.open_carrier_data.check.owner.core.TestCaps
@@ -352,12 +351,10 @@ object OwnerDatasetStep {
         }
         if (status.voiceLoss.hold) {
             notes += holdSplit(context, store, phone, client, status, present, testNow, deadline)
-            publish(context, store)
             return notes.joinToString("; ")
         }
         activate(context, store, phone, client, present)?.let { notes += it }
         notes += campaigns(context, store, phone, client, present, testNow, deadline)
-        publish(context, store)
         return notes.joinToString("; ").ifEmpty { "nothing to do" }
     }
 
@@ -511,11 +508,6 @@ object OwnerDatasetStep {
         val line = "install $id: ${view.state}" + (view.error?.let { " ($it${view.reason?.let { r -> ": $r" } ?: ""})" } ?: "") +
             (if (view.failedChecks.isNotEmpty()) "; failed checks: ${view.failedChecks.joinToString()}" else "") + DatasetJobs.left(f, activation).orEmpty()
         store.update { it.logged(System.currentTimeMillis(), "dataset", line).copy(datasetLine = line) }
-        // An APN shrink, a SIM that would lose rows or coupling: a source review (spec 12.3).
-        if (view.state == InstallState.REFUSED && view.error in setOf("apn_shrink", "sim_loses_internet", "sim_loses_ims", "apn_coupling_lost")) {
-            val review = SourceReview.install(view.error!!, view.reason ?: view.failedChecks.joinToString(), view.commit.ifEmpty { store.read().pulled?.commit.orEmpty() }, System.currentTimeMillis())
-            store.update { s -> if (s.reviewsSent.contains(review.key) || s.pendingReviews.any { it.key == review.key }) s else s.copy(pendingReviews = (s.pendingReviews + review).takeLast(SourceReview.MAX)) }
-        }
         return line
     }
 
@@ -551,10 +543,6 @@ object OwnerDatasetStep {
             val c = CampaignPlanner.start(UUID.randomUUID().toString().take(8), sim, view.commit, view.datasetDigest, changes, datasetA, now, device = device).copy(baseline = baselines[sim.subId])
             store.update { s -> s.copy(campaigns = s.campaigns.filterNot { it.subId == sim.subId } + c) }
             opened += "slot ${sim.slot + 1}: ${changes.size} changed value(s)${if (ch.profileBefore != ch.profileAfter) ", profile ${ch.profileBefore} -> ${ch.profileAfter}" else ""}${if (ch.x5Held.isNotEmpty()) ", ${ch.x5Held.size} off(s) held until tested" else ""}"
-            if (ch.couplingAfter == "mismatch" && ch.couplingBefore != "mismatch") {
-                val review = SourceReview.coupling(ch.profileAfter.orEmpty(), view.commit, now)
-                store.update { s -> if (s.reviewsSent.contains(review.key)) s else s.copy(pendingReviews = (s.pendingReviews + review).takeLast(SourceReview.MAX)) }
-            }
         }
         OwnerScheduler.voiceCheck(context)
         val text = "installed main ${view.commit.take(12)} (serving ${status.serving})" + if (opened.isEmpty()) "; no SIM in the phone changed" else "; tests: ${opened.joinToString()}"
@@ -592,9 +580,8 @@ object OwnerDatasetStep {
 
     /**
      * Puts the records of a settlement into CarrierSettings, which serves them on this phone in their
-     * exact cell, and (owner build only, SM11) queues them for main with the owner's token. Never a
-     * record for a key the ROM's device override sets ([device], round 31), and none on an IMS stack
-     * the tests are not calibrated on (SM8).
+     * exact cell; they stay on this phone (round 47, item 2). Never a record for a key the ROM's device
+     * override sets ([device], round 31), and none on an IMS stack the tests are not calibrated on (SM8).
      */
     fun putRecord(store: StateStore, client: DatasetClient, record: JsonObject, candidates: List<JsonElement>, type: String?, datasetA: Set<String>, device: Set<String> = emptySet()): String {
         val now = System.currentTimeMillis()
@@ -605,28 +592,14 @@ object OwnerDatasetStep {
             store.update { it.logged(now, "record", "not written (${MeasuredRecord.targetKey(record) ?: "record"}): $why") }
             return "record not written: $why"
         }
-        // A ROM build's record stays on this phone (SM11); it names no owner as its tester.
-        val local = if (OwnerTester.policy(state).sendsWithToken) record else JsonObject(record + ("tester" to JsonPrimitive("local")))
-        val text = MeasuredRecord.text(local)
-        val a = client.putRecord(text)
+        val a = client.putRecord(MeasuredRecord.text(record))
         val line = if (a.ok) {
-            // Only the owner's token writes measured records to main (SM11); a ROM build's records stay on this phone.
-            if (OwnerTester.policy(state).sendsWithToken) {
-                store.update { s -> s.copy(pendingRecords = (s.pendingRecords.filterNot { MeasuredRecord.recordKey(json.parseToJsonElement(it) as JsonObject) == MeasuredRecord.recordKey(record) } + text).takeLast(100)) }
-            }
             "record ${MeasuredRecord.recordKey(record)} ${MeasuredRecord.result(record)} for ${MeasuredRecord.targetKey(record) ?: "emergency data"}: ${a.str("effect") ?: "stored"}"
         } else {
             "record ${MeasuredRecord.recordKey(record)} refused by CarrierSettings: ${a.line}"
         }
         store.update { it.logged(now, "record", line) }
         return line
-    }
-
-    /** Sends pending records and source reviews with the owner's token, as its own work with a network; never in a ROM build (SM11). */
-    fun publish(context: Context, store: StateStore) {
-        val s = store.read()
-        if (!OwnerTester.policy(s).sendsWithToken) return
-        if (s.pendingRecords.isNotEmpty() || s.pendingReviews.isNotEmpty()) OwnerScheduler.autoReport(context)
     }
 
     /** A round 30 trial left by a crash: clear the slot's overrides, prove it, forget it. A trial still there after a reboot is a stop event. */
@@ -1233,8 +1206,6 @@ class TrialRunner(
                         commit, digest,
                     ),
                 )
-                val review = SourceReview.noValuePassed(explain.serving, s.key, s.failing, s.tried, commit, s.verdict.reason, now)
-                store.update { st -> if (st.reviewsSent.contains(review.key)) st else st.copy(pendingReviews = (st.pendingReviews + review).takeLast(SourceReview.MAX)) }
                 OwnerDatasetStep.putRecord(store, client, record, emptyList(), ctx?.type(s.key), ctx?.datasetA.orEmpty(), device)
             }
             // The split's pass is over the held build's bundle, not what serves: no pass record from it.

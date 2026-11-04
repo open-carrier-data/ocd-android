@@ -18,7 +18,7 @@ import javax.xml.parsers.DocumentBuilderFactory
 /**
  * OCD round 31: the build other ROMs ship (build type `rom`). It runs the owner build's tester code
  * under the ROM build's policy: the active tests wait for the person's opt-in (SM9), nothing is
- * sent by itself and no token is taken (SM11), and the emergency data test's restricted-network
+ * sent by itself (SM11), and the emergency data test's restricted-network
  * permission stays denied unless the ROM builder turns the test on (SM10).
  */
 class RomBuildTest {
@@ -48,10 +48,9 @@ class RomBuildTest {
     }
 
     @Test
-    fun `out of the box the active tests are off and nothing is sent`() {
+    fun `out of the box the active tests are off`() {
         val policy = OwnerTester.policy(OwnerState())
         assertFalse(policy.activeTests)
-        assertFalse(policy.sendsWithToken)
     }
 
     @Test

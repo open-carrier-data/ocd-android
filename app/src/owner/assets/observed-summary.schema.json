@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/open-carrier-data/open-carrier-data/main/schemas/observed-summary.schema.json",
   "title": "Open Carrier Data observed summary (observed/summary.json)",
-  "description": "Per device, carrier profile, software stack and entry: OCD Android reports of people's phones (every account but the owner's) counted as \"reported, not checked by OCD\" by result, \"contested\" where a counted report measured a clean failure, and the reports a noise filter holds. \"re-tested by OCD\" is always null here: the owner's phones' settled results are in observed/retested.json (schemas/observed-retested.schema.json, rule round 29). Built by tools/observed_reports.py from observed/reports/. Every entry is unverified. Nothing here changes an OCD value, a file under generated/ or a release, makes a phone skip its own test, or is a support claim.",
+  "description": "Per device, carrier profile, software stack and entry: OCD Android reports of people's phones (every account alike) counted as \"reported, not checked by OCD\" by result, \"contested\" where a counted report measured a clean failure, and the reports a noise filter holds. retested_by_ocd is no longer required and the app shows it nowhere; it stays a known key only because additionalProperties is false, so that the summary of today's main, which still carries it, is not refused (rule round 47, item 2). Built by tools/observed_reports.py from observed/reports/. Every entry is unverified. Nothing here changes an OCD value, a file under generated/ or a release, makes a phone skip its own test, or is a support claim.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "description", "verification", "statuses", "reports", "cells"],
@@ -13,7 +13,7 @@
     "statuses": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["reported", "contested", "retested_by_ocd"],
+      "required": ["reported", "contested"],
       "properties": {
         "reported": { "type": "string", "minLength": 1 },
         "contested": { "type": "string", "minLength": 1 },
@@ -46,7 +46,7 @@
     "cell": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["device", "carrier_profile", "mccmnc", "stack", "entry", "reported", "contested", "retested_by_ocd", "held", "verification"],
+      "required": ["device", "carrier_profile", "mccmnc", "stack", "entry", "reported", "contested", "held", "verification"],
       "properties": {
         "device": {
           "type": "object",
@@ -124,7 +124,7 @@
         },
         "retested_by_ocd": {
           "type": "null",
-          "description": "Always null here. The owner's phones' results are published as \"re-tested by OCD\" in observed/retested.json, a separate file (rule round 29); outside reports never set it."
+          "description": "Optional and always null: read only so that today's main is not refused. No account or list gives a result a stronger status (rule round 47, item 2)."
         },
         "held": { "type": "integer", "minimum": 0, "description": "Valid reports for this cell a noise filter holds; they do not count yet." },
         "verification": { "const": "unverified" }

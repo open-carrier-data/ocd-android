@@ -11,7 +11,6 @@ import io.github.open_carrier_data.check.owner.core.ApnRowKeys
 import io.github.open_carrier_data.check.owner.core.ApnSelection
 import io.github.open_carrier_data.check.owner.core.ApnSetCandidate
 import io.github.open_carrier_data.check.owner.core.ApnTrial
-import io.github.open_carrier_data.check.owner.core.ApnTrialReview
 import io.github.open_carrier_data.check.owner.core.ApnTrialVerdict
 import io.github.open_carrier_data.check.owner.core.BuildCell
 import io.github.open_carrier_data.check.owner.core.CandidateInput
@@ -288,11 +287,6 @@ class ApnCandidatesTest {
         assertFalse(ApnTrial.lookedAtRecently(listOf(tried), sim, "c2", LeadFailure.IMS, 2L))
         // The same data gives the same candidate ID.
         assertEquals(c.id, ApnCandidates.restoreLeftOut(input("open.40458.f0a31b354f9c", LeadRole.IMS)).single().id)
-        // A winner's source review names the scope and the operations, never a credential.
-        val d8 = ApnCandidates.restoreLeftOut(input("open.26220.40aaf702d9ce", LeadRole.INTERNET)).single()
-        val review = ApnTrialReview.of("open.26220.40aaf702d9ce", d8, LeadFailure.DATA_VALIDATION, "c".repeat(40), 1L)
-        assertTrue(review.title.startsWith("[source review] APN candidate passed"))
-        assertFalse(review.body, "mvno\"" in review.body || "password=" in review.body || "=mvno" in review.body)
     }
 
     @Test

@@ -32,13 +32,12 @@ import java.time.ZoneOffset
  *
  * Since OCD's round 29 a result of volte:on, vowifi:on or sms_over_ims:on can
  * carry `settled` ([Settled]): the level, bearer, method and day this phone
- * measured under rounds 26 to 28, with the ROM build in `device.build`. From
- * the owner's account the bot records those as "re-tested by OCD".
+ * measured under rounds 26 to 28, with the ROM build in `device.build`.
  *
- * The app opens the URL in the browser; the owner reads it and submits it
- * himself. With the owner's token ([AutoReport]) the owner build also sends
- * its settled results itself as an issue on the same form, through GitHub's
- * REST API; without one it sends nothing. The public repository's bot checks
+ * This is the only way a result leaves the phone, on every build and for every
+ * account (round 47, item 2): the person taps, reads the report ([ReportWords])
+ * and submits the form in the browser under their own GitHub login, which the
+ * app never holds. The app sends nothing itself. The public repository's bot checks
  * that the commit (or release) and every entry exist and records the report under
  * `observed/` as "reported, not checked by OCD": a report is a hint that
  * never moves an OCD value and never makes a phone skip its own test. It
@@ -110,14 +109,10 @@ object IssueReport {
         calls: List<CallsTested>,
         leaveOutApns: Int = 0,
         settled: Map<String, SettledLevel> = emptyMap(),
-        settledOnly: Boolean = false,
     ): JsonObject? {
         val sim = run.sim ?: return null
         if (!DIGEST.matches(cell.dataDigest)) return null
-        val (found, foundSkipped) = results(run, calls, settled)
-        // The automatic report carries only the settled results (round 29); the prefilled one carries every entry.
-        val all = if (settledOnly) found.filter { it.settled != null } else found
-        val skipped = if (settledOnly) 0 else foundSkipped
+        val (all, skipped) = results(run, calls, settled)
         val apnCount = all.count { it.entry.startsWith("apn:") }
         val drop = leaveOutApns.coerceAtMost(apnCount)
         val results = all.dropLast(drop)
@@ -251,40 +246,6 @@ object IssueReport {
 
     fun url(run: RunResult, cell: ReportCell, calls: List<CallsTested>): String? = prefill(run, cell, calls)?.url
 
-    /** An issue as the app sends it itself: the form's title and the body GitHub would write for it. */
-    data class Issue(val title: String, val body: String, val text: String) {
-        val hash: String get() = hash(text)
-    }
-
-    /**
-     * The automatic report (OCD round 29): only [settled]'s entries of [run], in the form's
-     * shape, or null without a settled result or when the privacy scan finds anything.
-     */
-    fun automatic(run: RunResult, cell: ReportCell, calls: List<CallsTested>, settled: Map<String, SettledLevel>): Issue? {
-        if (settled.isEmpty()) return null
-        val title = title(run, cell)
-        if (PrivacyScan.scanValue("title", title).isNotEmpty()) return null
-        val report = report(run, cell, calls, settled = settled, settledOnly = true) ?: return null
-        if (PrivacyScan.scan(report, hex = HEX_FIELDS).isNotEmpty()) return null
-        val text = text(report)
-        val body = body(text)
-        if (PrivacyScan.scanValue("body", body.replace(text, "")).isNotEmpty()) return null
-        return Issue(title, body, text)
-    }
-
-    /** The form's headings, as the public bot reads them (observed_reports.py REPORT_HEADING, PRIVACY_HEADING). */
-    const val REPORT_HEADING = "Report"
-    const val PRIVACY_HEADING = "Privacy check"
-
-    /**
-     * The issue body GitHub writes for the form: the report fenced as JSON under "Report", and
-     * the privacy box ticked under "Privacy check" with what the app checked, since nobody reads
-     * an automatic report before it is sent.
-     */
-    fun body(text: String): String =
-        "### $REPORT_HEADING\n\n```json\n$text\n```\n\n### $PRIVACY_HEADING\n\n" +
-            "- [X] Sent by the OCD Android owner build after its privacy scan; it holds none of the private values listed in SECURITY.md.\n"
-
     /** A fixed code, as the schema wants it: lower case letters, digits and underscores. */
     internal fun code(text: String): String {
         val clean = text.lowercase().replace(Regex("[^a-z0-9_]+"), "_").trim('_').take(64).trimEnd('_')
@@ -294,6 +255,28 @@ object IssueReport {
             else -> ("r_$clean").take(64)
         }
     }
+}
+
+/**
+ * The words around a report, one set for every build (round 47, item 2). The section says that nothing
+ * goes by itself and how to send a report; the form is what the person reads next to the report itself
+ * before the browser opens. OCD's public issue form says the same again above the prefilled report.
+ */
+object ReportWords {
+    const val SECTION = "Reports"
+    const val SECTION_TITLE = "Nothing is sent by itself"
+    const val SECTION_TEXT = "Results stay on this phone. To send one, tap Open report on GitHub, read the report, and submit the form that opens in your browser. " +
+        "It becomes a public issue under your own GitHub account. Without a GitHub account you can read the report but not send it"
+    const val BUTTON = "Open report on GitHub"
+    const val BUTTON_TEXT = "You read it first. Nothing is sent until you submit it"
+    const val FORM_TITLE = "Read this report"
+    const val FORM_TEXT = "This is everything the report says. The next step opens OCD's form in your browser with this report filled in, and nothing is sent until you submit it there. " +
+        "The issue is public, under your own GitHub account: anyone can link your GitHub name to the carrier in this report. This app never holds your login. " +
+        "If you delete the issue later, the report leaves OCD's current files at the next rebuild, but older versions stay in git history. " +
+        "A report reads as \"reported, not checked by OCD\" and changes nothing on any other phone"
+    const val FORM_OPEN = "Open on GitHub"
+    const val FORM_CANCEL = "Not now"
+    const val HELD_BACK = "Report held back: it may contain private data, or the test has no data digest"
 }
 
 /**
