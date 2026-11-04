@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.telephony.CarrierConfigManager
 import android.util.Log
 import io.github.open_carrier_data.check.BuildConfig
+import io.github.open_carrier_data.check.owner.core.WeekReports
 import io.github.open_carrier_data.check.owner.core.CallEvidence
 import io.github.open_carrier_data.check.owner.core.CallsOutDue
 import io.github.open_carrier_data.check.owner.core.Campaign
@@ -407,7 +408,7 @@ object OwnerDatasetStep {
         val second = a.str("voice_loss") == "stop"
         val now = System.currentTimeMillis()
         val line = "two real calls failed after new values for calls or SMS; the ROM's own data serves until Resume"
-        store.update { it.copy(realCallHoldDue = false, callWatches = emptyList(), heldByCalls = !second, stop = if (second) "voice_loss_stop" else "real_call_hold").logged(now, "voice_loss", line) }
+        store.update { it.copy(realCallHoldDue = false, callWatches = emptyList(), heldByCalls = !second, stop = if (second) "voice_loss_stop" else "real_call_hold", week = it.week.copy(callHoldAtMs = now)).logged(now, "voice_loss", line) }
         OwnerNotifications.notice(context, Notice("Calls could not go out", "Two calls failed after new carrier data, so the ROM's own data is back. Tap Resume to try the new data again.", failed = true, hold = true))
         return line
     }
@@ -601,6 +602,10 @@ object OwnerDatasetStep {
             // Round 47: an install that touched calls or SMS arms the real-call watch for this SIM.
             val armed = c
             if (armed.changes.any { it.cls in RealCallWatch.CLASSES }) store.update { s -> s.copy(callWatches = RealCallWatch.arm(s.callWatches, sim.key, armed.commit, now)) }
+            // Round 49: a call before this install holds no rung in a week report. A campaign that started earlier keeps its own moment.
+            if (armed.changes.any { it.cls == TestClass.VOICE || it.cls == TestClass.WIFI_CALLING } && store.read().week.voiceInstalls.none { it.sim.sameCard(sim.key) && it.commit == armed.commit }) {
+                store.update { s -> s.copy(week = WeekReports.voiceInstalled(s.week, sim.key, armed.commit, now)) }
+            }
             notes += TrialRunner(context, store, phone, client, sim, ctx, status, if (testNow) TrialRunner.OWNER_INTERRUPTS else TrialRunner.INTERRUPTS, deadline, tap = testNow).run(c, basis)
             // Round 47: an MMSC probe failure opens the MMS candidates only on the person's tap; by itself it opens nothing.
             if (testNow) mmsFailure(store, sim, now)?.let { notes += OwnerApnCandidates.afterFailure(context, store, phone, client, status, sim, it, tap = true) }

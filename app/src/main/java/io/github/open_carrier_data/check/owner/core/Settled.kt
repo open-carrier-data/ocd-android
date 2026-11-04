@@ -75,7 +75,7 @@ object Settled {
     }
 
     /** The newest clean measured failure on [bearer]: (level, the call, the reason code). */
-    private fun failure(mine: List<CallRecord>, bearer: ProvenBearer, zone: ZoneId): Triple<String, CallRecord, String>? {
+    internal fun failure(mine: List<CallRecord>, bearer: ProvenBearer, zone: ZoneId): Triple<String, CallRecord, String>? {
         val found = mutableListOf<Triple<String, CallRecord, String>>()
         mine.filter { it.direction == CallDirection.OUTGOING && CallLevels.callsOut(it).result == "failed" && Provisional.imsOn(it) == bearer }
             .maxByOrNull { it.atMs }?.let { found += Triple(L2, it, "calls_out_failed") }

@@ -181,7 +181,7 @@ object ImsReasonReader {
     private val direct = Executor { it.run() }
 
     /** registered: true/false/null (unreadable); imsReasonCode and sipResponseCode when the stack gave them. */
-    data class ImsReason(val registered: Boolean?, val imsReasonCode: Int?, val sipResponseCode: Int?)
+    data class ImsReason(val registered: Boolean?, val imsReasonCode: Int?, val sipResponseCode: Int?, val wifi: Boolean? = null)
 
     @SuppressLint("MissingPermission")
     suspend fun read(context: Context, subId: Int): ImsReason {
@@ -190,7 +190,9 @@ object ImsReasonReader {
         val done = CompletableDeferred<ImsReason>()
         val callback = object : android.telephony.ims.RegistrationManager.RegistrationCallback() {
             override fun onRegistered(attributes: android.telephony.ims.ImsRegistrationAttributes) {
-                done.complete(ImsReason(true, null, null))
+                // Round 49: which transport the callback itself reports.
+                val wifi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) attributes.transportType == android.telephony.AccessNetworkConstants.TRANSPORT_TYPE_WLAN else null
+                done.complete(ImsReason(true, null, null, wifi))
             }
 
             override fun onUnregistered(info: android.telephony.ims.ImsReasonInfo) {

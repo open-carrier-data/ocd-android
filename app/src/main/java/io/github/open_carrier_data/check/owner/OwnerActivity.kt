@@ -44,6 +44,8 @@ import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.ProfileAnswers
 import io.github.open_carrier_data.check.owner.core.QuietPlan
 import io.github.open_carrier_data.check.owner.core.SimView
+import io.github.open_carrier_data.check.owner.core.WeekReports
+import io.github.open_carrier_data.check.owner.core.WeekSwitch
 import io.github.open_carrier_data.check.owner.core.WifiCallingDetails
 import io.github.open_carrier_data.check.owner.core.update
 import io.github.open_carrier_data.check.ui.OcdCheckTheme
@@ -96,6 +98,10 @@ data class OwnerUi(
     /** Round 47 item 4: the picker next to that report: the carrier's closed list and the person's choice, kept for this report only. */
     val reportOffers: List<CarrierOffer> = emptyList(),
     val reportPlan: ReportPlan = ReportPlan.Unknown,
+    /** A privileged install in a ROM; a hand install never sends by itself and has no switch. */
+    val privileged: Boolean = false,
+    /** The ROM builder's switch: ask or off. */
+    val weekSwitch: WeekSwitch = WeekSwitch.OFF,
 ) {
     /** Test now may start: system access, a SIM, nothing running, not paused. */
     val canTest: Boolean get() = gate?.canWrite == true && sims?.isNotEmpty() == true && stepsToGo == 0 && state.stop == null
@@ -132,6 +138,8 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = _ui.value.copy(
             dataset = dataset,
             loaded = true,
+            privileged = OwnerAccess.privilegedGranted(context),
+            weekSwitch = OwnerWeekReport.switch(context),
             gate = gate,
             state = state,
             sims = sims,
@@ -388,6 +396,12 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    /** Round 48: off stops the send at once from this screen and clears what waits. A yes is only given on the question's screen. */
+    fun stopWeek() = viewModelScope.launch {
+        store.updateLocked { it.copy(week = WeekReports.off(it.week)).logged(System.currentTimeMillis(), WeekReports.LOG_KIND, "the person turned the weekly summary off; the buffer is cleared") }
+        refresh()
+    }
+
     fun clearStop() = viewModelScope.launch {
         // The emergency data test's own stop stays until a judged round; Resume clears the app's flag and CarrierSettings's "changes halted".
         store.update { it.copy(stop = null).logged(System.currentTimeMillis(), "stop", "the owner tapped Resume") }
@@ -494,6 +508,8 @@ class OwnerActivity : ComponentActivity() {
             selfSmsNow = { viewModel.selfSmsNow() },
             balanceNow = { viewModel.balanceNow() },
             setCarrierSms = { viewModel.setCarrierSms(it) },
+            askWeek = { startActivity(Intent(this, WeekQuestionActivity::class.java)) },
+            stopWeek = { viewModel.stopWeek() },
         )
         // The adb extras, once per start: never again when the activity is recreated (one may cost an SMS).
         if (savedInstanceState == null) extras(intent)

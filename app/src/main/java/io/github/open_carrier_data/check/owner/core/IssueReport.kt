@@ -34,10 +34,10 @@ import java.time.ZoneOffset
  * carry `settled` ([Settled]): the level, bearer, method and day this phone
  * measured under rounds 26 to 28, with the ROM build in `device.build`.
  *
- * This is the only way a result leaves the phone, on every build and for every
- * account (round 47, item 2): the person taps, reads the report ([ReportWords])
- * and submits the form in the browser under their own GitHub login, which the
- * app never holds. The app sends nothing itself. The public repository's bot checks
+ * The person taps, reads the report ([ReportWords]) and submits the form in the
+ * browser under their own GitHub login, which the app never holds (round 47,
+ * item 2). The only other way a result leaves is the closed week report after
+ * the person's yes ([WeekReports], round 48). The public repository's bot checks
  * that the commit (or release) and every entry exist and records the report under
  * `observed/` as "reported, not checked by OCD": a report is a hint that
  * never moves an OCD value and never makes a phone skip its own test. It
@@ -261,14 +261,14 @@ object IssueReport {
 }
 
 /**
- * The words around a report, one set for every build (round 47, item 2). The section says that nothing
- * goes by itself and how to send a report; the form is what the person reads next to the report itself
+ * The words around a report, one set for every build (round 47, item 2). The section says what stays on the
+ * phone and how to send a report; the form is what the person reads next to the report itself
  * before the browser opens. OCD's public issue form says the same again above the prefilled report.
  */
 object ReportWords {
     const val SECTION = "Reports"
-    const val SECTION_TITLE = "Nothing is sent by itself"
-    const val SECTION_TEXT = "Results stay on this phone. To send one, tap Open report on GitHub, read the report, and submit the form that opens in your browser. " +
+    const val SECTION_TITLE = "Reports you send yourself"
+    const val SECTION_TEXT = "Apart from the weekly summary, if you said yes to it, results stay on this phone. To send one, tap Open report on GitHub, read the report, and submit the form that opens in your browser. " +
         "It becomes a public issue under your own GitHub account. Without a GitHub account you can read the report but not send it"
     const val BUTTON = "Open report on GitHub"
     const val BUTTON_TEXT = "You read it first. Nothing is sent until you submit it"

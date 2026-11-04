@@ -22,6 +22,8 @@ import androidx.work.workDataOf
 import io.github.open_carrier_data.check.core.CallTargets
 import io.github.open_carrier_data.check.core.CallTargetsFile
 import io.github.open_carrier_data.check.core.CallState
+import io.github.open_carrier_data.check.core.PreciseCallState
+import io.github.open_carrier_data.check.core.ProvenBearer
 import io.github.open_carrier_data.check.core.CallWatch
 import io.github.open_carrier_data.check.core.RegistryParser
 import io.github.open_carrier_data.check.core.SimSlot
@@ -31,15 +33,21 @@ import io.github.open_carrier_data.check.owner.core.CallLevels
 import io.github.open_carrier_data.check.owner.core.CallMethod
 import io.github.open_carrier_data.check.owner.core.CallRecord
 import io.github.open_carrier_data.check.owner.core.MailboxGuard
+import io.github.open_carrier_data.check.owner.core.NoCallChecks
 import io.github.open_carrier_data.check.owner.core.OwnerFeature
 import io.github.open_carrier_data.check.owner.core.OwnerState
 import io.github.open_carrier_data.check.owner.core.PointerLedger
+import io.github.open_carrier_data.check.owner.core.QosDump
+import io.github.open_carrier_data.check.owner.core.QosFact
+import io.github.open_carrier_data.check.owner.core.QosRadio
 import io.github.open_carrier_data.check.owner.core.SimKey
 import io.github.open_carrier_data.check.owner.core.TrialRefusal
 import io.github.open_carrier_data.check.owner.core.ImsStack
 import io.github.open_carrier_data.check.owner.core.provisionalSettled
 import io.github.open_carrier_data.check.owner.core.update
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -222,6 +230,12 @@ class CallWatchService : Service() {
         val slots = sims.mapNotNull { SimSlot.of(it.slot) }.ifEmpty { listOfNotNull(SimSlot.of(0)) }
         val watches = slots.associateWith { CallWatch() }
         val started = SystemClock.elapsedRealtime()
+        // Round 49: local only, read as the call starts; the week report drops a call from roaming.
+        val roaming = QuietReader.roaming(context)
+        val rom = OwnerBasis.current(context, FileStateStore(context).read()).rom
+        val wantRadio = NoCallChecks.radioWanted(FileStateStore(context).read().noCall.radio, rom)
+        var activeSince: Long? = null
+        var radioRead: Deferred<QosRadio?>? = null
         var idleRun = 0
         var sawCall = false
         var emergency = false
@@ -233,8 +247,13 @@ class CallWatchService : Service() {
                 val sample = text?.let { RegistryParser.parse(it.lineSequence(), slot, mailboxes)?.call?.copy(atMs = now) }
                 watch.add(sample)
                 if (sample?.state != null && sample.state != CallState.IDLE) anyCall = true
+                if (sample?.foreground == PreciseCallState.ACTIVE && activeSince == null) activeSince = now
             }
             if (SystemBinders.call(SystemBinders.telecom(context), SystemBinders.TELECOM, "isInEmergencyCall") == true) emergency = true
+            // Round 49: one read of the radio fact per build, once the call has been up long enough to hold a dedicated bearer.
+            if (wantRadio && radioRead == null && !emergency && activeSince?.let { now - it >= NoCallChecks.RADIO_READ_AFTER_MS } == true) {
+                radioRead = scope.async { QosDump.radio(phone.telephonyText()) }
+            }
             if (anyCall) {
                 sawCall = true
                 idleRun = 0
@@ -263,12 +282,18 @@ class CallWatchService : Service() {
             val summary = watch.summary()
             if (summary.callsSeen == 0 && !summary.emergencySeen) continue
             val sim = sims.firstOrNull { it.slot == slot.index }
-            val record = CallRecord.of(summary, System.currentTimeMillis(), slot.index, sim?.key, CallMethod.REAL_CALL, build, stack)
+            val record = CallRecord.of(summary, System.currentTimeMillis(), slot.index, sim?.key, CallMethod.REAL_CALL, build, stack, roaming = roaming)
             if (record == null) {
                 store.update { it.logged(System.currentTimeMillis(), "call_watch", "a call was not recorded: an emergency call showed") }
                 continue
             }
             recordCall(context, record)
+            // The fact counts only from a real call proven on LTE, on this one call.
+            if (record.bearer?.counted == true && record.bearer.bearer == ProvenBearer.LTE && !record.severalCalls) {
+                runCatching { radioRead?.await() }.getOrNull()?.let { radio ->
+                    store.update { it.copy(noCall = it.noCall.copy(radio = QosFact(rom, radio))) }
+                }
+            }
         }
     }
 

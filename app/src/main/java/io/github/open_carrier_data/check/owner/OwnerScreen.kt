@@ -106,6 +106,7 @@ import io.github.open_carrier_data.check.owner.core.Ladders
 import io.github.open_carrier_data.check.owner.core.LeftoversLine
 import io.github.open_carrier_data.check.owner.core.PointerLedger
 import io.github.open_carrier_data.check.owner.core.MobileDataLine
+import io.github.open_carrier_data.check.owner.core.NoCallWords
 import io.github.open_carrier_data.check.owner.core.CarrierOffer
 import io.github.open_carrier_data.check.owner.core.ReportPlan
 import io.github.open_carrier_data.check.owner.core.ReportWords
@@ -115,6 +116,9 @@ import io.github.open_carrier_data.check.owner.core.Status
 import io.github.open_carrier_data.check.owner.core.StatusKind
 import io.github.open_carrier_data.check.owner.core.StatusSentence
 import io.github.open_carrier_data.check.owner.core.Tone
+import io.github.open_carrier_data.check.owner.core.WeekSwitch
+import io.github.open_carrier_data.check.owner.core.sameCard
+import io.github.open_carrier_data.check.owner.core.WeekWords
 import java.text.DateFormat
 import java.time.ZoneId
 import java.util.Date
@@ -147,6 +151,9 @@ class OwnerActions(
     val closeReport: () -> Unit = {},
     /** Round 47 item 4: the offer (null is unknown) and the booked options picked next to the report. */
     val pickPlan: (String?, Set<String>) -> Unit = { _, _ -> },
+    /** Round 48: turning the switch on opens the question, where the yes is given; off stops at once. */
+    val askWeek: () -> Unit = {},
+    val stopWeek: () -> Unit = {},
 )
 
 /** The options under "When you tap Test now" in Details. Off values run at night on their own. */
@@ -322,7 +329,7 @@ private fun OwnerContent(ui: OwnerUi, options: TestOptions, setOptions: (TestOpt
     Column(Modifier.padding(horizontal = 16.dp)) {
         StatusHeader(ui, sims, status, options, actions)
         // Round 47: the one static line that says what the app does without being asked; there is no first-run notice.
-        Summary(io.github.open_carrier_data.check.owner.core.OnItsOwn.LINE, Modifier.padding(top = 8.dp))
+        Summary(io.github.open_carrier_data.check.owner.core.OnItsOwn.line(ui.privileged, ui.weekSwitch), Modifier.padding(top = 8.dp))
     }
 
     // Before the first check and without a SIM there is nothing to show yet: the headline and Test now are the page.
@@ -352,6 +359,8 @@ private fun OwnerContent(ui: OwnerUi, options: TestOptions, setOptions: (TestOpt
         }
     }
     CarrierData(ui, actions)
+    WeekSection(ui, actions)
+    NoCallSection(ui)
 
     var open by rememberSaveable { mutableStateOf(false) }
     Spacer(Modifier.padding(top = 24.dp))
@@ -416,6 +425,55 @@ private fun StatusHeader(ui: OwnerUi, sims: List<SimView>?, status: Status, opti
                 running -> OutlinedButton(onClick = actions.stopTest) { Text("Stop test") }
                 paused -> Button(onClick = actions.clearStop) { Text("Resume changes") }
                 else -> if (test) FilledTonalButton(onClick = { actions.testNow(options) }) { Text("Test now") }
+            }
+        }
+    }
+}
+
+/**
+ * Round 48: the send switch and the last week report in full, on the entry itself and never behind Details, so stopping
+ * takes no more than saying yes did. A hand install sends nothing by itself and has neither.
+ */
+@Composable
+private fun WeekSection(ui: OwnerUi, actions: OwnerActions) {
+    if (!ui.privileged) return
+    val week = ui.state.week
+    SectionTitle(WeekWords.SECTION)
+    Group {
+        if (ui.weekSwitch == WeekSwitch.ASK) {
+            item { SwitchRow(WeekWords.SWITCH, if (week.yes) WeekWords.ON else WeekWords.OFF, week.yes) { if (it) actions.askWeek() else actions.stopWeek() } }
+        } else {
+            item { Summary(WeekWords.BUILD_OFF, Modifier.padding(16.dp)) }
+        }
+        item {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Title(WeekWords.LAST)
+                val last = week.last
+                Summary(if (last == null) WeekWords.NONE else WeekWords.line(last))
+                Summary(WeekWords.MEANS)
+                last?.reports?.forEach { report ->
+                    SelectionContainer { Text(report, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+                }
+            }
+        }
+    }
+}
+
+/** Round 49: the checks without a call. They live on this screen only, and an unknown result shows nothing. */
+@Composable
+private fun NoCallSection(ui: OwnerUi) {
+    if (!ui.privileged) return
+    val context = LocalContext.current
+    val format = remember { android.text.format.DateFormat.getMediumDateFormat(context) }
+    val two = ui.sims.orEmpty().size > 1
+    val lines = NoCallWords.lines(ui.state.noCall, { key -> ui.sims.orEmpty().firstOrNull { it.key.sameCard(key) }?.name.takeIf { two } }) { format.format(Date(it)) }
+    if (lines.isEmpty()) return
+    SectionTitle(NoCallWords.SECTION)
+    Group {
+        item {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                lines.forEach { Summary(it) }
+                Summary(NoCallWords.NOTE)
             }
         }
     }
@@ -807,7 +865,7 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
         item { ToolRow("Remove leftovers", LeftoversLine.of(state.log, System.currentTimeMillis(), zone) { dateFormat.format(Date(it)) }, onClick = actions.cleanup) }
     }
 
-    // Round 47 item 2, the same on every build: nothing leaves by itself. A report is one the person reads and submits under their own login.
+    // Round 47 item 2, the same on every build: a report is one the person reads and submits under their own login.
     SectionTitle(ReportWords.SECTION)
     Group {
         item {

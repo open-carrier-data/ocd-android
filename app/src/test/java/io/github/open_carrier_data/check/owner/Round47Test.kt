@@ -129,7 +129,7 @@ class Round47Test {
         assertTrue(screen.contains("It may cost a call on your tariff and may mark a new message as heard"))
         assertTrue(screen.contains("One hidden SMS to your own number; it may cost an SMS"))
         assertTrue(screen.contains("The last one did not come back, so the stored number may be wrong and this SMS could reach someone else"))
-        assertTrue(screen.contains("OnItsOwn.LINE"))
+        assertTrue(screen.contains("OnItsOwn.line("))
         assertTrue("no calls" in OnItsOwn.LINE && "tap" in OnItsOwn.LINE)
         assertFalse("works" in OnItsOwn.LINE)
     }

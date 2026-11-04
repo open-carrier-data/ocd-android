@@ -19,8 +19,8 @@ android {
         // Every build that goes onto a phone raises it (OlderAppTest): Android drops an adb-installed update of a
         // system app only for a system copy with a higher versionCode, so a ROM's newer copy of the same code
         // stays shadowed by the older update (the S20 on 2026-10-28: round 30's e5240ec ran instead of round 31's 64e559c).
-        versionCode = 19
-        versionName = "0.5.0"
+        versionCode = 20
+        versionName = "0.6.0"
     }
 
     // Round 46 and 47: one build and one package for everyone. Release stays unsigned: every ROM builder signs it with his

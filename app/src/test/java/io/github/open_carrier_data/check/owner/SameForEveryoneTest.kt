@@ -17,8 +17,8 @@ import java.io.File
 import java.nio.file.Files
 
 /**
- * OCD rule round 47, item 2: no token at all, and results reach OCD the same way for everyone. The only way a
- * result leaves is the person's tap on the prefilled closed report, under their own GitHub login.
+ * OCD rule round 47, item 2: no token at all, and results reach OCD the same way for everyone: the person's tap on the
+ * prefilled closed report, under their own GitHub login. Round 48 adds the week report after a yes, with no credential either.
  */
 class SameForEveryoneTest {
     private val ownerRoot = listOf(File("src/main"), File("app/src/main")).first { it.isDirectory }
@@ -67,9 +67,10 @@ class SameForEveryoneTest {
     }
 
     @Test
-    fun `the words say that nothing goes by itself, how to send a report, and what the person publishes`() {
-        assertEquals("Nothing is sent by itself", ReportWords.SECTION_TITLE)
-        assertTrue(ReportWords.SECTION_TEXT, "Results stay on this phone" in ReportWords.SECTION_TEXT)
+    fun `the words say what stays on the phone, how to send a report, and what the person publishes`() {
+        // Round 48: a yes to the weekly summary sends by itself, so the section no longer says nothing does.
+        assertEquals("Reports you send yourself", ReportWords.SECTION_TITLE)
+        assertTrue(ReportWords.SECTION_TEXT, "Apart from the weekly summary, if you said yes to it, results stay on this phone" in ReportWords.SECTION_TEXT)
         assertTrue(ReportWords.SECTION_TEXT, "tap ${ReportWords.BUTTON}" in ReportWords.SECTION_TEXT)
         assertTrue(ReportWords.SECTION_TEXT, "a public issue under your own GitHub account" in ReportWords.SECTION_TEXT)
         assertTrue(ReportWords.SECTION_TEXT, "Without a GitHub account you can read the report but not send it" in ReportWords.SECTION_TEXT)

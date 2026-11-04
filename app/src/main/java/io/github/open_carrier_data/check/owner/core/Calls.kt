@@ -97,6 +97,8 @@ data class CallRecord(
     val stack: String,
     /** Old records only: the call ran muted (true) or at its lowest volume; a tapped call has normal sound (null). */
     val muted: Boolean? = null,
+    /** Rounds 48 and 49: the phone was roaming when the call started; null: not read. Local only; only a false counts toward a week report. */
+    val roaming: Boolean? = null,
 ) {
     companion object {
         const val MAX = 120
@@ -104,7 +106,7 @@ data class CallRecord(
         /** A record of a watched call; null when the watch saw an emergency call (nothing is kept of it). */
         fun of(
             summary: CallWatchSummary, atMs: Long, slot: Int, sim: SimKey?, method: CallMethod, build: String, stack: String,
-            hungUpByPhone: Boolean? = null, muted: Boolean? = null,
+            hungUpByPhone: Boolean? = null, muted: Boolean? = null, roaming: Boolean? = null,
         ): CallRecord? {
             if (summary.emergencySeen) return null
             val kind = kindOf(method, summary.direction)
@@ -133,6 +135,7 @@ data class CallRecord(
                 build = build,
                 stack = stack,
                 muted = muted,
+                roaming = roaming,
             )
         }
 

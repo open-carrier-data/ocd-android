@@ -63,6 +63,8 @@ class OwnerManifestTest {
         // The activity itself is not exported; a hand install's icon is the alias, and a ROM's system app has none.
         assertTrue("io.github.open_carrier_data.check.ui.MainActivity" !in exported)
         assertEquals("android.permission.MODIFY_PHONE_STATE", exported["io.github.open_carrier_data.check.owner.OwnerActivity"])
+        // Round 48: the one-time question, guarded as the entry is, so a ROM's setup screen can open it and nothing else can.
+        assertEquals("android.permission.MODIFY_PHONE_STATE", exported["io.github.open_carrier_data.check.owner.WeekQuestionActivity"])
         assertEquals("android.permission.INTERACT_ACROSS_USERS_FULL", exported["rikka.shizuku.ShizukuProvider"])
         // Settings' summary provider: guarded by the calling uid in code, as call() checks no manifest permission.
         assertEquals("", exported["io.github.open_carrier_data.check.owner.OwnerSettingsProvider"])
@@ -81,7 +83,7 @@ class OwnerManifestTest {
         assertEquals(listOf("io.github.open_carrier_data.check.owner.PhoneStateReceiver"), directBoot)
         assertEquals(
             setOf(
-                "io.github.open_carrier_data.check.owner.OwnerActivity", "rikka.shizuku.ShizukuProvider",
+                "io.github.open_carrier_data.check.owner.OwnerActivity", "io.github.open_carrier_data.check.owner.WeekQuestionActivity", "rikka.shizuku.ShizukuProvider",
                 "io.github.open_carrier_data.check.owner.OwnerSettingsProvider", "io.github.open_carrier_data.check.owner.OwnerBootReceiver",
                 "io.github.open_carrier_data.check.owner.PhoneStateReceiver", "io.github.open_carrier_data.check.owner.SelfSmsReceiver",
                 "io.github.open_carrier_data.check.owner.CarrierSmsReceiver",

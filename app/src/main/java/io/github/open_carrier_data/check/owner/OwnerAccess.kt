@@ -248,6 +248,7 @@ class PrivilegedPhone(context: Context) : AppSidePhone(context) {
     /** "Permission Denial" when PACKAGE_USAGE_STATS (or its app-op) is missing: then unreadable. */
     override suspend fun iwlanServiceText() = local(OwnerCommand.IWLAN_DUMP)?.takeIf { "IwlanDataServiceProvider" in it }
     override suspend fun qnsText() = local(OwnerCommand.QNS_DUMP)?.takeIf { "QualifiedNetworksServiceImpl" in it }
+    override suspend fun imsStackText() = local(OwnerCommand.IMS_STACK_DUMP)?.takeIf { "### Carrier Configs" in it }
 
     /** The SMS service's dump (DUMP): its inbound SMS handler's records say how each SMS came in ([InboundSms]). */
     override suspend fun smsText() = local(OwnerCommand.SMS_DUMP)?.takeIf { "SmsManager for subId" in it }
