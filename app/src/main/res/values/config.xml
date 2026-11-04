@@ -8,4 +8,10 @@
         for OCD's public repository only, no identifier, falling back closed.
     -->
     <bool name="ocd_daily_data_check">false</bool>
+    <!--
+        OCD's rule round 48: the weekly summary. "ask" lets the app ask the person once; a ROM builder may overlay "off",
+        and then the app never asks and never sends. There is no on: only the person's own yes starts a send, and anything
+        but "ask" reads as off.
+    -->
+    <string name="ocd_week_report" translatable="false">ask</string>
 </resources>

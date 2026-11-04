@@ -112,6 +112,9 @@ object MainCheck {
         is ManifestRead.Fresh -> read.hint
     }
 
+    /** The phone holds what main names now. Round 48: the week report's "last pulled main". */
+    fun holds(read: ManifestRead, m: MainCheckState, held: HeldSet): Boolean = hintOf(read, m)?.let(held::has) == true
+
     /**
      * Whether the read starts a pull. A difference does, whatever the answer's code: a 304 whose stored digests
      * the phone does not hold is retried too. [pullAgain] (CarrierSettings asks) lifts only the daily limit on a

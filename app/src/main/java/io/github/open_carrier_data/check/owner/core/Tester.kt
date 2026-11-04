@@ -64,10 +64,18 @@ object StackCalibration {
         if (counted(stackId)) null else "not counted: the tests are not calibrated on the IMS stack ${stackId?.ifEmpty { null } ?: "this phone runs"}; only passive evidence counts"
 }
 
-/** Round 47: the static line on the first screen, what the app does without being asked. */
+/**
+ * Round 47: the static line on the first screen, what the app does without being asked. Round 48: it says what the app
+ * does on this install, the send included wherever it can happen. A hand install sends nothing by itself, and neither
+ * does a ROM whose builder turned the question off, so those keep [LINE].
+ */
 object OnItsOwn {
     const val LINE = "On its own, this app only reads the phone's state, installs new carrier data and repairs a failure it measured. " +
         "It makes no calls and sends no SMS unless you tap for it."
+    const val ROM_LINE = "On its own, this app only reads the phone's state, installs new carrier data, repairs a failure it measured and, if you said yes, " +
+        "sends OCD one weekly summary. It makes no calls and sends no SMS unless you tap for it."
+
+    fun line(privileged: Boolean, switch: WeekSwitch): String = if (privileged && switch == WeekSwitch.ASK) ROM_LINE else LINE
 }
 
 /**

@@ -151,10 +151,11 @@ class GuardTest {
             val hit = banned.find(file.readText())
             assertNull("${file.name}: ${hit?.value}", hit)
         }
-        // Round 47, item 2: no HTTP POST and no credential in the whole owner build. A report leaves only through the person's browser.
-        assertEquals(emptyList<String>(), ownerSources.filter { "\"POST\"" in it.readText() }.map { it.name })
+        // Round 47, item 2: no credential in the whole owner build. Round 48: one HTTP POST, the week report to the fixed relay.
+        assertEquals(listOf("OwnerWeekReport.kt"), ownerSources.filter { "\"POST\"" in it.readText() }.map { it.name })
+        assertEquals(listOf("OwnerWeekReport.kt"), ownerSources.filter { Regex("\\bdoOutput\\b").containsMatchIn(it.readText()) }.map { it.name })
         for (file in ownerSources) {
-            val hit = Regex("\"Authorization\"|github_pat_|\\bdoOutput\\b|\"Bearer ").find(file.readText())
+            val hit = Regex("\"Authorization\"|github_pat_|\"Bearer ").find(file.readText())
             assertNull("${file.name}: ${hit?.value}", hit)
         }
         val senders = ownerSources.filter { "sendDataMessage" in it.readText() }

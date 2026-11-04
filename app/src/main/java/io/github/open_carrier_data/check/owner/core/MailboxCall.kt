@@ -295,7 +295,7 @@ class MailboxCaller(
             return MailboxOutcome("aborted", "emergency")
         }
         val summary = watch.summary()
-        val record = CallRecord.of(summary, placedAt, sim.slot, sim.key, CallMethod.MAILBOX_CALL, build, stack, hungUpByPhone = hungUpByPhone)
+        val record = CallRecord.of(summary, placedAt, sim.slot, sim.key, CallMethod.MAILBOX_CALL, build, stack, hungUpByPhone = hungUpByPhone, roaming = false)
             ?: return MailboxOutcome("aborted", "emergency")
         val check = CallLevels.callsOut(record)
         // A call cut short (another call rang, the charger was pulled) measured nothing: not counted, never failed.

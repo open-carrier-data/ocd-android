@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OCD week report, OCD rule round 48. Closed: the relay refuses anything else whole.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "week", "app_version", "device", "carrier", "results"],
+  "properties": {
+    "schema": { "const": "ocd-week-report" },
+    "schema_version": { "const": 1 },
+    "week": { "type": "string", "pattern": "^[0-9]{4}-W(0[1-9]|[1-4][0-9]|5[0-3])$" },
+    "app_version": { "type": "string", "pattern": "^[0-9]{1,3}\\.[0-9]{1,3}$" },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "rom_family", "android_major", "ims_stack"],
+      "properties": {
+        "model": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "rom_family": { "enum": ["stock", "lineageos", "other"] },
+        "android_major": { "type": "integer", "minimum": 10, "maximum": 99 },
+        "ims_stack": { "enum": ["phh_ims", "samsung_ims", "aosp_imsstack", "other", "not_known"] }
+      }
+    },
+    "carrier": {
+      "anyOf": [
+        { "type": "string", "pattern": "^open\\.[0-9]{5,6}\\.[0-9a-f]{12}$" },
+        { "type": "string", "pattern": "^[0-9]{5,6}$" }
+      ]
+    },
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entry", "result"],
+        "properties": {
+          "entry": {
+            "type": "string",
+            "pattern": "^((volte|vowifi|sms_over_ims|video_calling|vonr):(on|off)|apn:[a-z0-9][a-z0-9._-]{0,62}\\|[a-z_]{1,16}(,[a-z_]{1,16}){0,15}\\|(IP|IPV6|IPV4V6|PPP|NON-IP|UNSTRUCTURED)?)$"
+          },
+          "result": { "enum": ["works", "signed_in", "service_off", "not_possible", "failed"] }
+        }
+      }
+    }
+  }
+}

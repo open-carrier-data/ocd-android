@@ -72,6 +72,8 @@ import io.github.open_carrier_data.check.owner.core.RunResult
 import io.github.open_carrier_data.check.owner.core.RunSummary
 import io.github.open_carrier_data.check.owner.core.SafetyException
 import io.github.open_carrier_data.check.owner.core.TesterPolicy
+import io.github.open_carrier_data.check.owner.core.WeekClock
+import io.github.open_carrier_data.check.owner.core.WeekReports
 import io.github.open_carrier_data.check.owner.core.recorded
 import io.github.open_carrier_data.check.owner.core.update
 import kotlinx.coroutines.CancellationException
@@ -271,6 +273,14 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     private suspend fun mainCheck(store: FileStateStore): Result {
         val context = applicationContext
         if (OwnerScheduler.runActive(context)) return Result.success()
+        // Round 48: the weekly step rides on this job on every ROM. A failure of it never holds up the data.
+        try {
+            OwnerWeekReport.step(context, store)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            quietLog(store, WeekReports.LOG_KIND, "the weekly step failed: ${e.javaClass.simpleName}")
+        }
         val status = OwnerDatasetStep.status(context, store)
         if (!status.skipsUnchanged) return Result.success()
         val now = System.currentTimeMillis()
@@ -309,6 +319,7 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 val before = store.read()
                 val settled = MainCheck.settled(before.mainCheck, read, held(before), pull, now)
                 if (settled != before.mainCheck) store.update { it.copy(mainCheck = settled) }
+                if (MainCheck.holds(read, before.mainCheck, held(before))) data.heldMain(now)
             }
         }
         val after = store.read()
@@ -396,6 +407,12 @@ class OwnerWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 return Result.success()
             }
             store.update { s -> checks.flatMap { QuietPlan.observedRecords(it, basis.forSim(dataKeys, it.sim.key), now) }.fold(s) { acc, r -> acc.recorded(r) } }
+            // Round 48: after a yes, what this look saw goes into the week's buffer. Results measured while roaming are dropped; unknown counts as roaming.
+            if (look.roaming == false && state.week.yes) {
+                store.update { s ->
+                    s.copy(week = checks.fold(s.week) { w, c -> WeekReports.noted(w, WeekClock.of(now), c.sim.key, WeekReports.carrier(Matcher.resolve(bundle, c.sim.identity).mostSpecific?.profileId, c.sim.identity.mccmnc), WeekReports.passive(c)) })
+                }
+            }
             if (!checkOnly) {
                 if (checks.any { it.missingKeeps.isNotEmpty() }) OwnerScheduler.cleanup(context, policy = ExistingWorkPolicy.KEEP)
                 // Round 26: provisional keeps reverted when the night ended without calls out or 7 days passed without incoming.

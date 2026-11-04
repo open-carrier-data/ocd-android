@@ -9,7 +9,7 @@ import io.github.open_carrier_data.check.owner.core.SettledLevel
 import java.io.File
 import java.security.KeyStore
 
-/** What a report names from this phone. The app posts nothing itself: a report goes only when the person submits it (round 47, item 2). */
+/** What a report names from this phone. A report goes only when the person submits it (round 47, item 2). */
 object OwnerAutoReports {
     /** The ROM build as reports name it (OCD round 29): Build.ID and the build's UTC time in seconds. */
     fun publicBuild(): String? = Settled.publicBuild(Build.ID.orEmpty(), Build.TIME)

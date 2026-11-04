@@ -314,6 +314,8 @@ data class OwnerState(
     val diagnoses: List<DiagnosisMark> = emptyList(),
     /** Round 48: the hold notice last shown, until the hold ends ([HoldNotices]). */
     val holdNotice: HoldMark? = null,
+    /** Round 48: the person's answer, the week's buffers and the last week report ([WeekReports]). */
+    val week: WeekState = WeekState(),
 ) {
     val anyLive: Boolean get() = overrides.isNotEmpty() || apns.isNotEmpty() || wifiOffSinceMs != null
 

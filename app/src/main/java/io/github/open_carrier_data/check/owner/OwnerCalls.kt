@@ -263,7 +263,7 @@ class CallWatchService : Service() {
             val summary = watch.summary()
             if (summary.callsSeen == 0 && !summary.emergencySeen) continue
             val sim = sims.firstOrNull { it.slot == slot.index }
-            val record = CallRecord.of(summary, System.currentTimeMillis(), slot.index, sim?.key, CallMethod.REAL_CALL, build, stack)
+            val record = CallRecord.of(summary, System.currentTimeMillis(), slot.index, sim?.key, CallMethod.REAL_CALL, build, stack, roaming = QuietReader.roaming(context))
             if (record == null) {
                 store.update { it.logged(System.currentTimeMillis(), "call_watch", "a call was not recorded: an emergency call showed") }
                 continue

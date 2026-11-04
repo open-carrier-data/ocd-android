@@ -5,12 +5,13 @@
     <!--
         One build for every install (rule rounds 46 and 47). READ_PHONE_STATE, ACCESS_NETWORK_STATE and INTERNET are
         all a hand install uses: it holds no privileged permission and stays passive plus the checks the person taps.
+        INTERNET reaches GitHub's hosts, and on a ROM install after the person's yes one fixed relay host (round 48).
         The rest of the list works only in a ROM that ships the app as a privileged system app.
     -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- The notice when calls were lost or the person must act. -->
+    <!-- The notice when calls were lost or the person must act, and the one-time question of the weekly summary. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The leftover cleanup and the background job after a boot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -189,6 +190,17 @@
                 android:name="com.android.settings.keyhint"
                 android:value="open_carrier_data" />
         </activity>
+
+        <!--
+            Round 48: the one-time question, the only place a yes can be given. Its own notification and the entry's switch
+            open it; a ROM's setup screen may too, and the notification is then skipped. Guarded as the entry is. No extra
+            answers it: only a tap on Yes on this screen does.
+        -->
+        <activity
+            android:name=".owner.WeekQuestionActivity"
+            android:exported="true"
+            android:label="@string/owner_tools"
+            android:permission="android.permission.MODIFY_PHONE_STATE" />
 
         <!-- The entry's live summary; answers only the system, root, the shell and the app. -->
         <provider

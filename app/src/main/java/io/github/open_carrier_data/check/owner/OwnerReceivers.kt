@@ -21,11 +21,13 @@ import io.github.open_carrier_data.check.owner.core.HoldNotices
 import io.github.open_carrier_data.check.owner.core.Notice
 import io.github.open_carrier_data.check.owner.core.Notices
 import io.github.open_carrier_data.check.owner.core.StatusSentence
+import io.github.open_carrier_data.check.owner.core.WeekQuestion
 
 /**
- * Round 47: an automatic run shows nothing, and there is no ongoing notification. A notification comes
+ * Round 47: an automatic run shows nothing, and there is no ongoing notification, and the weekly send shows nothing either. A notification comes
  * only where calls were lost or the person must act: the voice-loss and stop events with Resume, on an ID
- * of their own and back once a day until the hold ends (round 48, [HoldNotices]). The way back is disabling this app in Android's Settings, after which CarrierSettings serves the ROM's own data
+ * of their own and back once a day until the hold ends (round 48, [HoldNotices]), and the one-time question
+ * of item 2. The way back is disabling this app in Android's Settings, after which CarrierSettings serves the ROM's own data
  * without it.
  */
 object OwnerNotifications {
@@ -37,6 +39,7 @@ object OwnerNotifications {
     private const val LIVE_ID = 4712
     private const val EVENT_ID = 4714
     private const val HOLD_ID = 4715
+    private const val QUESTION_ID = 4716
 
     private fun allowed(context: Context): Boolean =
         Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -85,6 +88,31 @@ object OwnerNotifications {
         store.updateLocked { it.copy(holdNotice = HoldMark(notice.title, notice.text, System.currentTimeMillis())) }
     }
 
+    /** Round 48: the one-time question. False when notifications are blocked: nothing is asked then. */
+    @SuppressLint("MissingPermission")
+    fun question(context: Context): Boolean {
+        if (!allowed(context) || !NotificationManagerCompat.from(context).areNotificationsEnabled()) return false
+        channels(context)
+        if (context.getSystemService(NotificationManager::class.java)?.getNotificationChannel(EVENTS_CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE) return false
+        val open = PendingIntent.getActivity(
+            context, 1, Intent(context, WeekQuestionActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = NotificationCompat.Builder(context, EVENTS_CHANNEL)
+            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            .setContentTitle(WeekQuestion.TITLE)
+            .setContentText(WeekQuestion.BODY.take(120))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(WeekQuestion.BODY))
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build()
+        return runCatching { NotificationManagerCompat.from(context).notify(QUESTION_ID, notification) }.isSuccess
+    }
+
+    /** The question's screen is open: the notification has done its work. */
+    fun questionShown(context: Context) {
+        NotificationManagerCompat.from(context).cancel(QUESTION_ID)
+    }
+
     @SuppressLint("MissingPermission")
     private fun post(context: Context, id: Int, notice: Notice) {
         val notification = NotificationCompat.Builder(context, EVENTS_CHANNEL)
@@ -121,8 +149,11 @@ class OwnerBootReceiver : BroadcastReceiver() {
                 io.github.open_carrier_data.check.OwnerHook.hideLauncher(context)
                 OwnerScheduler.cleanup(context)
                 OwnerScheduler.ensureQuiet(context, FileStateStore(context).read().scheduleOn)
+                OwnerWeekReport.askOnce(context)
             }
             CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED -> {
+                // A SIM's config loads after the boot broadcast: this is when the first boot with a SIM has one.
+                OwnerWeekReport.askOnce(context)
                 val state = FileStateStore(context).read()
                 // KEEP: a pass already queued or running is never cancelled by its own writes.
                 if (state.anyLive) OwnerScheduler.cleanup(context, policy = ExistingWorkPolicy.KEEP)

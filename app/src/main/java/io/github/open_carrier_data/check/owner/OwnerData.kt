@@ -39,8 +39,10 @@ import io.github.open_carrier_data.check.owner.core.MainPin
 import io.github.open_carrier_data.check.owner.core.MainPull
 import io.github.open_carrier_data.check.owner.core.ManifestRead
 import io.github.open_carrier_data.check.owner.core.NotFound
+import io.github.open_carrier_data.check.owner.core.Relay
 import io.github.open_carrier_data.check.owner.core.SchemaRefused
 import io.github.open_carrier_data.check.owner.core.Validation
+import io.github.open_carrier_data.check.owner.core.WeekReports
 import io.github.open_carrier_data.check.owner.core.SimView
 import io.github.open_carrier_data.check.owner.core.StateStore
 import io.github.open_carrier_data.check.owner.core.update
@@ -120,7 +122,7 @@ class FileStateStore(context: Context) : StateStore {
         @Volatile
         private var cached: Cached? = null
         const val TRACE_TAG = "OcdCheckCalls"
-        private val TRACED = setOf("calls_out", "call_watch", "provisional", "self_sms", "mms", "balance")
+        private val TRACED = setOf("calls_out", "call_watch", "provisional", "self_sms", "mms", "balance", WeekReports.LOG_KIND)
 
         /** Round 42's per-slot lines (the verdict, the probe ladder, W1): classes and plain words only, no identifier. */
         private val TRACED_PREFIXES = listOf("diagnosis:", "probe:", "epdg:")
@@ -238,6 +240,7 @@ class OwnerData(private val context: Context, private val store: StateStore) {
             partial.deleteRecursively()
             throw e
         }
+        if (result !is MainPull.Kept) heldMain(now)
         val line = when (result) {
             is MainPull.Current -> {
                 partial.deleteRecursively()
@@ -304,6 +307,17 @@ class OwnerData(private val context: Context, private val store: StateStore) {
         } catch (e: NotFound) {
             ManifestRead.Fresh(null, null)
         }
+    }
+
+    /** Round 48: the phone holds main's newest data as of [nowMs]; at most one write a day. */
+    fun heldMain(nowMs: Long) {
+        val week = store.read().week
+        if (WeekReports.mainHeld(week, nowMs) !== week) store.update { it.copy(week = WeekReports.mainHeld(it.week, nowMs)) }
+    }
+
+    /** Round 48: main's stop-only flag, read by the weekly step. Anything but a clear true is closed. */
+    suspend fun relayOpen(): Boolean = withContext(Dispatchers.IO) {
+        runCatching { Relay.open(get(Relay.FLAG_URL, Relay.MAX_FLAG_BYTES).decodeToString()) }.getOrDefault(false)
     }
 
     /** The pull's GET (GitHub's hosts only, no identifier), for the APN candidates' reads of the installed commit. */
