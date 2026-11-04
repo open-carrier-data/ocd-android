@@ -290,6 +290,8 @@ class CallWatchService : Service() {
                 next.provisionalSettled().logged(now, "call_watch", CallLevels.line(record, ZoneId.systemDefault()))
             }
             OwnerScheduler.dropKeeps(context, reverts)
+            // Round 47: the second failed real call after a change of calls or SMS: the hold, at once, under the Guard's refusals.
+            if (store.read().realCallHoldDue) OwnerScheduler.dataset(context)
         }
     }
 }

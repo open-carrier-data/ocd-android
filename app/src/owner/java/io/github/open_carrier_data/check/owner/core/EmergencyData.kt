@@ -1,6 +1,11 @@
 package io.github.open_carrier_data.check.owner.core
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -202,6 +207,17 @@ object EmergencyData {
         i.honorRetryTimer != false -> "shouldHonorRetryTimerForEmergencyNetworkRequest is not false on this build"
         i.emergencyTransport != "WWAN" -> "the preferred transport for emergency is not cellular"
         else -> null
+    }
+
+    /**
+     * Round 47: the served local emergency_default_won records in a `list_records` answer. They no longer lapse, so a
+     * builder's manual run is what ends one: the row comes back and is tested again.
+     */
+    fun defaultWonKeys(records: JsonElement?): List<String> = (records as? JsonArray).orEmpty().mapNotNull { entry ->
+        val o = entry as? JsonObject ?: return@mapNotNull null
+        val record = (o["record"] as? JsonObject) ?: return@mapNotNull null
+        val local = (o["origin"] as? JsonPrimitive)?.contentOrNull == "local" && (o["state"] as? JsonPrimitive)?.contentOrNull == "served"
+        MeasuredRecord.recordKey(record).takeIf { local && MeasuredRecord.result(record) == RecordResult.EMERGENCY_DEFAULT_WON.wire }
     }
 
     /** One attempt's class (the ruling's verdicts). */

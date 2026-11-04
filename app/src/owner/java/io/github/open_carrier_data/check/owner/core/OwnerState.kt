@@ -252,6 +252,12 @@ data class OwnerState(
     val provisional: List<ProvisionalKeep> = emptyList(),
     /** What this phone's own measured calls showed, 90 days each ([Retested]). */
     val retested: List<RetestedEntry> = emptyList(),
+    /** Round 47: the real-call watch, armed per SIM after an install that touched calls or SMS ([RealCallWatch]). */
+    val callWatches: List<CallWatchArm> = emptyList(),
+    /** Two real calls failed: the dataset step asks for the hold as soon as the Guard's refusals allow. */
+    val realCallHoldDue: Boolean = false,
+    /** The hold in place came from the watch: no split runs on it, and Resume releases it. */
+    val heldByCalls: Boolean = false,
     /** The MMS access point checks per SIM ([MmsProbe]); never an MMS. */
     val mms: List<MmsCheck> = emptyList(),
     /** The data SMS the person tapped for, to the phone's own number (it may cost an SMS). */

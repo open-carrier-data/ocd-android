@@ -66,6 +66,7 @@ import io.github.open_carrier_data.check.owner.core.RecordTarget
 import io.github.open_carrier_data.check.owner.core.RecordValue
 import io.github.open_carrier_data.check.owner.core.Refusal
 import io.github.open_carrier_data.check.owner.core.SafetyException
+import io.github.open_carrier_data.check.owner.core.RealCallWatch
 import io.github.open_carrier_data.check.owner.core.SelfSms
 import io.github.open_carrier_data.check.owner.core.Sm7Kinds
 import io.github.open_carrier_data.check.owner.core.Settled
@@ -257,6 +258,9 @@ object OwnerDatasetStep {
     /** New trials start only within this of a run's start: a worker has about 10 minutes, and a trial takes up to about 4. */
     const val TRIALS_START_WITHIN_MS = 5 * 60_000L
 
+    /** The hold after two failed real calls tries again this soon while a Guard refusal holds. */
+    const val HOLD_RETRY_MS = 10 * 60_000L
+
     fun client(context: Context): DatasetClient = ProviderDataset(context)
 
     fun fetchedBy(): String = "${BuildConfig.APPLICATION_ID} ${BuildConfig.VERSION_NAME}"
@@ -338,6 +342,7 @@ object OwnerDatasetStep {
         declareTester(store, client, status)?.let { notes += it; status = status(context, store) }
         // A second loss under the same values (round 31): CarrierSettings serves the build's dataset and refuses changes until Resume.
         voiceLossStop(context, store, status)?.let { return (notes + it).joinToString("; ") }
+        realCallHold(context, store, phone, client, status, present)?.let { return (notes + it).joinToString("; ") }
         // The voice-loss trigger, always on (but not while a stop event halts tests and changes).
         if (store.read().stop == null) for (sim in present) voiceLoss(context, store, phone, client, status, sim)?.let { return (notes + it).joinToString("; ") }
         val state = store.read()
@@ -376,6 +381,34 @@ object OwnerDatasetStep {
         val a = client.setTester(false, "no dialled test runs by itself on any phone")
         val line = "tester declared off: ${if (a.ok) "SM7 ${if (a.bool("sm7") == true) "applies" else "does not apply"}" else a.line}"
         store.update { it.copy(testerDeclared = io.github.open_carrier_data.check.owner.core.TesterDeclaration(false, now)).logged(now, "tester", line) }
+        return line
+    }
+
+    /**
+     * Round 47 ([RealCallWatch]): two real calls failed after an install that touched calls or SMS. The hold goes in
+     * directly, with no candidates and no measured failure, as soon as the Guard's refusals allow. It ends on Resume, and a
+     * second hit under the same values reaches CarrierSettings's own stop.
+     */
+    private suspend fun realCallHold(context: Context, store: StateStore, phone: OwnerPhone, client: DatasetClient, status: DatasetStatus, sims: List<OwnerSim>): String? {
+        if (!store.read().realCallHoldDue) return null
+        if (!status.servingInstalled) {
+            store.update { it.copy(realCallHoldDue = false) }
+            return null
+        }
+        ownerBlock(store, phone, sims)?.let { why ->
+            OwnerScheduler.dataset(context, delayMs = HOLD_RETRY_MS)
+            return "the hold after two failed calls waits: $why"
+        }
+        val a = client.voiceLossHold("two real calls failed after new values for calls or SMS")
+        if (!a.ok) {
+            OwnerScheduler.dataset(context, delayMs = HOLD_RETRY_MS)
+            return "the hold after two failed calls waits: ${a.line}"
+        }
+        val second = a.str("voice_loss") == "stop"
+        val now = System.currentTimeMillis()
+        val line = "two real calls failed after new values for calls or SMS; the ROM's own data serves until Resume"
+        store.update { it.copy(realCallHoldDue = false, callWatches = emptyList(), heldByCalls = !second, stop = if (second) "voice_loss_stop" else "real_call_hold").logged(now, "voice_loss", line) }
+        OwnerNotifications.notice(context, Notice("Calls could not go out", "Two calls failed after new carrier data, so the ROM's own data is back. Tap Resume to try the new data again.", failed = true))
         return line
     }
 
@@ -565,6 +598,9 @@ object OwnerDatasetStep {
                 c = CampaignPlanner.start(UUID.randomUUID().toString().take(8), sim, status.installed?.commit.orEmpty(), status.installed?.datasetDigest.orEmpty(), emptyList(), ctx?.datasetA.orEmpty(), now, why)
                 store.update { s -> s.copy(campaigns = s.campaigns.filterNot { it.subId == sim.subId } + c) }
             }
+            // Round 47: an install that touched calls or SMS arms the real-call watch for this SIM.
+            val armed = c
+            if (armed.changes.any { it.cls in RealCallWatch.CLASSES }) store.update { s -> s.copy(callWatches = RealCallWatch.arm(s.callWatches, sim.key, armed.commit, now)) }
             notes += TrialRunner(context, store, phone, client, sim, ctx, status, if (testNow) TrialRunner.OWNER_INTERRUPTS else TrialRunner.INTERRUPTS, deadline, tap = testNow).run(c, basis)
             // Round 47: an MMSC probe failure opens the MMS candidates only on the person's tap; by itself it opens nothing.
             if (testNow) mmsFailure(store, sim, now)?.let { notes += OwnerApnCandidates.afterFailure(context, store, phone, client, status, sim, it, tap = true) }
@@ -732,6 +768,8 @@ object OwnerDatasetStep {
         val notes = mutableListOf<String>()
         if (!status.round31) return listOf("the build's dataset is held by this round 30 ROM until a newer ROM build")
         // Round 47: the split runs only on the person's tap, because it could break voice again on a phone that just recovered.
+        // The watch's hold never splits: registration cannot judge it, and the split would put the bad values back.
+        if (store.read().heldByCalls) return listOf("the build's dataset stays held until you tap Resume")
         val passive = StackCalibration.notCounted(status.build.imsStackId) ?: if (!testNow) "the split needs a tap on Test now" else null
         if (passive != null) return listOf("the build's dataset stays held: no split ($passive)")
         val ctx = DatasetContext.load(context, store.read().pulled)
@@ -787,7 +825,13 @@ object OwnerDatasetStep {
 
     /** Resume after a stop event: the app's own flag and CarrierSettings's "changes halted". */
     fun resume(context: Context, store: StateStore): String {
-        val a = client(context).resume()
+        val client = client(context)
+        val a = client.resume()
+        // Round 47: the watch's hold ends on this tap; the newest data serves again, and a second hit reaches the stop.
+        if (store.read().heldByCalls) {
+            client.voiceLossRelease("no_failing_value", "the person tapped Resume")
+            store.update { it.copy(heldByCalls = false) }
+        }
         val line = if (a.ok || a.error == DataAnswer.ABSENT) "changes resumed" else "CarrierSettings did not resume: ${a.line}"
         store.update { it.logged(System.currentTimeMillis(), "resume", line) }
         status(context, store)
