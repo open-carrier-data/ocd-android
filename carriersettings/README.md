@@ -18,7 +18,7 @@ The app is the dataset's only writer, through `content://com.android.carriersett
 
 This folder moved here in one commit from the owner's ROM tree for the Galaxy S20: **vendor/extra `main` at `64c73cbf1698c8eed5b55d057287d308dc32acff`** (the cut): round 32's APN candidate trials (`cfa8ee1`) on top of `131caf9`, and `Engine.update` no longer `internal` (see [Soong and Gradle](#soong-and-gradle-in-one-repository)). The first cut, `cfa8ee1`, is tag `carriersettings/v1.0.0`. No history came with it.
 
-[`cut.json`](cut.json) lists every file with its git blob at the cut, and `check_cut.py` (run in CI) holds the folder to it: 35 files are byte for byte the cut's. The rest:
+[`cut.json`](cut.json) lists every file with its git blob at the cut, and `check_cut.py` (run in CI) holds the folder to it: 27 files are byte for byte the cut's. The rest:
 
 | File | Change | Why |
 |---|---|---|
@@ -29,10 +29,11 @@ This folder moved here in one commit from the owner's ROM tree for the Galaxy S2
 | `ocd/test/run.sh` | runs the contract test, and since `carriersettings/v1.1.0` the golden vectors | round 37's writer-to-provider contract; rule round 45 |
 | `ocd/src/.../ocd/ServingIndex.kt`, `ocd/test/src/BundleTest.kt` | the serving index carries each profile's sources (schema `ocd-index/2`); the test that the index, the streamed baked files and the dataset serve the same bundle | `carriersettings/v1.0.2`: without the sources no group A read admitted a profile's own value from the index (see [Tags](#tags)) |
 | `ocd/src/.../ocd/Matcher.kt`, `OcdAndroid.kt`, `Serving.kt`, `ocd/test/src/VectorsTest.kt` (comment), added `ocd/test/src/GoldenVectorsTest.kt` | OCD's resolution order: Android's weights, read for carrier-ID selectors from the phone's carrier ID table (`content://carrier_id/all`), then the written tie rule, instead of specificity and ID | `carriersettings/v1.1.0`, OCD rule round 45, item 3 (see [Tags](#tags)) |
+| `ocd/src/.../ocd/Engine.kt`, `Guard.kt`, `Protocol.kt`, `Serving.kt`, `State.kt`, `ocd/test/src/ApnTest.kt`, `BundleTest.kt`, `CandidateTest.kt`, `EngineTest.kt`, `ProtocolContractTest.kt` | protocol 4: a SIM whose served values and APN rows an activation leaves unchanged gets no notify and no proof, and `emergency_default_won` and `winner_after_failure` records do not lapse; they end with the data, the cell or a new record of the same key | rule round 47, items 3 and 1 |
 | added | `ocd/test/src/ProtocolContractTest.kt`, `check_cut.py`, `check_path_independent.sh`, `cut.json`, this README | |
 | moved | `sepolicy/lineageos/platform_app.te` is vendor/extra's `sepolicy/private/platform_app.te` | LineageOS only, added only by a LineageOS build |
 
-The manifest, the resources, the Telephony overlay, the protos and the permission files are unchanged, and so are the sources (`ocd/src`) apart from `ServingIndex.kt` since `carriersettings/v1.0.2` and `Matcher.kt`, `OcdAndroid.kt` and `Serving.kt` since `carriersettings/v1.1.0`.
+The manifest, the resources, the Telephony overlay, the protos and the permission files are unchanged, and so are the sources (`ocd/src`) apart from `ServingIndex.kt` since `carriersettings/v1.0.2` `Matcher.kt`, `OcdAndroid.kt` and `Serving.kt` since `carriersettings/v1.1.0`, and `Engine.kt`, `Guard.kt`, `Protocol.kt`, `Serving.kt` and `State.kt` since rule round 47.
 
 These stay in the ROM tree, because they belong to the ROM or the device:
 - the baked dataset and the build record (`ocd-carriersettings.json`);

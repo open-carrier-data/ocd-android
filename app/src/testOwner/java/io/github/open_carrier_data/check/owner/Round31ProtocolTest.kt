@@ -98,7 +98,7 @@ class Round31ProtocolTest {
         assertFalse(old.round31)
         assertFalse(old.voiceLoss.hold)
         assertFalse(old.emergencyTestOn)
-        assertFalse(DatasetStatus.parse(answer("""{"ok":true,"protocol":4}"""), 1).available)
+        assertFalse(DatasetStatus.parse(answer("""{"ok":true,"protocol":5}"""), 1).available)
         assertFalse(DatasetStatus.parse(answer("""{"ok":true,"protocol":1}"""), 1).available)
         // Every round 31 call of the absent client answers absent.
         val absent = DatasetClient.Absent

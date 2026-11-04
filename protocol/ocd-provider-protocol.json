@@ -1,8 +1,8 @@
 {
   "schema": "ocd-provider-protocol/1",
   "about": "The writer-to-provider protocol between OCD Android (app/, the writer) and OcdCarrierSettingsDataset (carriersettings/, the provider): content://com.android.carriersettings.ocddata, method calls only. Both sides' tests read this file and the vectors (OCD rule round 37, item 6); a change to one side fails until this file and the other side match.",
-  "protocol": 3,
-  "app_reads_protocols": [2, 3],
+  "protocol": 4,
+  "app_reads_protocols": [2, 3, 4],
   "authority": "com.android.carriersettings.ocddata",
   "apn_authority": "com.android.carriersettings.ocdapn",
   "permission": "com.android.carriersettings.permission.WRITE_OCD_DATASET",
@@ -65,5 +65,5 @@
     "installed", "already_installed", "superseded", "cancelled", "apn_not_confirmed", "reload_not_proven", "apn_rollback_failed",
     "interrupted", "in_place", "restored", "kept", "restore_failed", "waiting"
   ],
-  "status_vectors": ["vectors/status-3-installed.json", "vectors/status-3-held.json"]
+  "status_vectors": ["vectors/status-3-installed.json", "vectors/status-3-held.json", "vectors/status-4-installed.json"]
 }

@@ -252,6 +252,24 @@ class BundleTest {
         assertEquals(1944, build(tchibo, local = listOf(forked), cell = null).values["maxImageHeight"])
     }
 
+    /** Round 47, item 1: a winner outlives valid_until, an ordinary measured record does not; another cell ends both. */
+    @Test
+    fun aWinnerDoesNotLapseAndAnOrdinaryRecordDoes() {
+        fun past(result: String?, model: String = "SM-G981B", line: String = "24.0") = record(
+            Fixture.record(
+                kind = "measured", key = "maxImageHeight", value = 1000, carrier = mapOf("scope" to "profile", "profile_id" to "open.26207.78040a3afcc4"),
+                validUntil = "2026-10-01", lastMeasured = "2026-07-01", result = result, model = model, line = line,
+            ),
+        )
+        assertEquals(1000, build(tchibo, local = listOf(past("winner_after_failure"))).values["maxImageHeight"])
+        assertEquals(1000, build(tchibo, local = listOf(past("winner_after_failure")), today = "2036-01-01").values["maxImageHeight"])
+        assertEquals(1944, build(tchibo, local = listOf(past("works"))).values["maxImageHeight"])
+        assertEquals(1944, build(tchibo, local = listOf(past(null))).values["maxImageHeight"])
+        assertEquals(1944, build(tchibo, local = listOf(past("winner_after_failure", model = "SM-G980F"))).values["maxImageHeight"])
+        assertEquals(1944, build(tchibo, local = listOf(past("winner_after_failure", line = "23.0"))).values["maxImageHeight"])
+        assertEquals(1944, build(tchibo, local = listOf(past("winner_after_failure")), cell = Fixture.CELL.copy(stackId = "phh_ims")).values["maxImageHeight"])
+    }
+
     @Test
     fun noCarrierLessRecordIsServed() {
         // A measured record with carrier scope all (round 30's step 5) and the configured_device kind end.

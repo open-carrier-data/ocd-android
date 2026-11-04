@@ -53,6 +53,16 @@ class ProtocolContractTest {
         assertEquals(int(spec["max_answer_chars"]), Protocol.MAX_ANSWER_CHARS)
     }
 
+    /** Round 47: the app reads the old protocols too, and each it reads back to 3 has a status vector. */
+    @Test
+    fun theVectorsCoverTheProtocolsTheAppReads() {
+        val reads = list(spec["app_reads_protocols"]).map { int(it) }
+        assertTrue("the app reads this protocol", Protocol.VERSION in reads)
+        assertTrue("protocol 3 ROMs stay readable", 3 in reads)
+        val vectors = strings(spec["status_vectors"]).map { int(obj(Json.parse(File(repo, "protocol/$it").readText()))["protocol"]) }.toSet()
+        assertEquals(setOf(3, Protocol.VERSION), vectors)
+    }
+
     @Test
     fun methodSets() {
         assertEquals("the owner app's methods", names("owner"), Protocol.OWNER_METHODS)

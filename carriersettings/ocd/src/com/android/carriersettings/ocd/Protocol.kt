@@ -23,8 +23,12 @@ object Protocol {
      * default emergency APN test are new. Round 32's APN candidate methods are additive and keep
      * protocol 3: an app that knows 3 and not them gets `unknown_method` from an older build, and
      * an OCD app 0.4.2 reads no protocol above 3 (it would stop handing data over).
+     *
+     * Round 47, protocol 4: no new method or status member. An activation that leaves a SIM's
+     * served values and APN rows unchanged records the commit and neither notifies nor proves that
+     * SIM, so the app may pull as often as main moves; on protocol 3 it keeps the daily pull.
      */
-    const val VERSION = 3
+    const val VERSION = 4
 
     // Methods (6.3).
     const val STATUS = "status"

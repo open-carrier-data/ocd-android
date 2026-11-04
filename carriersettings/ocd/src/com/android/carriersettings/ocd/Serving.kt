@@ -208,7 +208,17 @@ object BundleBuilder {
         return byKey.values.sortedWith { a, b -> compareBytes(a.key, b.key) }
     }
 
-    fun expired(r: Record, today: String): Boolean = r.measured && r.validUntil != null && today > r.validUntil
+    /**
+     * Round 47, item 1 fix 6: nothing renews these two any more (no automatic test), and a lapse
+     * would bring back a row that failed or a value that broke voice with no test behind it. They
+     * end with the data ([Engine]'s endedRecords), the cell ([BuildCell.matches]) or a new record
+     * of the same key; `valid_until` stays because [Record.parse] requires it.
+     */
+    private val NO_LAPSE = setOf("emergency_default_won", "winner_after_failure")
+
+    fun noLapse(r: Record): Boolean = r.result in NO_LAPSE
+
+    fun expired(r: Record, today: String): Boolean = r.measured && r.validUntil != null && today > r.validUntil && !noLapse(r)
 
     /**
      * A record that may be served on this phone at all: a measured record (round 31: no

@@ -107,6 +107,29 @@ class ApnTest {
         assertEquals(emptySet<String>(), ApnLogic.omits(listOf(won, omit), null, "2026-10-25", keys))
     }
 
+    /** Round 47, item 1: nothing renews these two, so they outlive valid_until; any other record does not. */
+    @Test
+    fun theDefaultWonAndAWinnerOmitDoNotLapse() {
+        val doc = ApnXml.parse(Fixture.xml())
+        val sos = doc.rows.first { it.attrs["apn"] == "sos" }.rowKey
+        val mtb = doc.rows.first { it.attrs["apn"] == "mtb.example" }.rowKey
+        fun rec(json: Map<String, Any?>) = Record.parse(Json.parse(Json.write(json)), "t") { _, _ -> error("no value") }
+        fun omit(type: String, row: String, result: String?, model: String = "SM-G981B") = rec(
+            Fixture.record(
+                kind = "measured", key = "", value = null, valueKind = "none", target = linkedMapOf<String, Any?>("type" to type, "row_key" to row).apply { if (type == "apn") put("op", "omit") },
+                result = result, carrier = mapOf("scope" to "profile", "profile_id" to "open.26207.c07dcc040b58"), validUntil = "2026-01-01", lastMeasured = "2025-10-01", model = model,
+            ),
+        )
+        val keys = doc.rows.map { it.rowKey }.toSet()
+        val today = "2026-10-25"
+        assertEquals(setOf(sos), ApnLogic.omits(listOf(omit("emergency_data", sos, "emergency_default_won")), Fixture.CELL, today, keys))
+        assertEquals(setOf(mtb), ApnLogic.omits(listOf(omit("apn", mtb, "winner_after_failure")), Fixture.CELL, today, keys))
+        assertEquals(emptySet<String>(), ApnLogic.omits(listOf(omit("apn", mtb, "no_regression_passed")), Fixture.CELL, today, keys))
+        // What still ends them: the row changed in the data (its key is a hash of every attribute), and the cell.
+        assertEquals(emptySet<String>(), ApnLogic.omits(listOf(omit("emergency_data", sos, "emergency_default_won")), Fixture.CELL, today, keys - sos))
+        assertEquals(emptySet<String>(), ApnLogic.omits(listOf(omit("emergency_data", sos, "emergency_default_won", model = "SM-G980F")), Fixture.CELL, today, keys))
+    }
+
     // --- 7.5 confirmation --------------------------------------------------------------------
 
     private fun db(row: ApnXml.Row, type: String? = row.attrs["type"], edited: Int = 0) = ApnLogic.DbRow(

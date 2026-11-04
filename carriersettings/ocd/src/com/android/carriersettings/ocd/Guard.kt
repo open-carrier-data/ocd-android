@@ -71,6 +71,8 @@ object Guard {
      *   ours, or a load that died: the first time a reload at once; the second in a row TRIP.
      * - Another `+ocd` version than expected (Telephony's restore from its cache at boot, a
      *   stale bundle): a reload, spaced by 2 minutes; three in an hour stop asking for more.
+     *   The older version an install left in place with the same values (round 47,
+     *   [ServedRef.loaded]) is no mismatch.
      */
     fun onConfigChanged(state: State, sub: Int, effective: String?, expected: String?, nowMs: Long): Pair<State, GuardAction> {
         val diedLoading = sub in state.loading
@@ -86,7 +88,8 @@ object Guard {
         }
         next = next.copy(stubLoads = 0)
         val want = expected ?: state.served[sub]?.version ?: return next to GuardAction.NONE
-        if (effective == want) return next.copy(mismatches = 0, proving = next.proving - sub) to GuardAction.NONE
+        val sameValues = state.served[sub]?.takeIf { it.version == want }?.loaded
+        if (effective == want || effective == sameValues) return next.copy(mismatches = 0, proving = next.proving - sub) to GuardAction.NONE
         val fresh = nowMs - next.mismatchSinceMs > MISMATCH_WINDOW_MS || next.mismatches == 0 || nowMs < next.mismatchSinceMs
         val count = if (fresh) 1 else next.mismatches + 1
         next = next.copy(mismatches = count, mismatchSinceMs = if (fresh) nowMs else next.mismatchSinceMs)
