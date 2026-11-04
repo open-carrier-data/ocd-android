@@ -15,7 +15,7 @@ import java.io.File
  * at the repository root, a byte copy of OCD's tests/vectors/resolution-order.json. Every vector
  * (a synthetic SIM, its stack generic to specific, the serving profile, the step of the order that
  * made it serve and the Google fill it picks) runs through this matcher, with a carrier ID table of
- * the file's rows from the pinned AOSP carrier list. OCD's resolver and the OCD Check app run the
+ * the file's rows from the pinned AOSP carrier list. OCD's resolver and the OCD Android app run the
  * same file. run.sh passes the repository root as the system property `ocd.repo`.
  */
 class GoldenVectorsTest {

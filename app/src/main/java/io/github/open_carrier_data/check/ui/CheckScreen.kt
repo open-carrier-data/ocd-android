@@ -164,7 +164,7 @@ fun CheckScreen(viewModel: CheckViewModel, toCallTest: Boolean = false) {
 @Composable
 private fun Header(state: UiState, onRefresh: () -> Unit, onPull: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("OCD Check", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        Text("OCD Android", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
         Text(
             "Compares this phone's SIM, network and carrier settings with Open Carrier Data (OCD). " +
                 "It only reads: it changes nothing on the phone. $PRIVACY",
@@ -428,7 +428,7 @@ private fun DeepCheckSection(state: UiState, viewModel: CheckViewModel) {
                 "Start Shizuku (for example with wireless debugging), then come back. Everything above works without it.",
             )
             status.tooOld -> Note("This app needs Shizuku 11 or newer.")
-            status.refused -> Note("Shizuku remembers that you refused. To allow it, open the Shizuku app and switch OCD Check on there.")
+            status.refused -> Note("Shizuku remembers that you refused. To allow it, open the Shizuku app and switch OCD Android on there.")
             !status.permitted -> Button(onClick = viewModel::requestShizukuPermission) { Text("Allow in Shizuku") }
             target == null -> Note("The SIM's slot is not known, so the deep check cannot run.")
             else -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -470,7 +470,7 @@ private fun ShizukuFields(status: ShizukuStatus) {
         },
     )
     if (status.running && !status.tooOld) {
-        Field("Access for OCD Check", if (status.permitted) "allowed" else if (status.refused) "refused" else "not allowed yet")
+        Field("Access for OCD Android", if (status.permitted) "allowed" else if (status.refused) "refused" else "not allowed yet")
     }
 }
 
@@ -1105,14 +1105,14 @@ private fun ReportBody(report: ReportResult, context: Context) {
 
 private fun copy(context: Context, text: String) {
     context.getSystemService(ClipboardManager::class.java)
-        ?.setPrimaryClip(ClipData.newPlainText("OCD Check report", text))
+        ?.setPrimaryClip(ClipData.newPlainText("OCD Android report", text))
     Toast.makeText(context, "Report copied", Toast.LENGTH_SHORT).show()
 }
 
 private fun share(context: Context, text: String) {
     val send = Intent(Intent.ACTION_SEND)
         .setType("text/plain")
-        .putExtra(Intent.EXTRA_SUBJECT, "OCD Check report")
+        .putExtra(Intent.EXTRA_SUBJECT, "OCD Android report")
         .putExtra(Intent.EXTRA_TEXT, text)
     context.startActivity(Intent.createChooser(send, "Share the report"))
 }
@@ -1120,7 +1120,7 @@ private fun share(context: Context, text: String) {
 @Composable
 private fun Footer() {
     Note(
-        "OCD Check ${BuildConfig.VERSION_NAME}, early test version. App code Apache-2.0. " +
+        "OCD Android ${BuildConfig.VERSION_NAME}, early test version. App code Apache-2.0. " +
             "Data from Open Carrier Data, CC0 1.0 for the OCD contributors' own rights.",
     )
 }

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    OCD Check, the build another ROM ships (OCD round 31, SM1 to SM12), as a privileged system app.
+    OCD Android, the build another ROM ships (OCD round 31, SM1 to SM12), as a privileged system app.
     Install to /system_ext/etc/permissions/ next to the APK in
     /system_ext/priv-app/OcdCheck/OcdCheck.apk (or the /product pair). The ROM builder signs the
     APK with his own key and sets OcdCarrierSettings's writer certificate to it (SM5).

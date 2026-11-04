@@ -1,6 +1,6 @@
 {
   "schema": "ocd-provider-protocol/1",
-  "about": "The writer-to-provider protocol between OCD Check (app/, the writer) and OcdCarrierSettingsDataset (carriersettings/, the provider): content://com.android.carriersettings.ocddata, method calls only. Both sides' tests read this file and the vectors (OCD rule round 37, item 6); a change to one side fails until this file and the other side match.",
+  "about": "The writer-to-provider protocol between OCD Android (app/, the writer) and OcdCarrierSettingsDataset (carriersettings/, the provider): content://com.android.carriersettings.ocddata, method calls only. Both sides' tests read this file and the vectors (OCD rule round 37, item 6); a change to one side fails until this file and the other side match.",
   "protocol": 3,
   "app_reads_protocols": [2, 3],
   "authority": "com.android.carriersettings.ocddata",

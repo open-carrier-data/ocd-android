@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the OCD Check app's bundled data from a checkout of Open Carrier
+"""Build the OCD Android app's bundled data from a checkout of Open Carrier
 Data's public repository.
 
 Reads, and never writes, these files of the public checkout:

@@ -48,7 +48,7 @@ object Report {
         val json = buildJsonObject {
             put("schema", SCHEMA)
             putJsonObject("app") {
-                put("name", "OCD Check")
+                put("name", "OCD Android")
                 put("version", appVersion)
                 put("access_tier", readings.accessTier.wire)
             }

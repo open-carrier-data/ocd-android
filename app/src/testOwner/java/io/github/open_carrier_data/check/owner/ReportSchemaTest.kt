@@ -141,7 +141,7 @@ class ReportSchemaTest {
         assertTrue("a signed-out browser's login URL fits too", IssueReport.loginLength(prefilled.url) <= IssueReport.MAX_URL)
         val params = prefilled.url.substringAfter('?').split('&').associate { it.substringBefore('=') to URLDecoder.decode(it.substringAfter('='), "UTF-8") }
         assertEquals(setOf("template", "title", IssueReport.FIELD), params.keys)
-        assertEquals("[OCD Check report] SM-G981B on 26202 (LIDL Connect)", params["title"])
+        assertEquals("[OCD Android report] SM-G981B on 26202 (LIDL Connect)", params["title"])
         val text = params.getValue(IssueReport.FIELD)
         assertEquals(prefilled.text, text)
         assertTrue(text.startsWith("{\n") && text.endsWith("\n}"))
@@ -162,7 +162,7 @@ class ReportSchemaTest {
 
     @Test
     fun `the form is the one the app prefills`() {
-        assertTrue(Regex("(?m)^name: OCD Check report$").containsMatchIn(form))
+        assertTrue(Regex("(?m)^name: OCD Android report$").containsMatchIn(form))
         assertTrue(form.contains("title: \"${IssueReport.TITLE_PREFIX} \""))
         assertTrue(
             "the textarea the app prefills is id ${IssueReport.FIELD}, rendered as JSON",

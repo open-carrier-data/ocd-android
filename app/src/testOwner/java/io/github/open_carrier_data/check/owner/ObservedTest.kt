@@ -158,7 +158,7 @@ class ObservedTest {
         val broken = fetched(pull(Raw(fixture, records() + (21 to "{\"issue\": 21}".toByteArray()))))
         assertEquals(1, broken.unchecked)
         // The hashes come from the state's list and from the log lines of builds before it.
-        val state = OwnerState(reportsOpened = listOf(alice)).logged(now, "report", "opened the prefilled OCD Check report $own; nothing is sent until the owner submits it")
+        val state = OwnerState(reportsOpened = listOf(alice)).logged(now, "report", "opened the prefilled OCD Android report $own; nothing is sent until the owner submits it")
         assertEquals(setOf(alice, own), ObservedReports.ownHashes(state))
     }
 
