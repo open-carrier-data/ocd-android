@@ -210,6 +210,20 @@ class CallsOutTest {
     // --- only the SIM's own mailbox, never an emergency or service number ---
 
     @Test
+    fun `round 46 - numbers come from the signed APK's table and never from pulled data`() {
+        val sources = java.io.File("src/owner/java").walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        // The one reader of the table is the APK's asset; nothing parses it from any other source.
+        val readers = sources.filter { "CallTargets.parse(" in it.readText() }.map { it.name }
+        assertEquals(listOf("OwnerCalls.kt"), readers)
+        val calls = sources.single { it.name == "OwnerCalls.kt" }.readText()
+        assertTrue(calls.contains("context.assets.open(CallTargets.ASSET_NAME).use { CallTargets.parse(it.readBytes().decodeToString()) }"))
+        // The balance codes are the constant table in core/AccountReads.kt: no USSD code is parsed from the pulled files either.
+        val balance = sources.single { it.name == "OwnerBalance.kt" }.readText()
+        assertTrue(balance.contains("BalanceUssd"))
+        for (pulled in listOf("OwnerData(", "state.pulled", "DatasetContext", "pulled?.")) assertFalse(pulled, pulled in balance)
+    }
+
+    @Test
     fun `the only number is the SIM's own allowlisted mailbox`() = runBlocking {
         val device = FakeDevice(CallingPhone())
         assertEquals("5500", MailboxGuard.target(table, sim, device).first?.number)
@@ -219,6 +233,11 @@ class CallsOutTest {
         // A SIM the table does not know gets no number at all, never a fallback.
         val uk = OwnerSim(0, 6, SimIdentity("23410", "O2 - UK", null, emptySet()), "O2", 2)
         assertEquals(null to "no_mailbox_for_this_sim", MailboxGuard.target(table, uk, device))
+        // Round 46: an unlisted or empty SPN on a known network is shown the network's code, and the app never dials it.
+        for (spn in listOf("fraenk", "", null)) {
+            val mvno = OwnerSim(0, 8, SimIdentity("26201", spn, null, emptySet()), "x", 4)
+            assertEquals(null to "mailbox_for_display_only", MailboxGuard.target(table, mvno, device))
+        }
         // A code the table marks unverified is never dialled automatically.
         val congstar = OwnerSim(0, 7, SimIdentity("26201", "congstar", null, emptySet()), "congstar", 3)
         assertEquals(null to "mailbox_unverified", MailboxGuard.target(table, congstar, device))

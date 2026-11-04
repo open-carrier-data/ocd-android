@@ -38,7 +38,14 @@ data class SpnTarget(
 )
 
 @Serializable
-data class NetworkTarget(val brand: String, val mailbox: String, val verification: String, val free: FreeFlags? = null)
+data class NetworkTarget(
+    val brand: String,
+    val mailbox: String,
+    val verification: String,
+    val free: FreeFlags? = null,
+    /** The network's own brand (rule round 46): only a SIM with one of these SPNs may be dialled through this entry. */
+    @SerialName("own_spns") val ownSpns: List<String> = emptyList(),
+)
 
 /**
  * OCD round 31 (SM9): whether the allowlist marks the mailbox call and an SMS to the SIM's own
@@ -117,6 +124,22 @@ object CallTargets {
             ?: return null
         val emergency = { number: String -> runCatching { isEmergency(number) }.getOrDefault(true) }
         return entry.takeIf { safe(it.number, emergency) }
+    }
+
+    /**
+     * The mailbox the app itself may dial for this SIM (rule round 46): the [mailboxFor] entry, but only
+     * from a by_spn entry, or from a by_mccmnc entry whose own_spns lists the SIM's SPN. [mailboxFor]'s
+     * network fallback answers any SPN on that network, so an unlisted MVNO would inherit the network's
+     * code and its free flags while its tariff or code differs; that fallback stays display only. An
+     * unlisted or empty SPN gets null here, automatic or tapped. The free flags count only from here.
+     */
+    fun dialableFor(file: CallTargetsFile, homeMccMnc: String?, spn: String?, isEmergency: (String) -> Boolean): Mailbox? {
+        val code = homeMccMnc ?: return null
+        val folded = spn?.casefold()?.trim().orEmpty()
+        if (folded.isEmpty()) return null
+        val ownBrand = file.bySpn.any { it.spn.casefold().trim() == folded && code in it.mccmnc } ||
+            file.byMccMnc[code]?.ownSpns.orEmpty().any { it.casefold().trim() == folded }
+        return if (ownBrand) mailboxFor(file, code, spn, isEmergency) else null
     }
 }
 

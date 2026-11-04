@@ -81,9 +81,9 @@ object CallBuild {
         context.assets.open(CallTargets.ASSET_NAME).use { CallTargets.parse(it.readBytes().decodeToString()) }
     }.getOrNull()
 
-    /** The SIM's own allowlist entry (its mailbox and the free flags), or null. */
+    /** The SIM's own allowlist entry (its mailbox and the free flags), or null: only the SIM's own brand counts (round 46, [CallTargets.dialableFor]). */
     fun entry(context: Context, sim: io.github.open_carrier_data.check.owner.core.OwnerSim): io.github.open_carrier_data.check.core.Mailbox? =
-        targets(context)?.let { CallTargets.mailboxFor(it, sim.identity.mccmnc, sim.identity.spn) { false } }
+        targets(context)?.let { CallTargets.dialableFor(it, sim.identity.mccmnc, sim.identity.spn) { false } }
 }
 
 /**
