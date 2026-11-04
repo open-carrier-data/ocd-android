@@ -28,6 +28,9 @@ import io.github.open_carrier_data.check.owner.core.CallLevels
 import io.github.open_carrier_data.check.owner.core.CallsOutMode
 import io.github.open_carrier_data.check.owner.core.CallsTested
 import io.github.open_carrier_data.check.owner.core.MmsProbe
+import io.github.open_carrier_data.check.owner.core.CarrierOffer
+import io.github.open_carrier_data.check.owner.core.ReportPlan
+import io.github.open_carrier_data.check.owner.core.ReportPlans
 import io.github.open_carrier_data.check.owner.core.ReportWords
 import io.github.open_carrier_data.check.owner.core.Retested
 import io.github.open_carrier_data.check.owner.core.SelfSms
@@ -92,6 +95,9 @@ data class OwnerUi(
     val dataset: io.github.open_carrier_data.check.owner.core.DatasetStatus? = null,
     /** Round 47 item 2: the report the person is reading, before the browser opens it; null otherwise. */
     val reportDraft: IssueReport.Prefilled? = null,
+    /** Round 47 item 4: the picker next to that report: the carrier's closed list and the person's choice, kept for this report only. */
+    val reportOffers: List<CarrierOffer> = emptyList(),
+    val reportPlan: ReportPlan = ReportPlan.Unknown,
 ) {
     /** Test now may start: system access, a SIM, nothing running, not paused. */
     val canTest: Boolean get() = gate?.canWrite == true && sims?.isNotEmpty() == true && stepsToGo == 0 && state.stop == null
@@ -426,11 +432,13 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
      * this phone as it is now, and with the SIM's SPN and GID1 prefix only
      * when that SIM is still in.
      */
-    fun report(heldBack: () -> Unit) = viewModelScope.launch {
+    fun report(heldBack: () -> Unit, plan: ReportPlan = ReportPlan.Unknown) = viewModelScope.launch {
         val context = getApplication<Application>()
+        var offers = emptyList<CarrierOffer>()
         val prefilled = withContext(Dispatchers.IO) {
             runCatching {
                 val run = store.read().runs.lastOrNull { it.features.isNotEmpty() } ?: return@runCatching null
+                offers = ReportPlans.offers(run.profileId)
                 val cell = run.cell ?: run.sim?.let { key ->
                     val data = OwnerData(context, store)
                     val bundle = data.bundle()
@@ -440,14 +448,17 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
                 } ?: return@runCatching null
                 // Round 29: the settled results of the run's SIM on this build ride along.
                 val settled = runCatching { OwnerAutoReports.settled(context, store.read(), run.copy(cell = cell)) }.getOrDefault(emptyMap())
-                IssueReport.prefill(run, cell, OwnerData.callsTested(context), settled)
+                IssueReport.prefill(run, cell, OwnerData.callsTested(context), settled, plan)
             }.getOrNull()
         }
-        if (prefilled != null) _ui.value = _ui.value.copy(reportDraft = prefilled) else heldBack()
+        if (prefilled != null) _ui.value = _ui.value.copy(reportDraft = prefilled, reportOffers = offers, reportPlan = plan) else heldBack()
     }
 
+    /** The person picked [offerId] and [options] next to the report: the report is written again with that plan. */
+    fun pickPlan(offerId: String?, options: Set<String>, heldBack: () -> Unit) = report(heldBack, ReportPlans.choose(_ui.value.reportOffers, offerId, options))
+
     fun closeReport() {
-        _ui.value = _ui.value.copy(reportDraft = null)
+        _ui.value = _ui.value.copy(reportDraft = null, reportOffers = emptyList(), reportPlan = ReportPlan.Unknown)
     }
 
     /** The person read [prefilled] and the browser opened it. Nothing is sent until they submit it there. */
@@ -505,6 +516,7 @@ class OwnerActivity : ComponentActivity() {
             sendReport = ::readReport,
             openReport = ::openIssue,
             closeReport = viewModel::closeReport,
+            pickPlan = { offer, options -> viewModel.pickPlan(offer, options, ::reportHeldBack) },
             setCallsOutLive = { viewModel.setCallsOutLive(it) },
             dryRunCallsOut = viewModel::dryRunCallsOut,
             setSelfSms = { viewModel.setSelfSms(it) },
@@ -573,7 +585,9 @@ class OwnerActivity : ComponentActivity() {
     }
 
     // The button waits for a finished test, so a missing report is the privacy check's or the data digest's.
-    private fun readReport() = viewModel.report {
+    private fun readReport() = viewModel.report(::reportHeldBack)
+
+    private fun reportHeldBack() {
         android.widget.Toast.makeText(this, ReportWords.HELD_BACK, android.widget.Toast.LENGTH_LONG).show()
     }
 

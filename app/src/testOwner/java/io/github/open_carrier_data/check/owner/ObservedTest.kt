@@ -197,6 +197,19 @@ class ObservedTest {
         top["cells"] = JsonArray(cells)
     }
 
+    @Test
+    fun `the app never reads the public tree of device, carrier and plan`() {
+        val raw = Raw(fixture, records())
+        pull(raw)
+        assertTrue(raw.asked.isNotEmpty())
+        assertTrue(raw.asked.toString(), raw.asked.all { it == ObservedSource.SUMMARY_URL || Regex(".*/observed/reports/issue-[0-9]+\\.json").matches(it) })
+        // Nor does anything else in the app: no build's sources or assets name the file.
+        val root = listOf(File("src"), File("app/src")).first { File(it, "owner").isDirectory }
+        val shipped = listOf("main", "owner", "readonly", "rom").map { File(root, it) }.filter { it.isDirectory }.flatMap { dir -> dir.walkTopDown().filter { it.isFile && it.extension in setOf("kt", "json", "xml") }.toList() }
+        assertTrue(shipped.size > 50)
+        for (file in shipped) assertFalse(file.path, Regex("results\\.json").containsMatchIn(file.readText()))
+    }
+
     /** [cells] with retested_by_ocd gone from statuses and every cell, as public main will read after round 47. */
     private fun withoutRetested(bytes: ByteArray): ByteArray {
         val top = Json.parseToJsonElement(bytes.decodeToString()).jsonObject.toMutableMap()

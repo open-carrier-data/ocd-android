@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -52,6 +53,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -104,6 +107,8 @@ import io.github.open_carrier_data.check.owner.core.Ladders
 import io.github.open_carrier_data.check.owner.core.LeftoversLine
 import io.github.open_carrier_data.check.owner.core.PointerLedger
 import io.github.open_carrier_data.check.owner.core.MobileDataLine
+import io.github.open_carrier_data.check.owner.core.CarrierOffer
+import io.github.open_carrier_data.check.owner.core.ReportPlan
 import io.github.open_carrier_data.check.owner.core.ReportWords
 import io.github.open_carrier_data.check.owner.core.ScheduleLine
 import io.github.open_carrier_data.check.owner.core.SimView
@@ -144,6 +149,8 @@ class OwnerActions(
     /** Round 47 item 2: the report the person just read goes to the browser; closing it sends nothing. */
     val openReport: (io.github.open_carrier_data.check.owner.core.IssueReport.Prefilled) -> Unit = {},
     val closeReport: () -> Unit = {},
+    /** Round 47 item 4: the offer (null is unknown) and the booked options picked next to the report. */
+    val pickPlan: (String?, Set<String>) -> Unit = { _, _ -> },
 )
 
 /** The options under "When you tap Test now" in Details. Off values run at night on their own. */
@@ -820,7 +827,7 @@ private fun DetailsContent(ui: OwnerUi, options: TestOptions, setOptions: (TestO
             ToolRow(ReportWords.BUTTON, ReportWords.BUTTON_TEXT, enabled = state.runs.any { it.features.isNotEmpty() }, onClick = actions.sendReport)
         }
     }
-    ui.reportDraft?.let { ReportDraft(it, actions) }
+    ui.reportDraft?.let { ReportDraft(it, ui.reportOffers, ui.reportPlan, actions) }
 
     Spacer(Modifier.padding(top = 24.dp))
     Group {
@@ -940,19 +947,54 @@ private fun ActiveTestsOptIn(ui: OwnerUi, actions: OwnerActions) {
 
 /** Round 47 item 2: the whole report and what sending it means, before the browser opens OCD's form. */
 @Composable
-private fun ReportDraft(draft: io.github.open_carrier_data.check.owner.core.IssueReport.Prefilled, actions: OwnerActions) {
+private fun ReportDraft(draft: io.github.open_carrier_data.check.owner.core.IssueReport.Prefilled, offers: List<CarrierOffer>, plan: ReportPlan, actions: OwnerActions) {
     AlertDialog(
         onDismissRequest = actions.closeReport,
         title = { Text(ReportWords.FORM_TITLE) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(ReportWords.FORM_TEXT)
+                PlanPicker(offers, plan, actions.pickPlan)
                 SelectionContainer { Text(draft.text, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
             }
         },
         confirmButton = { TextButton(onClick = { actions.openReport(draft) }) { Text(ReportWords.FORM_OPEN) } },
         dismissButton = { TextButton(onClick = actions.closeReport) { Text(ReportWords.FORM_CANCEL) } },
     )
+}
+
+/**
+ * Round 47 item 4: the one picker next to the report. Rows of the carrier's closed list only, default unknown; no
+ * text field, and nothing here is read from an account, USSD, a carrier SMS or TS.43.
+ */
+@Composable
+private fun PlanPicker(offers: List<CarrierOffer>, plan: ReportPlan, pick: (String?, Set<String>) -> Unit) {
+    val chosen = plan as? ReportPlan.Offer
+    Column {
+        Text(ReportWords.PLAN_TITLE, style = MaterialTheme.typography.titleSmall)
+        PlanRow(ReportWords.PLAN_UNKNOWN, chosen == null) { pick(null, emptySet()) }
+        offers.forEach { offer ->
+            PlanRow(offer.name, chosen?.offer == offer.id) { pick(offer.id, emptySet()) }
+            if (chosen?.offer == offer.id) {
+                offer.options.forEach { option ->
+                    val booked = option.id in chosen.options
+                    Row(Modifier.toggleable(booked, role = Role.Checkbox) { pick(offer.id, if (booked) chosen.options.toSet() - option.id else chosen.options.toSet() + option.id) }.padding(start = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(booked, onCheckedChange = null)
+                        Text(option.name, Modifier.padding(start = 8.dp))
+                    }
+                }
+            }
+        }
+        Summary(if (offers.isEmpty()) ReportWords.PLAN_NO_LIST else ReportWords.PLAN_TEXT)
+    }
+}
+
+@Composable
+private fun PlanRow(name: String, selected: Boolean, onClick: () -> Unit) {
+    Row(Modifier.selectable(selected, role = Role.RadioButton, onClick = onClick).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(selected, onClick = null)
+        Text(name, Modifier.padding(start = 8.dp))
+    }
 }
 
 /** The newest 20 entries inline, the rest behind "Show all"; selectable, so a line can be copied. */
