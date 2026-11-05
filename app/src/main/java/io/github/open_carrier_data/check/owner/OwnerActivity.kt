@@ -26,6 +26,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.WorkManager
 import io.github.open_carrier_data.check.owner.core.CallLevels
 import io.github.open_carrier_data.check.owner.core.CallsTested
+import io.github.open_carrier_data.check.owner.core.MeasuredRecord
 import io.github.open_carrier_data.check.owner.core.MmsProbe
 import io.github.open_carrier_data.check.owner.core.CarrierOffer
 import io.github.open_carrier_data.check.owner.core.ReportPlan
@@ -425,7 +426,7 @@ class OwnerViewModel(app: Application) : AndroidViewModel(app) {
         val prefilled = withContext(Dispatchers.IO) {
             runCatching {
                 val run = store.read().runs.lastOrNull { it.features.isNotEmpty() } ?: return@runCatching null
-                offers = ReportPlans.offers(run.profileId)
+                offers = ReportPlans.offers(run.profileId, OwnerData(context, store).pickerDir(), MeasuredRecord.day(System.currentTimeMillis()))
                 val cell = run.cell ?: run.sim?.let { key ->
                     val data = OwnerData(context, store)
                     val bundle = data.bundle()

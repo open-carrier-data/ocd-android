@@ -50,7 +50,12 @@ class TwoAnswersTest {
         val line = TwoAnswers.forYouLine(
             ForYou("depends_on_plan", listOf("de.lidl-connect.wifi_calling"), "brand_not_tellable", listOf("LIDL Connect", "Vodafone Deutschland")),
         )!!
-        assertEquals("depends on the brand and the plan: this phone can't tell LIDL Connect, Vodafone Deutschland SIMs apart; your plan is not checked", line)
+        assertEquals(
+            "depends on the brand and the plan: no source gives a selector, so OCD does not tell LIDL Connect, Vodafone Deutschland SIMs apart; " +
+                "the SIM may still show a name; your plan is not checked",
+            line,
+        )
+        assertFalse("rule round 51, item 1: the old claim is false", line.contains("can't tell"))
     }
 
     @Test

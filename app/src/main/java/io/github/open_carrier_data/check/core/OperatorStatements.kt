@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import java.io.File
 
 /*
  * OCD's rule round 32, part A and the MMS override: what operators, brands and MVNOs state on
@@ -128,7 +129,35 @@ object OperatorFiles {
     /** Each file's path on main and its cap; today 57 KB and 60 KB. */
     val FILES: Map<String, Long> = linkedMapOf(STATEMENTS to 4L * 1024 * 1024, IDENTITY to 4L * 1024 * 1024)
 
+    const val OFFERS = "offers.json"
+    const val SIM_GROUPS = "sim-groups.json"
+
+    /**
+     * OCD's rule round 51, item 4: the two files of the plan picker, with their caps; today 12 KB and 11 KB. A set of its
+     * own, because a picker file must never stop carrier data: it stays out of [FILES], has no F3, and [pullPicker] skips
+     * what is wrong with it. Nothing but the picker reads them.
+     */
+    val PICKER: Map<String, Long> = linkedMapOf(OFFERS to 1L * 1024 * 1024, SIM_GROUPS to 1L * 1024 * 1024)
+
     fun path(name: String): String = "$DIR/$name"
+
+    /**
+     * The picker files of the pinned commit into [dir], for a pull that already has the commit's tree: [tree] gives a
+     * file's git blob and size, [read] one file at that commit. A file missing from the tree, over its cap, not
+     * downloaded or with another blob is skipped. This never throws, so it can never stop or refuse a pull.
+     */
+    fun pullPicker(tree: Map<String, Pair<String, Long>>, dir: File, read: (name: String, cap: Long) -> ByteArray) {
+        for ((name, cap) in PICKER) {
+            val (blob, size) = tree[name] ?: continue
+            if (size > cap) continue
+            try {
+                val bytes = read(name, cap)
+                if (PublicPull.blob(bytes) == blob) File(dir, name).writeBytes(bytes)
+            } catch (e: Exception) {
+                File(dir, name).delete()
+            }
+        }
+    }
 
     /** The schema_version both files are written in (schemas/operator-statements.schema.json, carrier-identity.schema.json). */
     const val SCHEMA = 1

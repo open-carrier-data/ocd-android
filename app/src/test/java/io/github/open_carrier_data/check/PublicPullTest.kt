@@ -18,6 +18,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 
 /**
@@ -149,6 +150,51 @@ class PublicPullTest {
         assertThrows(Exception::class.java) { PublicPull.pull(statements2, null, dir(), bundled, 1L) }
         val half = Github().apply { files.remove(OperatorFiles.path(OperatorFiles.IDENTITY)) }
         assertThrows(PullException::class.java) { PublicPull.pull(half, null, dir(), bundled, 1L) }
+    }
+
+    @Test
+    fun `the picker files ride along at the commit, and a broken one never stops a pull`() {
+        val offers = OperatorFiles.path(OperatorFiles.OFFERS)
+        val groups = OperatorFiles.path(OperatorFiles.SIM_GROUPS)
+        val good = """{"schema_version":1,"offers":[],"profiles":[]}"""
+        fun pulled(fetch: PublicFetch): File {
+            val d = dir()
+            val r = PublicPull.pull(fetch, null, d, bundled, 1L) as PublicPull.Result.Pinned
+            assertEquals(newest, r.pin.commit)
+            assertTrue("carrier data arrives whatever the picker's files do", r.pin.operators && r.statements != null && r.bundle.profiles.isNotEmpty())
+            assertFalse(r.pin.blobs.keys.any { it in PublicPull.PICKER })
+            return d
+        }
+        fun hasOffers(d: File) = File(d, OperatorFiles.OFFERS).isFile
+        fun hasGroups(d: File) = File(d, OperatorFiles.SIM_GROUPS).isFile
+
+        val fine = Github().apply { files[offers] = good; files[groups] = good }
+        val both = pulled(fine)
+        assertEquals(good, File(both, OperatorFiles.OFFERS).readText())
+        assertTrue(hasGroups(both))
+        assertTrue(fine.asked.contains(PublicData.rawUrl(newest, offers)))
+        assertTrue(fine.asked.all(PublicData::allowed))
+
+        // Not in the commit.
+        assertFalse(hasOffers(pulled(Github())))
+        assertFalse(hasOffers(pulled(Github().apply { files[groups] = good })))
+        // A blob that is not the tree's: that file is skipped, the other stays.
+        pulled(Github(badBlob = offers).apply { files[offers] = good; files[groups] = good }).let { assertFalse(hasOffers(it)); assertTrue(hasGroups(it)) }
+        // Over its cap: not even asked for.
+        val big = Github().apply { files[offers] = "x".repeat(OperatorFiles.PICKER.getValue(OperatorFiles.OFFERS).toInt() + 1); files[groups] = good }
+        pulled(big).let { assertFalse(hasOffers(it)); assertTrue(hasGroups(it)) }
+        assertFalse(big.asked.contains(PublicData.rawUrl(newest, offers)))
+        // A download that fails, in any way.
+        for (failure in listOf(IOException("reset"), PullNotFound("HTTP 404"), PullException("cap"), IllegalStateException("odd"))) {
+            val raw = Github().apply { files[offers] = good; files[groups] = good }
+            val d = pulled { url, max -> if (url == PublicData.rawUrl(newest, offers)) throw failure else raw.get(url, max) }
+            assertFalse(hasOffers(d))
+            assertTrue(hasGroups(d))
+        }
+        // Unreadable or in a format this build does not read: no F3, the pull stands, and only the picker's reader looks at it.
+        for (text in listOf("{", "[]", """{"schema_version":99}""")) assertTrue(hasOffers(pulled(Github().apply { files[offers] = text; files[groups] = text })))
+        // The picker's paths are the only additions to what a pull may ask for.
+        assertThrows(IllegalArgumentException::class.java) { PublicData.rawUrl(newest, OperatorFiles.path("entities.json")) }
     }
 
     @Test

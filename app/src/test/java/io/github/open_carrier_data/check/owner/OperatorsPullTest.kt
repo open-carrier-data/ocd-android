@@ -12,12 +12,14 @@ import io.github.open_carrier_data.check.owner.core.NotFound
 import io.github.open_carrier_data.check.owner.core.OperatorsPull
 import io.github.open_carrier_data.check.owner.core.Validation
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 
 /**
@@ -59,6 +61,35 @@ class OperatorsPullTest {
         val v2 = statements.decodeToString().replaceFirst("\"schema_version\": 1", "\"schema_version\": 2").toByteArray()
         assertThrows(OperatorsFileRefused::class.java) { OperatorsPull.pull(github(mapOf(OperatorFiles.STATEMENTS to v2, OperatorFiles.IDENTITY to identity)), sha, dir()) }
         assertNull(OperatorsPull.read(dir(), sha))
+    }
+
+    @Test
+    fun `the picker files ride along at the commit, and a broken one never stops the pull`() {
+        val good = """{"schema_version":1,"offers":[],"profiles":[]}""".toByteArray()
+        val core = mapOf(OperatorFiles.STATEMENTS to statements, OperatorFiles.IDENTITY to identity)
+        val picker = core + mapOf(OperatorFiles.OFFERS to good, OperatorFiles.SIM_GROUPS to good)
+        val offers = OperatorFiles.OFFERS
+        val groups = OperatorFiles.SIM_GROUPS
+        fun pulled(fetch: Fetch): File {
+            val d = dir()
+            assertNotNull(OperatorsPull.pull(fetch, sha, d))
+            assertNotNull("the operator files stand whatever the picker's do", OperatorsPull.read(d, sha))
+            return d
+        }
+
+        pulled(github(picker)).let { assertTrue(File(it, offers).readBytes().contentEquals(good)); assertTrue(File(it, groups).isFile) }
+        assertFalse(File(pulled(github(core)), offers).exists())
+        pulled(github(picker, badBlob = offers)).let { assertFalse(File(it, offers).exists()); assertTrue(File(it, groups).isFile) }
+        val cap = OperatorFiles.PICKER.getValue(offers).toInt()
+        pulled(github(picker + (offers to ByteArray(cap + 1)))).let { assertFalse(File(it, offers).exists()); assertTrue(File(it, groups).isFile) }
+        val raw = github(picker)
+        for (failure in listOf(IOException("reset"), NotFound("HTTP 404"), DataException("cap"), IllegalStateException("odd"))) {
+            val d = pulled(Fetch { url, max -> if (url == OperatorsPull.rawUrl(sha, offers)) throw failure else raw.get(url, max) })
+            assertFalse(File(d, offers).exists())
+            assertTrue(File(d, groups).isFile)
+        }
+        assertTrue(File(pulled(github(picker + (offers to "{".toByteArray()))), offers).isFile)
+        assertThrows(IllegalArgumentException::class.java) { OperatorsPull.rawUrl(sha, "entities.json") }
     }
 
     @Test

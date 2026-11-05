@@ -23,6 +23,8 @@ import java.security.MessageDigest
  * - The git blob check: each file's git blob SHA-1 equals its entry in the commit's tree, read
  *   from GitHub's contents API (one call per directory).
  * - metadata.json, carrier-variants.json and lookup.json agree on the data digest.
+ * - The plan picker's files ride along at the same commit with the same blob check, and nothing
+ *   wrong with them refuses a pull ([OperatorFiles.pullPicker], rule round 51, item 4).
  *
  * The requests go only to api.github.com and raw.githubusercontent.com, only for OCD's public
  * repository ([PublicData.allowed]), and carry no device or SIM identifier: the URLs name the
@@ -92,7 +94,7 @@ object PublicData {
 
     fun rawUrl(sha: String, path: String): String {
         require(SHA.matches(sha)) { "commit shape" }
-        require(path in PublicPull.FILES) { "path" }
+        require(path in PublicPull.FILES || path in PublicPull.PICKER) { "path" }
         return "$RAW/$sha/$path"
     }
 }
@@ -203,6 +205,9 @@ object PublicPull {
         OperatorFiles.path(OperatorFiles.IDENTITY) to OperatorFiles.FILES.getValue(OperatorFiles.IDENTITY),
     )
     val OPTIONAL = setOf(OperatorFiles.path(OperatorFiles.STATEMENTS), OperatorFiles.path(OperatorFiles.IDENTITY))
+
+    /** The plan picker's paths, kept out of [FILES] so that none of them can refuse a pull. */
+    val PICKER = OperatorFiles.PICKER.keys.map(OperatorFiles::path).toSet()
 
     /** F3: the schema_version major this build reads, per file. */
     /**
@@ -328,6 +333,8 @@ object PublicPull {
         val (bundle, digest) = load(dir, sha, commit.date, bundled)
         val statements = if (operators) OperatorFiles.statements(File(dir, OperatorFiles.STATEMENTS).readText(Charsets.UTF_8)) else null
         val identity = if (operators) OperatorFiles.identity(File(dir, OperatorFiles.IDENTITY).readText(Charsets.UTF_8)) else null
+        val tree = blobs.values.filter { it.path in PICKER }.associate { it.name to (it.sha to it.size) }
+        OperatorFiles.pullPicker(tree, dir) { name, cap -> get(fetch, PublicData.rawUrl(sha, OperatorFiles.path(name)), cap) }
         val pin = PublicPin(sha, commit.date, digest, run, read, nowMs, operators)
         return Result.Pinned(pin, bundle, statements, identity, passedOver)
     }
