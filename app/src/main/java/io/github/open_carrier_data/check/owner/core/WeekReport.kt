@@ -49,10 +49,10 @@ enum class WeekSwitch {
 /** The one place a report goes, and the flag that can only stop it. */
 object Relay {
     /**
-     * Compiled in, never read from data or a resource: one bad commit must not be able to redirect phones. A placeholder
-     * until the relay exists: `.invalid` never resolves (RFC 2606), and [ready] keeps the send closed on it.
+     * Compiled in, never read from data or a resource: one bad commit must not be able to redirect phones. [ready] keeps
+     * the send closed on a `.invalid` host (RFC 2606), and `relay_open` stays the gate until the privacy page is complete.
      */
-    const val URL = "https://relay.invalid/v1/week-report"
+    const val URL = "https://week-counts.open-carrier-week.workers.dev/v1/week-report"
 
     /** Constant, because Android's default names the phone's model and build. */
     const val USER_AGENT = "ocd-android"
