@@ -108,7 +108,7 @@ object BalanceUssd {
             spns = setOf("Telekom.de", "T-Mobile D", "Business", "Privat", "T-Campus"),
             code = "*100#",
             spnSource = "AOSP carrier_list carrier ID 3 (Telekom); Samsung OMC (OCD carrier identity de.telekom)",
-            codeSource = "teltarif Prepaid-Guthaben abfragen (Apr 2024); Finanztip Handy-Guthaben (Mar 2025)",
+            codeSource = "Finanztip Handy-Guthaben (Mar 2025)",
         ),
         BalanceBrand(
             brand = "congstar",
@@ -116,7 +116,7 @@ object BalanceUssd {
             spns = setOf("congstar", "congstar.de"),
             code = "*100#",
             spnSource = "AOSP carrier_list carrier ID 2092 (congstar); Samsung OMC; LineageOS device overlays (OCD carrier identity de.congstar)",
-            codeSource = "teltarif Prepaid-Guthaben abfragen (Apr 2024); GIGA congstar Datenvolumen (balance only)",
+            codeSource = "GIGA congstar Datenvolumen (balance only)",
         ),
         BalanceBrand(
             brand = "fraenk",
@@ -133,7 +133,7 @@ object BalanceUssd {
             spns = setOf("Vodafone", "Vodafone.de", "vodafone.de"),
             code = "*100#",
             spnSource = "AOSP carrier_list carrier ID 25 (Vodafone)",
-            codeSource = "teltarif Prepaid-Guthaben abfragen (Apr 2024, CallYa); Finanztip Handy-Guthaben (Mar 2025); Handyhase Vodafone USSD codes (2023)",
+            codeSource = "Finanztip Handy-Guthaben (Mar 2025); Handyhase Vodafone USSD codes (2023)",
         ),
         BalanceBrand(
             brand = "LIDL Connect",
@@ -141,7 +141,7 @@ object BalanceUssd {
             spns = setOf("LIDL Connect"),
             code = "*100#",
             spnSource = "read on the owner's S20 and A50 (OCD rule round 7 notes; OCD Lab README 2026-10-18); OCD Lab call_targets.json by_spn",
-            codeSource = "LIDL Connect price lists of 2016 and 2019 (free); teltarif (Apr 2024); GIGA (11.09.2025); sent by hand on the S20 2026-10-30",
+            codeSource = "LIDL Connect price lists of 2016 and 2019 (free); GIGA (11.09.2025); sent by hand on the S20 2026-10-30",
             firstReplyMenu = true,
             menuItem = "Guthaben & Verbrauch",
             menuSource = "sent by hand on the S20 2026-10-30: *100# answers \"Wählen Sie bitte aus: 1 Aufladen, 2 Guthaben & Verbrauch, …\" and the balance shows under item 2 (S20_Project research note phone_case_lidl_20261030.md)",
