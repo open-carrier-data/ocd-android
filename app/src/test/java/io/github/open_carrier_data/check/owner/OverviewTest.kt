@@ -465,7 +465,7 @@ class OverviewTest {
         val wifi = block.rows.single { it.label == "Wi-Fi calling" }
         assertEquals("supported", wifi.value)
         assertEquals(
-            listOf("What the brand states: depends on the brand and the plan: this phone can't tell BILDmobil, LIDL Connect, Vodafone Deutschland SIMs apart; your plan is not checked"),
+            listOf("What the brand states: depends on the brand and the plan: no source gives a selector, so OCD does not tell BILDmobil, LIDL Connect, Vodafone Deutschland SIMs apart; the SIM may still show a name; your plan is not checked"),
             wifi.lines,
         )
         assertTrue("What the brand states: ended" in block.texts)

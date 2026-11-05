@@ -39,7 +39,7 @@ class TwoAnswersTest {
         // The lines under a value, as both screens show them: depends_on first, then what the brand states.
         assertEquals(listOf("Not one value: it differs by phone model; the sources disagree"), TwoAnswers.lines(profile, "volte"))
         assertEquals(
-            listOf("What the brand states: depends on the brand and the plan: this phone can't tell BILDmobil, LIDL Connect, Vodafone Deutschland SIMs apart; your plan is not checked"),
+            listOf("What the brand states: depends on the brand and the plan: no source gives a selector, so OCD does not tell BILDmobil, LIDL Connect, Vodafone Deutschland SIMs apart; the SIM may still show a name; your plan is not checked"),
             TwoAnswers.lines(profile, "vowifi"),
         )
         assertTrue(TwoAnswers.lines(old, "vowifi").isEmpty())
