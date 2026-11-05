@@ -325,11 +325,12 @@ class Round48WeekTest {
 
     @Test
     fun `the URL is compiled in, a placeholder keeps the send closed, and relay_open cannot redirect`() {
-        assertFalse("the placeholder never opens", Relay.ready())
+        assertTrue("the compiled-in relay address is usable", Relay.ready())
+        assertFalse("a placeholder never opens", Relay.ready("https://relay.invalid/v1/week-report"))
         assertTrue(Relay.URL.startsWith("https://"))
         assertTrue(Relay.ready("https://relay.example/v1/week-report"))
         for (bad in listOf("http://relay.example/x", "https://user@relay.example/x", "https://relay.invalid/x", "relay.example", "")) assertFalse(bad, Relay.ready(bad))
-        val fake = Fake(relayUrl = Relay.URL)
+        val fake = Fake(relayUrl = "https://relay.invalid/v1/week-report")
         val store = state(yes())
         assertEquals("$closed: not sent, this build has no relay address yet", step(store, fake))
         assertEquals(0, fake.posts.size + fake.flagReads)
