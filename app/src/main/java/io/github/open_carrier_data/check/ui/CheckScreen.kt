@@ -223,7 +223,7 @@ private fun StatementsSection(state: UiState) {
     Section("What the operator states") {
         display.about?.let { Label(it) }
         display.lines.forEach { Bullet(it) }
-        if (display.brandsOnNetwork.isNotEmpty()) Note("Brands on this network: ${display.brandsOnNetwork.joinToString()}. A phone can't tell their SIMs apart from the network's own.")
+        if (display.brandsOnNetwork.isNotEmpty()) Note("Brands on this network: ${display.brandsOnNetwork.joinToString()}. No source gives a selector, so OCD does not tell their SIMs apart from the network's own; the SIM may still show a name.")
         Note(io.github.open_carrier_data.check.core.StatementDisplay.NOTE)
     }
 }
