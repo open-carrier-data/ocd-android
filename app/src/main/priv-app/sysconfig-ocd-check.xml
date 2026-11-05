@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
     OCD Android on the power-save allowlist: its background checks and the revert alarm armed before each
-    change run in doze. Install to <partition>/etc/sysconfig/.
+    change run in doze. It also starts out not stopped: config_stopSystemPackagesByDefault would otherwise
+    leave a package that first arrives by OTA stopped, with no BOOT_COMPLETED, until someone opens its
+    screen, and the app has no icon. Install to <partition>/etc/sysconfig/.
 -->
 <config>
     <allow-in-power-save package="io.github.open_carrier_data.check" />
+    <initial-package-state package="io.github.open_carrier_data.check" stopped="false" />
 </config>
