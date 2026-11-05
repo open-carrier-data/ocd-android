@@ -57,6 +57,9 @@ class PublicDataPhone(private val context: Context) {
         if (!tmp.renameTo(stateFile)) throw IOException("pull state not replaced")
     }
 
+    /** The folder of the pinned commit, when a pull is in place. */
+    fun currentDir(): File? = state().pin?.let { File(root, it.commit) }?.takeIf { File(it, BUNDLE).isFile }
+
     /** The pulled data, when a good pull is in place; null means the bundled snapshot is used. */
     fun current(): PulledData? = runCatching {
         val pin = state().pin ?: return null

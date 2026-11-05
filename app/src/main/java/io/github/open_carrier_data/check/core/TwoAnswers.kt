@@ -35,7 +35,7 @@ object TwoAnswers {
     fun forYouLine(item: ForYou): String? = when (item.state) {
         "depends_on_plan" ->
             if (item.reason == "brand_not_tellable" && item.brands.isNotEmpty()) {
-                "depends on the brand and the plan: this phone can't tell ${item.brands.joinToString()} SIMs apart; your plan is not checked"
+                "depends on the brand and the plan: no source gives a selector, so OCD does not tell ${item.brands.joinToString()} SIMs apart; the SIM may still show a name; your plan is not checked"
             } else {
                 "offered; your plan is not checked"
             }

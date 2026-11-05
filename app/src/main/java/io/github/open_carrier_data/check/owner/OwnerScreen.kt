@@ -993,7 +993,7 @@ private fun PlanPicker(offers: List<CarrierOffer>, plan: ReportPlan, pick: (Stri
         Text(ReportWords.PLAN_TITLE, style = MaterialTheme.typography.titleSmall)
         PlanRow(ReportWords.PLAN_UNKNOWN, chosen == null) { pick(null, emptySet()) }
         offers.forEach { offer ->
-            PlanRow(offer.name, chosen?.offer == offer.id) { pick(offer.id, emptySet()) }
+            PlanRow(offer.label, chosen?.offer == offer.id) { pick(offer.id, emptySet()) }
             if (chosen?.offer == offer.id) {
                 offer.options.forEach { option ->
                     val booked = option.id in chosen.options

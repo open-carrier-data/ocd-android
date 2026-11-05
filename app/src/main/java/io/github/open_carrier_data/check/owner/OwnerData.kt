@@ -47,6 +47,7 @@ import io.github.open_carrier_data.check.owner.core.SimView
 import io.github.open_carrier_data.check.owner.core.StateStore
 import io.github.open_carrier_data.check.owner.core.update
 import io.github.open_carrier_data.check.phone.PhoneReader
+import io.github.open_carrier_data.check.phone.PublicDataPhone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -148,6 +149,9 @@ class OwnerData(private val context: Context, private val store: StateStore) {
 
     /** The pinned commit's folder, when its files are in place. */
     fun currentDir(): File? = store.read().pin?.let { File(root, it.commit) }?.takeIf { File(it, "bundle.json.gz").isFile }
+
+    /** Where the plan picker's files are: this path's pinned commit, else the commit of the read-only check's pull. */
+    fun pickerDir(): File? = currentDir() ?: PublicDataPhone(context).currentDir()
 
     fun bundled(): OcdBundle = context.assets.open(OcdBundle.ASSET_NAME).use(OcdBundle::readGzip)
 

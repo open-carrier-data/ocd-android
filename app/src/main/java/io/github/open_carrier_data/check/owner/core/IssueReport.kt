@@ -279,7 +279,7 @@ object ReportWords {
         "A report reads as \"reported, not checked by OCD\" and changes nothing on any other phone"
     const val PLAN_TITLE = "Your plan"
     const val PLAN_UNKNOWN = "Unknown"
-    const val PLAN_TEXT = "Your own choice from the carrier's published list, for this report only. It changes nothing on this phone or any other"
+    const val PLAN_TEXT = "Your own choice from the carrier's published list, for this report only. It changes nothing on this phone or any other. It goes in the public report under your GitHub name"
     const val PLAN_NO_LIST = "This carrier has no published offer list yet, so unknown is the only choice"
     const val FORM_OPEN = "Open on GitHub"
     const val FORM_CANCEL = "Not now"

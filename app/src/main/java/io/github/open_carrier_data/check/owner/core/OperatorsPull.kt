@@ -12,6 +12,9 @@ import java.io.File
  * git blob checked against the commit's tree (one contents call), and refused whole in a format this
  * build does not read (F3). The app shows the statements and reads their MMS-ended networks (X6);
  * it never serves a statement and never turns one into a value of its own.
+ *
+ * Rule round 51, item 4: the plan picker's files ride along at the same commit, and nothing wrong with
+ * them refuses this pull ([OperatorFiles.pullPicker]).
  */
 
 /** Both operator files of one commit, checked. */
@@ -25,7 +28,7 @@ object OperatorsPull {
 
     fun rawUrl(sha: String, name: String): String {
         require(DataSource.SHA.matches(sha)) { "commit shape" }
-        require(name in OperatorFiles.FILES) { "file" }
+        require(name in OperatorFiles.FILES || name in OperatorFiles.PICKER) { "file" }
         return "${DataSource.RAW}/$sha/${OperatorFiles.path(name)}"
     }
 
@@ -52,11 +55,13 @@ object OperatorsPull {
             if (blob != entry.sha) throw DataException("$name: git blob $blob, the commit's tree says ${entry.sha}")
             File(dir, name).writeBytes(bytes)
         }
-        return OperatorsData(
+        val data = OperatorsData(
             sha,
             OperatorFiles.statements(File(dir, OperatorFiles.STATEMENTS).readText(Charsets.UTF_8)),
             OperatorFiles.identity(File(dir, OperatorFiles.IDENTITY).readText(Charsets.UTF_8)),
         )
+        OperatorFiles.pullPicker(blobs.mapValues { (_, entry) -> entry.sha to entry.size }, dir) { name, cap -> fetch.get(rawUrl(sha, name), cap) }
+        return data
     }
 
     /** Both files in [dir], parsed; null when either is missing or refused. */
